@@ -48,9 +48,7 @@ spec:
         - name: OLLAMA_MODEL
           value: "qwen2.5-coder:14b"
       script: |
-        #!/usr/bin/env sh
-        source /workspace/source/.jx/variables.sh
-
+        #!/bin/sh
         echo "AI Code Review for $REPO_OWNER/$REPO_NAME PR #$PULL_NUMBER"
 
         # Fetch PR diff
