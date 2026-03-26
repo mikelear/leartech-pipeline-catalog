@@ -1,0 +1,66 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: ai-review-feedback
+spec:
+  pipelineSpec:
+    tasks:
+    - name: process-feedback
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          name: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: us-central1-docker.pkg.dev/product-first/oci/ai-review-worker:latest
+          name: handle-feedback
+          env:
+            - name: CLAUDE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-review-api-keys
+                  key: CLAUDE_API_KEY
+                  optional: true
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-review-api-keys
+                  key: DEEPSEEK_API_KEY
+                  optional: true
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ai-review-api-keys
+                  key: GITHUB_TOKEN
+                  optional: true
+            - name: OLLAMA_ENDPOINT
+              value: "http://ollama.ai-inference.svc.cluster.local:11434"
+            - name: CHROMADB_ENDPOINT
+              value: "http://ai-inference-resources-chromadb.ai-inference.svc.cluster.local:8000"
+            - name: OLLAMA_MODEL
+              value: "qwen2.5-coder:14b"
+          script: |
+            #!/bin/sh
+            echo "Processing AI review feedback for $REPO_OWNER/$REPO_NAME PR #$PULL_NUMBER"
+
+            python3 /app/feedback.py \
+              --mode comment-feedback \
+              --owner "$REPO_OWNER" \
+              --repo "$REPO_NAME" \
+              --pr "$PULL_NUMBER" \
+              --chromadb-url "$CHROMADB_ENDPOINT" \
+              --collection code-reviews \
+              --feedback-repo "https://github.com/mikelear/leartech-llm-training-data.git"
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}
