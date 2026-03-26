@@ -1,0 +1,141 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  creationTimestamp: null
+  name: ai-code-review
+spec:
+  stepTemplate:
+    env:
+      - name: HOME
+        value: /tekton/home
+    envFrom:
+      - secretRef:
+          name: jx-boot-job-env-vars
+          optional: true
+    name: ""
+    resources: {}
+    workingDir: /workspace/source
+  steps:
+    - image: us-central1-docker.pkg.dev/product-first/oci/ai-review-worker:latest
+      name: ai-review
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+      env:
+        - name: CLAUDE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-review-api-keys
+              key: CLAUDE_API_KEY
+              optional: true
+        - name: DEEPSEEK_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-review-api-keys
+              key: DEEPSEEK_API_KEY
+              optional: true
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: ai-review-api-keys
+              key: GITHUB_TOKEN
+              optional: true
+        - name: OLLAMA_ENDPOINT
+          value: "http://ollama.ai-inference.svc.cluster.local:11434"
+        - name: CHROMADB_ENDPOINT
+          value: "http://ai-inference-resources-chromadb.ai-inference.svc.cluster.local:8000"
+        - name: OLLAMA_MODEL
+          value: "qwen2.5-coder:14b"
+      script: |
+        #!/usr/bin/env sh
+        source /workspace/source/.jx/variables.sh
+
+        echo "AI Code Review for $REPO_OWNER/$REPO_NAME PR #$PULL_NUMBER"
+
+        # Fetch PR diff
+        python3 /app/fetch_diff.py \
+          --owner "$REPO_OWNER" \
+          --repo "$REPO_NAME" \
+          --pr "$PULL_NUMBER" \
+          --output /tmp/diff.txt
+
+        # Query ChromaDB for similar past reviews (RAG)
+        python3 /app/rag_query.py \
+          --chromadb-url "$CHROMADB_ENDPOINT" \
+          --collection code-reviews \
+          --diff /tmp/diff.txt \
+          --output /tmp/rag-context.txt || true
+
+        # Review with available LLMs
+        REVIEWS=""
+
+        # Ollama (skip if not reachable)
+        if curl -s --max-time 5 "$OLLAMA_ENDPOINT/api/tags" >/dev/null 2>&1; then
+          python3 /app/review.py \
+            --provider ollama \
+            --endpoint "$OLLAMA_ENDPOINT" \
+            --model "$OLLAMA_MODEL" \
+            --diff /tmp/diff.txt \
+            --rag-context /tmp/rag-context.txt \
+            --output /tmp/review-ollama.json
+          REVIEWS="$REVIEWS /tmp/review-ollama.json"
+        else
+          echo "Ollama not reachable, skipping"
+        fi
+
+        # Claude
+        if [ -n "$CLAUDE_API_KEY" ]; then
+          python3 /app/review.py \
+            --provider claude \
+            --endpoint "https://api.anthropic.com/v1/messages" \
+            --model "claude-sonnet-4-20250514" \
+            --diff /tmp/diff.txt \
+            --rag-context /tmp/rag-context.txt \
+            --output /tmp/review-claude.json
+          REVIEWS="$REVIEWS /tmp/review-claude.json"
+        else
+          echo "No CLAUDE_API_KEY, skipping"
+        fi
+
+        # DeepSeek
+        if [ -n "$DEEPSEEK_API_KEY" ]; then
+          python3 /app/review.py \
+            --provider deepseek \
+            --endpoint "https://api.deepseek.com/v1/chat/completions" \
+            --model "deepseek-chat" \
+            --diff /tmp/diff.txt \
+            --rag-context /tmp/rag-context.txt \
+            --output /tmp/review-deepseek.json
+          REVIEWS="$REVIEWS /tmp/review-deepseek.json"
+        else
+          echo "No DEEPSEEK_API_KEY, skipping"
+        fi
+
+        # Count available reviews for threshold
+        REVIEW_COUNT=$(echo $REVIEWS | wc -w | tr -d ' ')
+        echo "Got $REVIEW_COUNT reviews"
+
+        if [ "$REVIEW_COUNT" -eq 0 ]; then
+          echo "No LLM reviews available, skipping"
+          exit 0
+        fi
+
+        # Aggregate
+        REVIEW_LIST=$(echo $REVIEWS | tr ' ' ',')
+        python3 /app/aggregate.py \
+          --reviews "$REVIEW_LIST" \
+          --threshold "$REVIEW_COUNT" \
+          --output /tmp/aggregate-result.json
+
+        # Post to PR
+        python3 /app/post_review.py \
+          --owner "$REPO_OWNER" \
+          --repo "$REPO_NAME" \
+          --pr "$PULL_NUMBER" \
+          --sha "$PULL_PULL_SHA" \
+          --result /tmp/aggregate-result.json
+  workspaces:
+    - description: The git repo source
+      mountPath: /workspace
+      name: output
