@@ -42,6 +42,18 @@ spec:
                   name: ai-review-api-keys
                   key: GITHUB_TOKEN
                   optional: true
+            - name: GIT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: username
+                  optional: true
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
             - name: OLLAMA_ENDPOINT
               value: "http://ollama.ai-inference.svc.cluster.local:11434"
             - name: CHROMADB_ENDPOINT
