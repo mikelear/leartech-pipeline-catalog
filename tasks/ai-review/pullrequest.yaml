@@ -158,7 +158,17 @@ spec:
               --diff /tmp/diff.txt \
               --chromadb-url "$CHROMADB_ENDPOINT" \
               --collection code-reviews \
-              --feedback-repo "https://github.com/mikelear/leartech-llm-training-data.git" || echo "WARNING: feedback capture failed (non-blocking)"
+              --feedback-repo "https://github.com/mikelear/leartech-llm-training-data.git" || echo "WARNING: auto-capture failed (non-blocking)"
+
+            # Process any /ai-feedback comments on this PR
+            python3 /app/feedback.py \
+              --mode comment-feedback \
+              --owner "$REPO_OWNER" \
+              --repo "$REPO_NAME" \
+              --pr "$PULL_NUMBER" \
+              --chromadb-url "$CHROMADB_ENDPOINT" \
+              --collection code-reviews \
+              --feedback-repo "https://github.com/mikelear/leartech-llm-training-data.git" || echo "WARNING: comment-feedback failed (non-blocking)"
 
             # Exit with failure if AI review verdict is FAIL
             # This makes the ai-review check show as failed on the PR
