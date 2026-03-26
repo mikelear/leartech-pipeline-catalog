@@ -65,8 +65,7 @@ spec:
           --diff /tmp/diff.txt \
           --output /tmp/rag-context.txt || true
 
-        # Review with available LLMs
-        REVIEWS=""
+        # Review with available LLMs (each call is tolerant of failures)
 
         # Ollama (skip if not reachable)
         if curl -s --max-time 5 "$OLLAMA_ENDPOINT/api/tags" >/dev/null 2>&1; then
@@ -76,8 +75,7 @@ spec:
             --model "$OLLAMA_MODEL" \
             --diff /tmp/diff.txt \
             --rag-context /tmp/rag-context.txt \
-            --output /tmp/review-ollama.json
-          REVIEWS="$REVIEWS /tmp/review-ollama.json"
+            --output /tmp/review-ollama.json || echo "Ollama review failed"
         else
           echo "Ollama not reachable, skipping"
         fi
@@ -90,8 +88,7 @@ spec:
             --model "claude-sonnet-4-20250514" \
             --diff /tmp/diff.txt \
             --rag-context /tmp/rag-context.txt \
-            --output /tmp/review-claude.json
-          REVIEWS="$REVIEWS /tmp/review-claude.json"
+            --output /tmp/review-claude.json || echo "Claude review failed"
         else
           echo "No CLAUDE_API_KEY, skipping"
         fi
@@ -104,15 +101,19 @@ spec:
             --model "deepseek-chat" \
             --diff /tmp/diff.txt \
             --rag-context /tmp/rag-context.txt \
-            --output /tmp/review-deepseek.json
-          REVIEWS="$REVIEWS /tmp/review-deepseek.json"
+            --output /tmp/review-deepseek.json || echo "DeepSeek review failed"
         else
           echo "No DEEPSEEK_API_KEY, skipping"
         fi
 
-        # Count available reviews for threshold
+        # Collect only successfully created review files
+        REVIEWS=""
+        for f in /tmp/review-ollama.json /tmp/review-claude.json /tmp/review-deepseek.json; do
+          [ -f "$f" ] && REVIEWS="$REVIEWS $f"
+        done
+        REVIEWS=$(echo $REVIEWS | xargs)
         REVIEW_COUNT=$(echo $REVIEWS | wc -w | tr -d ' ')
-        echo "Got $REVIEW_COUNT reviews"
+        echo "Got $REVIEW_COUNT successful reviews"
 
         if [ "$REVIEW_COUNT" -eq 0 ]; then
           echo "No LLM reviews available, skipping"
