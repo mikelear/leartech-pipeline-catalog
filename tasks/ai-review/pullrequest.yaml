@@ -146,7 +146,19 @@ spec:
               --diff /tmp/diff.txt \
               --chromadb-url "$CHROMADB_ENDPOINT" \
               --collection code-reviews \
-              --feedback-repo "https://github.com/mikelear/leartech-llm-training-data.git" || true
+              --feedback-repo "https://github.com/mikelear/leartech-llm-training-data.git" || echo "WARNING: feedback capture failed (non-blocking)"
+
+            # Exit with failure if AI review verdict is FAIL
+            # This makes the ai-review check show as failed on the PR
+            VERDICT=$(python3 -c "import json; print(json.load(open('/tmp/aggregate-result.json'))['overall_verdict'])")
+            echo "Final verdict: $VERDICT"
+            if [ "$VERDICT" = "FAIL" ]; then
+              echo "AI review FAILED — PR needs attention"
+              exit 1
+            elif [ "$VERDICT" = "ERROR" ]; then
+              echo "AI review had errors — check logs"
+              exit 1
+            fi
   podTemplate: {}
   serviceAccountName: tekton-bot
   timeout: 30m0s
