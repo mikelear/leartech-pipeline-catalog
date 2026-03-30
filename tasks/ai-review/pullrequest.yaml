@@ -60,6 +60,12 @@ spec:
               value: "http://ai-inference-resources-chromadb.ai-inference.svc.cluster.local:8000"
             - name: OLLAMA_MODEL
               value: "qwen2.5-coder:14b"
+            - name: CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-review-cluster-config
+                  key: CLUSTER_ID
+                  optional: true
           script: |
             #!/bin/sh
             echo "AI Code Review for $REPO_OWNER/$REPO_NAME PR #$PULL_NUMBER"
