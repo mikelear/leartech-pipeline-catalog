@@ -21,7 +21,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: us-central1-docker.pkg.dev/product-first/oci/ai-review-worker:latest
+        - image: ghcr.io/mikelear/ai-review-worker:latest
           name: ai-review
           env:
             - name: CLAUDE_API_KEY
