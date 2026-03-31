@@ -86,8 +86,8 @@ spec:
 
             # Review with available LLMs (each call is tolerant of failures)
 
-            # Ollama (skip if not reachable)
-            if curl -s --max-time 5 "$OLLAMA_ENDPOINT/api/tags" >/dev/null 2>&1; then
+            # Ollama (skip if not reachable — use Python since curl may not be in image)
+            if python3 -c "import httpx; httpx.get('$OLLAMA_ENDPOINT/api/tags', timeout=5)" 2>/dev/null; then
               python3 /app/review.py \
                 --provider ollama \
                 --endpoint "$OLLAMA_ENDPOINT" \
