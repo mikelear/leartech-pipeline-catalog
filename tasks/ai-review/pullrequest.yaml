@@ -70,6 +70,10 @@ spec:
             #!/bin/sh
             echo "AI Code Review for $REPO_OWNER/$REPO_NAME PR #$PULL_NUMBER"
 
+            # Clone standards repo for review context
+            echo "Cloning standards repo..."
+            git clone --depth 1 https://${GIT_USER}:${GIT_TOKEN}@github.com/mikelear/leartech-llm-training-data.git /tmp/standards 2>/dev/null || echo "WARNING: Failed to clone standards repo"
+
             # Fetch PR diff
             python3 /app/fetch_diff.py \
               --owner "$REPO_OWNER" \
@@ -94,6 +98,7 @@ spec:
                 --model "$OLLAMA_MODEL" \
                 --diff /tmp/diff.txt \
                 --rag-context /tmp/rag-context.txt \
+                --standards-dir /tmp/standards \
                 --output /tmp/review-ollama.json || echo "Ollama review failed"
             else
               echo "Ollama not reachable, skipping"
@@ -107,6 +112,7 @@ spec:
                 --model "claude-sonnet-4-20250514" \
                 --diff /tmp/diff.txt \
                 --rag-context /tmp/rag-context.txt \
+                --standards-dir /tmp/standards \
                 --output /tmp/review-claude.json || echo "Claude review failed"
             else
               echo "No CLAUDE_API_KEY, skipping"
@@ -120,6 +126,7 @@ spec:
                 --model "deepseek-chat" \
                 --diff /tmp/diff.txt \
                 --rag-context /tmp/rag-context.txt \
+                --standards-dir /tmp/standards \
                 --output /tmp/review-deepseek.json || echo "DeepSeek review failed"
             else
               echo "No DEEPSEEK_API_KEY, skipping"
@@ -176,15 +183,12 @@ spec:
               --collection code-reviews \
               --feedback-repo "https://github.com/mikelear/leartech-llm-training-data.git" || echo "WARNING: comment-feedback failed (non-blocking)"
 
-            # Exit with failure if AI review verdict is FAIL
-            # This makes the ai-review check show as failed on the PR
-            VERDICT=$(python3 -c "import json; print(json.load(open('/tmp/aggregate-result.json'))['overall_verdict'])")
-            echo "Final verdict: $VERDICT"
-            if [ "$VERDICT" = "FAIL" ]; then
-              echo "AI review FAILED — PR needs attention"
-              exit 1
-            elif [ "$VERDICT" = "ERROR" ]; then
-              echo "AI review had errors — check logs"
+            # Exit with failure if score below threshold
+            SCORE=$(python3 -c "import json; r=json.load(open('/tmp/aggregate-result.json')); print(r.get('overall_score', 0))")
+            VERDICT=$(python3 -c "import json; r=json.load(open('/tmp/aggregate-result.json')); print(r.get('overall_verdict', 'ERROR'))")
+            echo "Final: $SCORE/100 $VERDICT"
+            if [ "$VERDICT" = "FAIL" ] || [ "$VERDICT" = "ERROR" ]; then
+              echo "AI review FAILED ($SCORE/100) — PR needs attention"
               exit 1
             fi
   podTemplate: {}
