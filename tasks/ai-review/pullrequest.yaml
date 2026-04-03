@@ -81,34 +81,9 @@ spec:
               --pr "$PULL_NUMBER" \
               --output /tmp/diff-raw.txt
 
-            # Filter diff using .reviewignore (from repo root or standards repo)
-            python3 -c "
-import os, fnmatch
-patterns = []
-for ignore_file in ['/workspace/source/.reviewignore', '/tmp/standards/.reviewignore']:
-    if os.path.exists(ignore_file):
-        patterns.extend([l.strip() for l in open(ignore_file) if l.strip() and not l.startswith('#')])
-if not patterns:
-    open('/tmp/diff.txt','w').write(open('/tmp/diff-raw.txt').read())
-else:
-    out = []
-    skip = False
-    for line in open('/tmp/diff-raw.txt'):
-        if line.startswith('diff --git'):
-            filename = line.split(' b/')[-1].strip() if ' b/' in line else ''
-            skip = any(fnmatch.fnmatch(filename, p) or p.rstrip('/') in filename for p in patterns)
-            if skip:
-                continue
-        if not skip:
-            out.append(line)
-    open('/tmp/diff.txt','w').write(''.join(out))
-    raw_lines = len(open('/tmp/diff-raw.txt').readlines())
-    filtered_lines = len(out)
-    if raw_lines != filtered_lines:
-        print(f'Filtered diff: {raw_lines} -> {filtered_lines} lines ({raw_lines - filtered_lines} removed by .reviewignore)')
-" || cp /tmp/diff-raw.txt /tmp/diff.txt
+            # Filter diff using .reviewignore and handle empty diffs
+            python3 /app/filter_diff.py /tmp/diff-raw.txt /tmp/diff.txt /workspace/source/.reviewignore /tmp/standards/.reviewignore || cp /tmp/diff-raw.txt /tmp/diff.txt
 
-            # Skip review if diff is empty
             if [ ! -s /tmp/diff.txt ]; then
               echo "No reviewable changes in diff (empty or all filtered)"
               exit 0
