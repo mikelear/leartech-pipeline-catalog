@@ -21,7 +21,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: anchore/grype:latest
+        - image: ghcr.io/mikelear/security-tools:latest
           name: grype-scan
           env:
             - name: CLUSTER_ID
