@@ -1,0 +1,165 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: image-scan
+spec:
+  pipelineSpec:
+    tasks:
+    - name: image-scan
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: anchore/grype:latest
+          name: grype-scan
+          env:
+            - name: CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-review-cluster-config
+                  key: CLUSTER_ID
+                  optional: true
+          script: |
+            #!/bin/sh
+            set -e
+            echo "=== Grype: scanning source for dependency vulnerabilities ==="
+
+            # Scan the repo directory for vulnerable dependencies (lockfiles, manifests)
+            grype dir:/workspace/source \
+              --output json \
+              --file /workspace/grype-report.json || true
+
+            # Parse results by severity
+            CRITICAL=$(cat /workspace/grype-report.json | jq '[.matches[] | select(.vulnerability.severity == "Critical")] | length' 2>/dev/null || echo "0")
+            HIGH=$(cat /workspace/grype-report.json | jq '[.matches[] | select(.vulnerability.severity == "High")] | length' 2>/dev/null || echo "0")
+            MEDIUM=$(cat /workspace/grype-report.json | jq '[.matches[] | select(.vulnerability.severity == "Medium")] | length' 2>/dev/null || echo "0")
+            LOW=$(cat /workspace/grype-report.json | jq '[.matches[] | select(.vulnerability.severity == "Low")] | length' 2>/dev/null || echo "0")
+
+            echo "Grype findings: critical=$CRITICAL, high=$HIGH, medium=$MEDIUM, low=$LOW"
+
+            # Write summary files
+            echo "$CRITICAL" > /workspace/grype-critical.txt
+            echo "$HIGH" > /workspace/grype-high.txt
+            echo "$MEDIUM" > /workspace/grype-medium.txt
+            echo "$LOW" > /workspace/grype-low.txt
+
+            if [ "$CRITICAL" -gt 0 ]; then
+              echo "FAIL" > /workspace/grype-verdict.txt
+            elif [ "$HIGH" -gt 0 ]; then
+              echo "WARN" > /workspace/grype-verdict.txt
+            else
+              echo "PASS" > /workspace/grype-verdict.txt
+            fi
+
+            # Build findings table (critical + high only, top 25)
+            cat /workspace/grype-report.json | jq -r '
+              [.matches[] | select(.vulnerability.severity == "Critical" or .vulnerability.severity == "High")]
+              | sort_by(.vulnerability.severity)[:25][]
+              | "| \(.vulnerability.severity) | \(.vulnerability.id) | \(.artifact.name):\(.artifact.version) | \(.vulnerability.fixedInVersion // "no fix") |"
+            ' > /workspace/grype-table.txt 2>/dev/null || echo "" > /workspace/grype-table.txt
+        - image: ghcr.io/mikelear/security-tools:latest
+          name: post-results
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+            - name: CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-review-cluster-config
+                  key: CLUSTER_ID
+                  optional: true
+          script: |
+            #!/bin/bash
+            set -e
+            echo "=== Posting Grype scan results to PR ==="
+
+            # Read scan results
+            VERDICT=$(cat /workspace/grype-verdict.txt 2>/dev/null || echo "SKIP")
+            CRITICAL=$(cat /workspace/grype-critical.txt 2>/dev/null || echo "0")
+            HIGH=$(cat /workspace/grype-high.txt 2>/dev/null || echo "0")
+            MEDIUM=$(cat /workspace/grype-medium.txt 2>/dev/null || echo "0")
+            LOW=$(cat /workspace/grype-low.txt 2>/dev/null || echo "0")
+
+            # Icon
+            if [ "$VERDICT" = "FAIL" ]; then
+              ICON="x"
+            elif [ "$VERDICT" = "WARN" ]; then
+              ICON="warning"
+            else
+              ICON="white_check_mark"
+            fi
+
+            # Cluster tag
+            TAG=""
+            if [ -n "$CLUSTER_ID" ]; then
+              TAG=" \`[$CLUSTER_ID]\`"
+            fi
+
+            # Build comment
+            COMMENT="## :package: Dependency Scan (Grype): **${VERDICT}**${TAG}
+
+            | Severity | Count |
+            |---|---|
+            | :red_circle: Critical | ${CRITICAL} |
+            | :orange_circle: High | ${HIGH} |
+            | :yellow_circle: Medium | ${MEDIUM} |
+            | :white_circle: Low | ${LOW} |"
+
+            TOTAL_CRIT_HIGH=$((CRITICAL + HIGH))
+            if [ "$TOTAL_CRIT_HIGH" -gt 0 ]; then
+              COMMENT="${COMMENT}
+
+            ### Critical & High Vulnerabilities
+
+            | Severity | CVE | Package | Fix Available |
+            |---|---|---|---|
+            $(cat /workspace/grype-table.txt)"
+
+              TOTAL=$((CRITICAL + HIGH + MEDIUM + LOW))
+              if [ "$TOTAL_CRIT_HIGH" -gt 25 ]; then
+                COMMENT="${COMMENT}
+            > Showing top 25 of ${TOTAL_CRIT_HIGH} critical/high findings"
+              fi
+            fi
+
+            # Post to PR
+            if [ -z "$GIT_TOKEN" ]; then
+              echo "WARNING: No GIT_TOKEN, cannot post to PR"
+              echo "$COMMENT"
+              exit 0
+            fi
+
+            BODY=$(echo "$COMMENT" | jq -Rs '.')
+
+            curl -s -X POST \
+              -H "Authorization: token $GIT_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments" \
+              -d "{\"body\": ${BODY}}" > /dev/null
+
+            echo "Posted Grype scan results to PR #${PULL_NUMBER}"
+
+            # Fail on critical vulns
+            if [ "$VERDICT" = "FAIL" ]; then
+              echo "Grype scan FAILED — critical vulnerabilities found"
+              exit 1
+            fi
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}
