@@ -77,7 +77,7 @@ spec:
             #!/usr/bin/env sh
             source .jx/variables.sh
             jx gitops helm release --no-oci-login
-        - image: gcr.io/projectsigstore/cosign/cosign:v2.4.1
+        - image: gcr.io/projectsigstore/cosign:v2.4.1
           name: cosign-sign
           resources: {}
           env:
