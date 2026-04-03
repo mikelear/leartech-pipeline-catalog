@@ -77,6 +77,25 @@ spec:
             #!/usr/bin/env sh
             source .jx/variables.sh
             jx gitops helm release --no-oci-login
+        - image: gcr.io/projectsigstore/cosign/cosign:v2.4.1
+          name: cosign-sign
+          resources: {}
+          env:
+            - name: COSIGN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cosign-keys
+                  key: cosign.key
+          script: |
+            #!/busybox/sh
+            set -e
+            source .jx/variables.sh
+            export COSIGN_PASSWORD=""
+            echo "$COSIGN_KEY" > /tmp/cosign.key
+            IMAGE="$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+            echo "Signing $IMAGE"
+            cosign sign --key /tmp/cosign.key --yes "$IMAGE"
+            rm -f /tmp/cosign.key
         - image: ghcr.io/jenkins-x-plugins/jx-promote:0.6.31
           name: promote-jx-promote
           resources: {}
