@@ -209,23 +209,45 @@ Test individual scan scripts directly against the `pipeline-test` namespace. Thi
 git clone https://github.com/mikelear/leartech-pipeline-catalog.git
 cd leartech-pipeline-catalog
 
-# Run on GCP
-make -f test/Makefile test-static       # Gitleaks + Semgrep against test data
-make -f test/Makefile test-image        # Grype against test data
-make -f test/Makefile test-dynamic      # Nuclei + Nikto + Nmap against pipeline-test nginx
+# See all available commands
+make -f test/Makefile
+```
 
-# Run on Azure
-make -f test/Makefile test-static AZURE=1
-make -f test/Makefile test-dynamic AZURE=1
+This prints:
+```
+  Leartech Pipeline Catalog — Test Harness
+  =========================================
 
-# Run all
-make -f test/Makefile test-all
+  Tests scan scripts against the pipeline-test namespace.
+  Dry-run mode: prints formatted PR comments, no API calls.
 
-# Watch logs
-make -f test/Makefile logs TASK=dynamic
+  Usage:  make -f test/Makefile <target> [AZURE=1]
 
-# Clean up test pods
-make -f test/Makefile clean
+  Targets:
+    test-static     Run Gitleaks + Semgrep against test data
+    test-image      Run Grype dependency scan against test data
+    test-dynamic    Run Nuclei + Nikto + Nmap against pipeline-test nginx
+    test-all        Run all scan tests sequentially
+
+    logs TASK=x     Tail logs for a test (x = static, image, or dynamic)
+    clean           Delete all test pods
+
+  Options:
+    AZURE=1         Run against Azure cluster (modern-burro-admin context)
+
+  Examples:
+    make -f test/Makefile test-static            # GCP static scan
+    make -f test/Makefile test-dynamic AZURE=1   # Azure dynamic scan
+    make -f test/Makefile test-all               # All scans on GCP
+    make -f test/Makefile logs TASK=dynamic      # Watch dynamic scan logs
+```
+
+Run individual tests:
+```bash
+make -f test/Makefile test-static             # GCP
+make -f test/Makefile test-dynamic AZURE=1    # Azure
+make -f test/Makefile test-all                # All scans
+make -f test/Makefile clean                   # Clean up
 ```
 
 **What this tests:**
