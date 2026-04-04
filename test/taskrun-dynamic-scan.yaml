@@ -1,0 +1,34 @@
+# Test the dynamic scan against pipeline-test nginx endpoint
+# Usage: kubectl apply -f test/taskrun-dynamic-scan.yaml
+# Check: kubectl logs -n pipeline-test dynamic-scan-test -f
+#
+# This tests the scan script directly (no jx-boot orchestration).
+# For full orchestration test, use taskrun-dynamic-scan-full.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dynamic-scan-test
+  namespace: pipeline-test
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 600
+  containers:
+  - name: scanner
+    image: ghcr.io/mikelear/security-tools:latest
+    command:
+    - /app/dynamic-scan.sh
+    args:
+    - --preview-url
+    - https://pipeline-test.jx.leartech.com
+    - --svc-name
+    - test-app
+    - --cluster-id
+    - test
+    - --results-dir
+    - /tmp/results
+    - --repo
+    - mikelear/future-lending-ui
+    - --pr
+    - "0"
+    - --token
+    - ""

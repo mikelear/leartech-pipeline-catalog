@@ -1,0 +1,34 @@
+# Test the dependency scan against pipeline-test namespace test data
+# Usage: kubectl apply -f test/taskrun-image-scan.yaml
+# Check: kubectl logs -n pipeline-test image-scan-test -f
+apiVersion: v1
+kind: Pod
+metadata:
+  name: image-scan-test
+  namespace: pipeline-test
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 300
+  containers:
+  - name: scanner
+    image: ghcr.io/mikelear/security-tools:latest
+    command:
+    - /app/image-scan.sh
+    args:
+    - --source-dir
+    - /test-data
+    - --cluster-id
+    - test
+    - --repo
+    - mikelear/future-lending-ui
+    - --pr
+    - "0"
+    - --token
+    - ""
+    volumeMounts:
+    - name: test-data
+      mountPath: /test-data
+  volumes:
+  - name: test-data
+    configMap:
+      name: test-data
