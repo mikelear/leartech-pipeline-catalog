@@ -140,7 +140,7 @@ spec:
                 security-scan: "true"
             spec:
               restartPolicy: Never
-              activeDeadlineSeconds: 600
+              activeDeadlineSeconds: 900
               containers:
               - name: scanner
                 image: ${SCAN_IMAGE}
