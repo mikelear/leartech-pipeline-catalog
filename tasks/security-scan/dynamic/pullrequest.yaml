@@ -58,9 +58,38 @@ spec:
 
             INGRESS_HOST="preview-${APP_NAME}-${PREVIEW_NS}.${DOMAIN}"
             PREVIEW_URL="https://${INGRESS_HOST}"
-            # Internal service name for nmap (same namespace = direct DNS)
             SVC_NAME="preview-${APP_NAME}"
 
+            # --- Wait for preview namespace and ingress to exist ---
+            # The pr build creates the preview — we run in parallel so must wait
+            echo "=== Waiting for preview namespace ${PREVIEW_NS} ==="
+            WAIT=0
+            MAX_WAIT=600
+            while ! kubectl get namespace ${PREVIEW_NS} >/dev/null 2>&1; do
+              if [ $WAIT -ge $MAX_WAIT ]; then
+                echo "ERROR: Preview namespace not created after ${MAX_WAIT}s — aborting"
+                exit 0
+              fi
+              echo "Waiting for namespace... (${WAIT}s)"
+              sleep 15
+              WAIT=$((WAIT + 15))
+            done
+            echo "Namespace exists"
+
+            # Wait for at least one pod to be running in the preview
+            echo "Waiting for preview pods..."
+            WAIT=0
+            while [ "$(kubectl get pods -n ${PREVIEW_NS} --no-headers 2>/dev/null | grep -c Running)" -eq 0 ]; do
+              if [ $WAIT -ge 300 ]; then
+                echo "WARNING: No running pods after 300s, proceeding anyway"
+                break
+              fi
+              sleep 10
+              WAIT=$((WAIT + 10))
+            done
+            echo "Preview pods ready"
+
+            echo ""
             echo "=========================================="
             echo "Dynamic Security Scan [${CLUSTER_ID}]"
             echo "=========================================="
