@@ -47,7 +47,6 @@ spec:
             APP_NAME="${REPO_NAME}"
             PREVIEW_NS="jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}"
             CLUSTER_ID="${CLUSTER_ID:-unknown}"
-            SCAN_POD="security-scan-${PULL_NUMBER}"
             SCAN_IMAGE="ghcr.io/mikelear/security-tools:latest"
 
             case "$CLUSTER_ID" in
@@ -82,7 +81,6 @@ spec:
             done
             echo "Namespace exists"
 
-            # Wait for pods to be running
             echo "Waiting for preview pods..."
             WAIT=0
             while [ "$(kubectl get pods -n ${PREVIEW_NS} --no-headers 2>/dev/null | grep -c Running)" -eq 0 ]; do
@@ -95,9 +93,48 @@ spec:
             done
             echo "Preview pods ready"
 
-            # --- Apply egress deny to preview app pods ---
+            # ===================================================
+            # PHASE 1: External scan (from jx namespace, through ingress)
+            # Runs Nikto + Nuclei against the external URL
+            # This is what an attacker sees
+            # ===================================================
             echo ""
-            echo "=== Applying egress deny to preview app pods ==="
+            echo "=== Phase 1: External Scan (attacker view) ==="
+            kubectl run external-scan-${PULL_NUMBER} \
+              --restart=Never \
+              --image=${SCAN_IMAGE} \
+              -n jx \
+              --override-type=strategic \
+              --overrides='{"spec":{"activeDeadlineSeconds":600}}' \
+              -- /app/external-scan.sh \
+                --preview-url "${PREVIEW_URL}" \
+                --cluster-id "${CLUSTER_ID}" \
+                --results-dir /tmp/results \
+                --repo "${REPO_OWNER}/${REPO_NAME}" \
+                --pr "${PULL_NUMBER}" \
+                --token "${GIT_TOKEN}" \
+              2>/dev/null || true
+
+            kubectl wait --for=condition=Ready pod/external-scan-${PULL_NUMBER} -n jx --timeout=60s 2>/dev/null || true
+            kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/external-scan-${PULL_NUMBER} -n jx --timeout=600s 2>/dev/null || {
+              echo "WARNING: External scan pod did not succeed in time"
+              kubectl logs external-scan-${PULL_NUMBER} -n jx --tail=10 2>/dev/null || true
+            }
+
+            echo ""
+            echo "=== External Scan Output ==="
+            kubectl logs external-scan-${PULL_NUMBER} -n jx --tail=40 2>/dev/null || true
+            kubectl delete pod external-scan-${PULL_NUMBER} -n jx --ignore-not-found=true 2>/dev/null || true
+
+            # ===================================================
+            # PHASE 2: Internal scan (inside preview namespace)
+            # Runs Nmap + Egress test
+            # This tests internal exposure and network isolation
+            # ===================================================
+            echo ""
+            echo "=== Phase 2: Internal Scan (inside namespace) ==="
+
+            # Apply egress deny to preview app pods
             cat <<POLICY | kubectl apply -f - 2>/dev/null || echo "WARNING: could not apply egress deny"
             apiVersion: networking.k8s.io/v1
             kind: NetworkPolicy
@@ -125,30 +162,26 @@ spec:
                       port: 53
             POLICY
 
-            # --- Deploy scan pod INTO the preview namespace ---
-            echo ""
-            echo "=== Deploying scan pod into ${PREVIEW_NS} ==="
-            kubectl delete pod ${SCAN_POD} -n ${PREVIEW_NS} --ignore-not-found=true 2>/dev/null
+            # Deploy internal scan pod into preview namespace
+            kubectl delete pod internal-scan-${PULL_NUMBER} -n ${PREVIEW_NS} --ignore-not-found=true 2>/dev/null
 
             cat <<SCANPOD | kubectl apply -f -
             apiVersion: v1
             kind: Pod
             metadata:
-              name: ${SCAN_POD}
+              name: internal-scan-${PULL_NUMBER}
               namespace: ${PREVIEW_NS}
               labels:
                 security-scan: "true"
             spec:
               restartPolicy: Never
-              activeDeadlineSeconds: 900
+              activeDeadlineSeconds: 600
               containers:
               - name: scanner
                 image: ${SCAN_IMAGE}
                 command:
-                - /app/dynamic-scan.sh
+                - /app/internal-scan.sh
                 args:
-                - --preview-url
-                - "${PREVIEW_URL}"
                 - --svc-name
                 - "${SVC_NAME}"
                 - --cluster-id
@@ -163,30 +196,25 @@ spec:
                 - "${GIT_TOKEN}"
             SCANPOD
 
-            # --- Wait for scan pod to complete ---
-            echo ""
-            echo "=== Waiting for scan pod to complete ==="
-            kubectl wait --for=condition=Ready pod/${SCAN_POD} -n ${PREVIEW_NS} --timeout=60s 2>/dev/null || true
-            kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/${SCAN_POD} -n ${PREVIEW_NS} --timeout=900s 2>/dev/null || {
-              echo "WARNING: Scan pod did not succeed"
-              kubectl get pod ${SCAN_POD} -n ${PREVIEW_NS} 2>/dev/null
-              kubectl logs ${SCAN_POD} -n ${PREVIEW_NS} --tail=20 2>/dev/null
+            kubectl wait --for=condition=Ready pod/internal-scan-${PULL_NUMBER} -n ${PREVIEW_NS} --timeout=60s 2>/dev/null || true
+            kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/internal-scan-${PULL_NUMBER} -n ${PREVIEW_NS} --timeout=600s 2>/dev/null || {
+              echo "WARNING: Internal scan pod did not succeed in time"
+              kubectl logs internal-scan-${PULL_NUMBER} -n ${PREVIEW_NS} --tail=10 2>/dev/null || true
             }
 
-            # Show scan output
             echo ""
-            echo "=== Scan Results ==="
-            kubectl logs ${SCAN_POD} -n ${PREVIEW_NS} 2>/dev/null | tail -40
+            echo "=== Internal Scan Output ==="
+            kubectl logs internal-scan-${PULL_NUMBER} -n ${PREVIEW_NS} --tail=40 2>/dev/null || true
 
             # --- Cleanup ---
             echo ""
             echo "=== Cleanup ==="
-            kubectl delete pod ${SCAN_POD} -n ${PREVIEW_NS} --ignore-not-found=true 2>/dev/null || true
+            kubectl delete pod internal-scan-${PULL_NUMBER} -n ${PREVIEW_NS} --ignore-not-found=true 2>/dev/null || true
             kubectl delete networkpolicy preview-egress-deny -n ${PREVIEW_NS} --ignore-not-found=true 2>/dev/null || true
             echo "Cleanup complete"
 
             echo ""
-            echo "=== Dynamic Security Scan Orchestration Complete ==="
+            echo "=== Dynamic Security Scan Complete ==="
   podTemplate: {}
   serviceAccountName: tekton-bot
   timeout: 30m0s
