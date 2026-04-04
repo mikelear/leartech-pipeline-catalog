@@ -1,0 +1,324 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: dynamic-security-scan
+spec:
+  pipelineSpec:
+    tasks:
+    - name: dynamic-scan
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.56
+          name: apply-network-isolation
+          resources: {}
+          script: |
+            #!/bin/bash
+            set -e
+            source .jx/variables.sh || true
+
+            PREVIEW_NAMESPACE="jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}"
+
+            echo "=== Applying Security Scan Network Isolation ==="
+            echo "Preview namespace: ${PREVIEW_NAMESPACE}"
+
+            cat <<POLICY | kubectl apply -f - || echo "WARNING: could not apply NetworkPolicy (non-blocking)"
+            apiVersion: networking.k8s.io/v1
+            kind: NetworkPolicy
+            metadata:
+              name: security-scan-isolation
+              namespace: jx
+              labels:
+                app.kubernetes.io/managed-by: security-scan-pipeline
+            spec:
+              podSelector:
+                matchLabels:
+                  security-scan: enabled
+              policyTypes:
+                - Ingress
+                - Egress
+              ingress: []
+              egress:
+                - to:
+                    - namespaceSelector:
+                        matchLabels:
+                          kubernetes.io/metadata.name: kube-system
+                      podSelector:
+                        matchLabels:
+                          k8s-app: kube-dns
+                  ports:
+                    - protocol: UDP
+                      port: 53
+                - to:
+                    - namespaceSelector:
+                        matchLabels:
+                          kubernetes.io/metadata.name: ${PREVIEW_NAMESPACE}
+                  ports:
+                    - protocol: TCP
+                      port: 80
+                    - protocol: TCP
+                      port: 443
+                    - protocol: TCP
+                      port: 8080
+            POLICY
+
+            echo "NetworkPolicy applied"
+        - image: ghcr.io/mikelear/security-tools:latest
+          name: dynamic-security-scan
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+            - name: GIT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: username
+                  optional: true
+            - name: CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-review-cluster-config
+                  key: CLUSTER_ID
+                  optional: true
+          script: |
+            #!/bin/bash
+            set -e
+            source .jx/variables.sh || true
+
+            PREVIEW_NAMESPACE="jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}"
+            CLUSTER_ID="${CLUSTER_ID:-unknown}"
+            RESULTS_DIR="/workspace/source/scan-results"
+            TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+
+            mkdir -p "${RESULTS_DIR}"
+
+            # Construct preview URL from ingress
+            echo "=== Waiting for preview ingress in ${PREVIEW_NAMESPACE} ==="
+            INGRESS_HOST=""
+            WAIT=0
+            MAX_WAIT=180
+
+            while [ -z "${INGRESS_HOST}" ] && [ $WAIT -lt $MAX_WAIT ]; do
+              INGRESS_HOST=$(curl -s -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+                --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+                "https://kubernetes.default.svc/apis/networking.k8s.io/v1/namespaces/${PREVIEW_NAMESPACE}/ingresses" 2>/dev/null \
+                | jq -r '.items[0].spec.rules[0].host // empty' 2>/dev/null)
+
+              if [ -z "${INGRESS_HOST}" ]; then
+                echo "Waiting for ingress... (${WAIT}s)"
+                sleep 10
+                WAIT=$((WAIT + 10))
+              fi
+            done
+
+            if [ -z "${INGRESS_HOST}" ]; then
+              # Fallback: construct from known pattern
+              INGRESS_HOST="preview-${APP_NAME}-${PREVIEW_NAMESPACE}.jx.leartech.com"
+              echo "WARNING: Could not fetch ingress, using constructed URL"
+            fi
+
+            PREVIEW_URL="https://${INGRESS_HOST}"
+            echo "Preview URL: ${PREVIEW_URL}"
+
+            # Wait for preview to respond
+            echo "=== Waiting for preview to respond ==="
+            WAIT=0
+            while ! curl -sk -o /dev/null -w "%{http_code}" --connect-timeout 5 "${PREVIEW_URL}" 2>/dev/null | grep -q "200\|301\|302"; do
+              if [ $WAIT -ge 120 ]; then
+                echo "WARNING: Preview not responding after 120s, proceeding anyway"
+                break
+              fi
+              echo "Waiting... (${WAIT}s)"
+              sleep 10
+              WAIT=$((WAIT + 10))
+            done
+
+            echo ""
+            echo "=========================================="
+            echo "Dynamic Security Scan [${CLUSTER_ID}]"
+            echo "=========================================="
+            echo "Repo: ${REPO_OWNER}/${REPO_NAME}"
+            echo "PR: #${PULL_NUMBER}"
+            echo "Preview: ${PREVIEW_URL}"
+            echo "Namespace: ${PREVIEW_NAMESPACE}"
+            echo "=========================================="
+
+            # --- Nikto ---
+            echo ""
+            echo "=== Nikto Web Vulnerability Scan ==="
+            nikto -h "${PREVIEW_URL}" \
+              -Format json \
+              -o "${RESULTS_DIR}/nikto.json" \
+              -timeout 10 \
+              -maxtime 300s \
+              2>&1 | tee "${RESULTS_DIR}/nikto.log" || true
+
+            # Count findings
+            NIKTO_COUNT=$(grep -c -E "OSVDB|CVE|vulnerability" "${RESULTS_DIR}/nikto.log" 2>/dev/null || echo "0")
+            NIKTO_STATUS="Pass"
+            [ "$NIKTO_COUNT" -gt 0 ] && NIKTO_STATUS="Review"
+
+            # --- Nuclei ---
+            echo ""
+            echo "=== Nuclei Vulnerability Scan ==="
+            nuclei -u "${PREVIEW_URL}" \
+              -severity low,medium,high,critical \
+              -type http \
+              -timeout 10 \
+              -rate-limit 50 \
+              -jsonl -output "${RESULTS_DIR}/nuclei.json" \
+              -silent \
+              2>&1 || true
+
+            [ -f "${RESULTS_DIR}/nuclei.json" ] || echo "" > "${RESULTS_DIR}/nuclei.json"
+
+            NUCLEI_CRITICAL=$(grep -c '"severity":"critical"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null || echo "0")
+            NUCLEI_HIGH=$(grep -c '"severity":"high"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null || echo "0")
+            NUCLEI_MEDIUM=$(grep -c '"severity":"medium"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null || echo "0")
+            NUCLEI_LOW=$(grep -c '"severity":"low"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null || echo "0")
+            NUCLEI_TOTAL=$((NUCLEI_CRITICAL + NUCLEI_HIGH + NUCLEI_MEDIUM + NUCLEI_LOW))
+
+            NUCLEI_STATUS="Pass"
+            [ "$NUCLEI_CRITICAL" -gt 0 ] || [ "$NUCLEI_HIGH" -gt 0 ] && NUCLEI_STATUS="Critical"
+            [ "$NUCLEI_STATUS" = "Pass" ] && [ "$NUCLEI_MEDIUM" -gt 0 ] && NUCLEI_STATUS="Review"
+
+            # --- Nmap ---
+            echo ""
+            echo "=== Nmap Port Scan ==="
+            SVC_HOST="${APP_NAME}.${PREVIEW_NAMESPACE}.svc.cluster.local"
+            nmap -sV -p 80,443,8080,8443 --host-timeout 120s \
+              -oN "${RESULTS_DIR}/nmap.txt" \
+              "${SVC_HOST}" 2>&1 || true
+
+            NMAP_OPEN=$(grep -c "open" "${RESULTS_DIR}/nmap.txt" 2>/dev/null || echo "0")
+            NMAP_UNEXPECTED=$(grep "open" "${RESULTS_DIR}/nmap.txt" 2>/dev/null | grep -v -E "^80/|^443/|^8080/" | wc -l | tr -d ' ' || echo "0")
+            NMAP_STATUS="Info"
+            [ "$NMAP_UNEXPECTED" -gt 0 ] && NMAP_STATUS="Review"
+
+            # --- Overall verdict ---
+            OVERALL_STATUS="Pass"
+            OVERALL_EMOJI="white_check_mark"
+            if [ "$NUCLEI_STATUS" = "Critical" ]; then
+              OVERALL_STATUS="Critical — Action Required"
+              OVERALL_EMOJI="rotating_light"
+            elif [ "$NIKTO_STATUS" = "Review" ] || [ "$NMAP_STATUS" = "Review" ] || [ "$NUCLEI_STATUS" = "Review" ]; then
+              OVERALL_STATUS="Review Recommended"
+              OVERALL_EMOJI="mag"
+            fi
+
+            # Cluster tag
+            TAG=""
+            [ -n "$CLUSTER_ID" ] && TAG=" \`[$CLUSTER_ID]\`"
+
+            # --- Build PR comment ---
+            COMMENT="## :shield: Dynamic Security Scan: **${OVERALL_STATUS}**${TAG}
+
+            **Target:** \`${PREVIEW_URL}\`
+            **Namespace:** \`${PREVIEW_NAMESPACE}\`
+
+            | Scanner | Findings | Status |
+            |---------|----------|--------|
+            | **Nuclei** (SQLi, XSS, SSRF, CVEs) | ${NUCLEI_CRITICAL} critical, ${NUCLEI_HIGH} high, ${NUCLEI_MEDIUM} medium, ${NUCLEI_LOW} low | ${NUCLEI_STATUS} |
+            | **Nikto** (Web Vulnerabilities) | ${NIKTO_COUNT} potential issues | ${NIKTO_STATUS} |
+            | **Nmap** (Port Scan) | ${NMAP_OPEN} open ports | ${NMAP_STATUS} |
+
+            <details>
+            <summary><strong>Nikto — Web Vulnerability Scan</strong></summary>
+
+            \`\`\`
+            $(grep -E 'OSVDB|CVE|\+ ' "${RESULTS_DIR}/nikto.log" 2>/dev/null | head -30 || echo 'No significant findings')
+            \`\`\`
+
+            </details>
+
+            <details>
+            <summary><strong>Nuclei — Vulnerability Scanner</strong></summary>
+
+            \`\`\`
+            $(head -50 "${RESULTS_DIR}/nuclei.json" 2>/dev/null | jq -r '"\(.info.severity // "info") | \(.info.name // .template_id) | \(.matched_at // .host)"' 2>/dev/null || echo 'No vulnerabilities detected')
+            \`\`\`
+
+            </details>
+
+            <details>
+            <summary><strong>Nmap — Port Scan</strong></summary>
+
+            \`\`\`
+            $(cat "${RESULTS_DIR}/nmap.txt" 2>/dev/null || echo 'No results')
+            \`\`\`
+
+            </details>
+
+            ---
+
+            **Severity Guide:**
+            - **Critical** — High/critical vulnerabilities found, immediate action required
+            - **Review** — Medium severity issues, should be investigated
+            - **Info** — Low severity or informational findings
+            - **Pass** — No issues detected
+
+            *Generated by leartech Dynamic Security Scan Pipeline*"
+
+            # Post to PR
+            if [ -z "$GIT_TOKEN" ] || [ -z "$PULL_NUMBER" ]; then
+              echo "No GIT_TOKEN or PULL_NUMBER — printing report only"
+              echo "$COMMENT"
+              exit 0
+            fi
+
+            BODY=$(echo "$COMMENT" | jq -Rs '.')
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              -H "Authorization: token $GIT_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments" \
+              -d "{\"body\": ${BODY}}")
+
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              echo "Posted dynamic scan results to PR #${PULL_NUMBER}"
+            else
+              echo "Failed to post (HTTP ${HTTP_CODE})"
+            fi
+
+            echo ""
+            echo "=== Dynamic Security Scan Complete ==="
+
+            # Fail on critical findings
+            if [ "$NUCLEI_STATUS" = "Critical" ]; then
+              echo "CRITICAL vulnerabilities found — failing pipeline"
+              exit 1
+            fi
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.56
+          name: remove-network-isolation
+          resources: {}
+          script: |
+            #!/bin/bash
+            echo "=== Removing Security Scan Network Isolation ==="
+            kubectl delete networkpolicy security-scan-isolation -n jx --ignore-not-found=true
+            echo "NetworkPolicy removed"
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}
