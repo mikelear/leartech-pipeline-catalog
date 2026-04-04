@@ -8,11 +8,8 @@ ifdef AZURE
   CONTEXT := --context modern-burro-admin
 endif
 
-.DEFAULT_GOAL := help
-
-.PHONY: help test-static test-image test-dynamic test-all clean logs
-
 help:
+	@# Default target — show usage
 	@echo ""
 	@echo "  Leartech Pipeline Catalog — Test Harness"
 	@echo "  ========================================="
@@ -101,3 +98,5 @@ clean: clean-static clean-image clean-dynamic
 
 logs:
 	kubectl $(CONTEXT) logs -n $(NAMESPACE) $(TASK)-scan-test -f
+
+.PHONY: help test-static test-image test-dynamic test-all clean clean-static clean-image clean-dynamic logs
