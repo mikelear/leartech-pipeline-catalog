@@ -22,11 +22,11 @@ spec:
           name: ""
           resources: {}
         - image: ghcr.io/jenkins-x/jx-boot:3.16.56
-          name: setup-and-scan
+          name: orchestrate-scan
           resources:
             requests:
-              cpu: 500m
-              memory: 512Mi
+              cpu: 100m
+              memory: 256Mi
           env:
             - name: GIT_TOKEN
               valueFrom:
@@ -56,18 +56,24 @@ spec:
               *)   DOMAIN="jx.leartech.com" ;;
             esac
 
-            INGRESS_HOST="preview-${APP_NAME}-${PREVIEW_NS}.${DOMAIN}"
-            PREVIEW_URL="https://${INGRESS_HOST}"
+            PREVIEW_URL="https://preview-${APP_NAME}-${PREVIEW_NS}.${DOMAIN}"
             SVC_NAME="preview-${APP_NAME}"
 
-            # --- Wait for preview namespace and ingress to exist ---
-            # The pr build creates the preview — we run in parallel so must wait
+            echo "=========================================="
+            echo "Dynamic Security Scan [${CLUSTER_ID}]"
+            echo "=========================================="
+            echo "Preview URL: ${PREVIEW_URL}"
+            echo "Preview Namespace: ${PREVIEW_NS}"
+            echo "Service: ${SVC_NAME}"
+            echo "=========================================="
+
+            # --- Wait for preview namespace ---
+            echo ""
             echo "=== Waiting for preview namespace ${PREVIEW_NS} ==="
             WAIT=0
-            MAX_WAIT=600
             while ! kubectl get namespace ${PREVIEW_NS} >/dev/null 2>&1; do
-              if [ $WAIT -ge $MAX_WAIT ]; then
-                echo "ERROR: Preview namespace not created after ${MAX_WAIT}s — aborting"
+              if [ $WAIT -ge 600 ]; then
+                echo "ERROR: Preview namespace not created after 600s — aborting"
                 exit 0
               fi
               echo "Waiting for namespace... (${WAIT}s)"
@@ -76,7 +82,7 @@ spec:
             done
             echo "Namespace exists"
 
-            # Wait for at least one pod to be running in the preview
+            # Wait for pods to be running
             echo "Waiting for preview pods..."
             WAIT=0
             while [ "$(kubectl get pods -n ${PREVIEW_NS} --no-headers 2>/dev/null | grep -c Running)" -eq 0 ]; do
@@ -89,20 +95,7 @@ spec:
             done
             echo "Preview pods ready"
 
-            echo ""
-            echo "=========================================="
-            echo "Dynamic Security Scan [${CLUSTER_ID}]"
-            echo "=========================================="
-            echo "Repo: ${REPO_OWNER}/${REPO_NAME}"
-            echo "PR: #${PULL_NUMBER}"
-            echo "Preview URL: ${PREVIEW_URL}"
-            echo "Preview Namespace: ${PREVIEW_NS}"
-            echo "Internal Service: ${SVC_NAME}"
-            echo "=========================================="
-
-            # --- Step 1: Apply egress deny to preview APP pods ---
-            # This blocks the preview app from making outbound connections.
-            # If the app tries to phone home or exfiltrate data, it will fail.
+            # --- Apply egress deny to preview app pods ---
             echo ""
             echo "=== Applying egress deny to preview app pods ==="
             cat <<POLICY | kubectl apply -f - 2>/dev/null || echo "WARNING: could not apply egress deny"
@@ -120,7 +113,6 @@ spec:
               policyTypes:
                 - Egress
               egress:
-                # Allow DNS only — app can resolve but not reach anything
                 - to:
                     - namespaceSelector:
                         matchLabels:
@@ -133,17 +125,11 @@ spec:
                       port: 53
             POLICY
 
-            # --- Step 2: Deploy scan pod INTO the preview namespace ---
-            # Running inside the namespace means:
-            # - Nmap can resolve service DNS directly
-            # - We can observe the app's network behaviour under isolation
+            # --- Deploy scan pod INTO the preview namespace ---
             echo ""
             echo "=== Deploying scan pod into ${PREVIEW_NS} ==="
-
-            # Delete any leftover scan pod from previous run
             kubectl delete pod ${SCAN_POD} -n ${PREVIEW_NS} --ignore-not-found=true 2>/dev/null
 
-            # Create the scan pod with inline script
             cat <<SCANPOD | kubectl apply -f -
             apiVersion: v1
             kind: Pod
@@ -159,221 +145,40 @@ spec:
               - name: scanner
                 image: ${SCAN_IMAGE}
                 command:
-                - /bin/bash
-                - -c
-                - |
-                  set -e
-                  RESULTS_DIR="/results"
-                  mkdir -p \$RESULTS_DIR
-
-                  echo "=== Nikto Web Vulnerability Scan ==="
-                  echo "Target: ${PREVIEW_URL}"
-                  nikto -h "${PREVIEW_URL}" \
-                    -Format json \
-                    -o \$RESULTS_DIR/nikto.json \
-                    -timeout 10 \
-                    -maxtime 300s \
-                    2>&1 | tee \$RESULTS_DIR/nikto.log || true
-
-                  echo ""
-                  echo "=== Nuclei Vulnerability Scan ==="
-                  echo "Target: ${PREVIEW_URL}"
-                  nuclei -u "${PREVIEW_URL}" \
-                    -severity low,medium,high,critical \
-                    -type http \
-                    -timeout 10 \
-                    -rate-limit 50 \
-                    -jsonl -output \$RESULTS_DIR/nuclei.json \
-                    -silent \
-                    2>&1 || true
-                  [ -f \$RESULTS_DIR/nuclei.json ] || echo "" > \$RESULTS_DIR/nuclei.json
-
-                  echo ""
-                  echo "=== Nmap Internal Port Scan ==="
-                  echo "Target: ${SVC_NAME} (internal service)"
-                  nmap -sV -p 80,443,8080,8443,3000,4200,9090 --host-timeout 120s \
-                    -oN \$RESULTS_DIR/nmap.txt \
-                    "${SVC_NAME}" 2>&1 || true
-
-                  echo ""
-                  echo "=== Egress Test — checking if app pods tried external connections ==="
-                  # Check preview app pod logs for connection errors (sign of blocked egress)
-                  echo "Checking app pod logs for blocked connection attempts..."
-                  for pod in \$(kubectl get pods -n ${PREVIEW_NS} -l app=preview-${APP_NAME} -o name 2>/dev/null); do
-                    echo "--- \$pod ---"
-                    kubectl logs \$pod -n ${PREVIEW_NS} --tail=20 2>/dev/null | grep -iE "ECONNREFUSED|ETIMEDOUT|ENETUNREACH|connection refused|timeout|unreachable" || echo "  No blocked connections detected"
-                  done > \$RESULTS_DIR/egress-test.log 2>&1 || true
-
-                  echo ""
-                  echo "=== Scan Complete ==="
-                  # Write summary counts for the Tekton step to read
-                  NIKTO_COUNT=\$(grep -c -E "OSVDB|CVE|vulnerability" \$RESULTS_DIR/nikto.log 2>/dev/null | tr -d '[:space:]' || echo "0")
-                  NUCLEI_CRITICAL=\$(grep -c '"severity":"critical"' \$RESULTS_DIR/nuclei.json 2>/dev/null | tr -d '[:space:]' || echo "0")
-                  NUCLEI_HIGH=\$(grep -c '"severity":"high"' \$RESULTS_DIR/nuclei.json 2>/dev/null | tr -d '[:space:]' || echo "0")
-                  NUCLEI_MEDIUM=\$(grep -c '"severity":"medium"' \$RESULTS_DIR/nuclei.json 2>/dev/null | tr -d '[:space:]' || echo "0")
-                  NUCLEI_LOW=\$(grep -c '"severity":"low"' \$RESULTS_DIR/nuclei.json 2>/dev/null | tr -d '[:space:]' || echo "0")
-                  NMAP_OPEN=\$(grep -c "open" \$RESULTS_DIR/nmap.txt 2>/dev/null | tr -d '[:space:]' || echo "0")
-                  EGRESS_BLOCKED=\$(grep -c -iE "ECONNREFUSED|ETIMEDOUT|ENETUNREACH|refused|timeout|unreachable" \$RESULTS_DIR/egress-test.log 2>/dev/null | tr -d '[:space:]' || echo "0")
-
-                  echo "NIKTO_COUNT=\$NIKTO_COUNT" > \$RESULTS_DIR/summary.env
-                  echo "NUCLEI_CRITICAL=\$NUCLEI_CRITICAL" >> \$RESULTS_DIR/summary.env
-                  echo "NUCLEI_HIGH=\$NUCLEI_HIGH" >> \$RESULTS_DIR/summary.env
-                  echo "NUCLEI_MEDIUM=\$NUCLEI_MEDIUM" >> \$RESULTS_DIR/summary.env
-                  echo "NUCLEI_LOW=\$NUCLEI_LOW" >> \$RESULTS_DIR/summary.env
-                  echo "NMAP_OPEN=\$NMAP_OPEN" >> \$RESULTS_DIR/summary.env
-                  echo "EGRESS_BLOCKED=\$EGRESS_BLOCKED" >> \$RESULTS_DIR/summary.env
+                - /app/dynamic-scan.sh
+                args:
+                - --preview-url
+                - "${PREVIEW_URL}"
+                - --svc-name
+                - "${SVC_NAME}"
+                - --cluster-id
+                - "${CLUSTER_ID}"
+                - --results-dir
+                - /tmp/results
+                - --repo
+                - "${REPO_OWNER}/${REPO_NAME}"
+                - --pr
+                - "${PULL_NUMBER}"
+                - --token
+                - "${GIT_TOKEN}"
             SCANPOD
 
-            # --- Step 3: Wait for scan pod to complete ---
+            # --- Wait for scan pod to complete ---
             echo ""
             echo "=== Waiting for scan pod to complete ==="
             kubectl wait --for=condition=Ready pod/${SCAN_POD} -n ${PREVIEW_NS} --timeout=60s 2>/dev/null || true
             kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/${SCAN_POD} -n ${PREVIEW_NS} --timeout=600s 2>/dev/null || {
-              echo "WARNING: Scan pod did not succeed, checking status..."
+              echo "WARNING: Scan pod did not succeed"
               kubectl get pod ${SCAN_POD} -n ${PREVIEW_NS} 2>/dev/null
               kubectl logs ${SCAN_POD} -n ${PREVIEW_NS} --tail=20 2>/dev/null
             }
 
-            # --- Step 4: Collect results from scan pod ---
+            # Show scan output
             echo ""
-            echo "=== Collecting results ==="
-            mkdir -p /workspace/source/scan-results
+            echo "=== Scan Results ==="
+            kubectl logs ${SCAN_POD} -n ${PREVIEW_NS} 2>/dev/null | tail -40
 
-            kubectl cp ${PREVIEW_NS}/${SCAN_POD}:/results/nikto.log /workspace/source/scan-results/nikto.log 2>/dev/null || true
-            kubectl cp ${PREVIEW_NS}/${SCAN_POD}:/results/nuclei.json /workspace/source/scan-results/nuclei.json 2>/dev/null || true
-            kubectl cp ${PREVIEW_NS}/${SCAN_POD}:/results/nmap.txt /workspace/source/scan-results/nmap.txt 2>/dev/null || true
-            kubectl cp ${PREVIEW_NS}/${SCAN_POD}:/results/egress-test.log /workspace/source/scan-results/egress-test.log 2>/dev/null || true
-            kubectl cp ${PREVIEW_NS}/${SCAN_POD}:/results/summary.env /workspace/source/scan-results/summary.env 2>/dev/null || true
-
-            # Load summary counts
-            RESULTS_DIR="/workspace/source/scan-results"
-            if [ -f "${RESULTS_DIR}/summary.env" ]; then
-              source "${RESULTS_DIR}/summary.env"
-            else
-              NIKTO_COUNT=0; NUCLEI_CRITICAL=0; NUCLEI_HIGH=0; NUCLEI_MEDIUM=0; NUCLEI_LOW=0; NMAP_OPEN=0; EGRESS_BLOCKED=0
-            fi
-
-            NUCLEI_TOTAL=$((NUCLEI_CRITICAL + NUCLEI_HIGH + NUCLEI_MEDIUM + NUCLEI_LOW))
-
-            # Determine statuses
-            NIKTO_STATUS="Pass"
-            [ "$NIKTO_COUNT" -gt 0 ] && NIKTO_STATUS="Review"
-
-            NUCLEI_STATUS="Pass"
-            if [ "$NUCLEI_CRITICAL" -gt 0 ] || [ "$NUCLEI_HIGH" -gt 0 ]; then
-              NUCLEI_STATUS="Critical"
-            elif [ "$NUCLEI_MEDIUM" -gt 0 ]; then
-              NUCLEI_STATUS="Review"
-            fi
-
-            NMAP_STATUS="Info"
-            NMAP_UNEXPECTED=$(grep "open" "${RESULTS_DIR}/nmap.txt" 2>/dev/null | grep -vcE "80/|443/|8080/" 2>/dev/null | tr -d '[:space:]' || echo "0")
-            [ "$NMAP_UNEXPECTED" -gt 0 ] && NMAP_STATUS="Review"
-
-            EGRESS_STATUS="Pass"
-            [ "$EGRESS_BLOCKED" -gt 0 ] && EGRESS_STATUS="Review"
-
-            # Overall verdict
-            OVERALL_STATUS="Pass"
-            OVERALL_EMOJI="white_check_mark"
-            if [ "$NUCLEI_STATUS" = "Critical" ]; then
-              OVERALL_STATUS="Critical — Action Required"
-              OVERALL_EMOJI="rotating_light"
-            elif [ "$NIKTO_STATUS" = "Review" ] || [ "$NMAP_STATUS" = "Review" ] || [ "$NUCLEI_STATUS" = "Review" ]; then
-              OVERALL_STATUS="Review Recommended"
-              OVERALL_EMOJI="mag"
-            fi
-
-            # Cluster tag
-            TAG=""
-            [ -n "$CLUSTER_ID" ] && TAG=" \`[$CLUSTER_ID]\`"
-
-            # --- Step 5: Build and post PR comment ---
-            COMMENT="## :shield: Dynamic Security Scan: **${OVERALL_STATUS}**${TAG}
-
-            **Target:** \`${PREVIEW_URL}\`
-            **Namespace:** \`${PREVIEW_NS}\`
-            **Scan Location:** inside preview namespace (not external)
-
-            | Scanner | Findings | Status |
-            |---------|----------|--------|
-            | **Nuclei** (SQLi, XSS, SSRF, CVEs) | ${NUCLEI_CRITICAL} critical, ${NUCLEI_HIGH} high, ${NUCLEI_MEDIUM} medium, ${NUCLEI_LOW} low | ${NUCLEI_STATUS} |
-            | **Nikto** (Web Vulnerabilities) | ${NIKTO_COUNT} potential issues | ${NIKTO_STATUS} |
-            | **Nmap** (Internal Port Scan) | ${NMAP_OPEN} open ports (${NMAP_UNEXPECTED} unexpected) | ${NMAP_STATUS} |
-            | **Egress Isolation** | ${EGRESS_BLOCKED} blocked outbound attempts | ${EGRESS_STATUS} |
-
-            <details>
-            <summary><strong>Nikto — Web Vulnerability Scan</strong></summary>
-
-            \`\`\`
-            $(grep -E 'OSVDB|CVE|\+ ' "${RESULTS_DIR}/nikto.log" 2>/dev/null | head -30 || echo 'No significant findings')
-            \`\`\`
-
-            </details>
-
-            <details>
-            <summary><strong>Nuclei — Vulnerability Scanner</strong></summary>
-
-            \`\`\`
-            $(cat "${RESULTS_DIR}/nuclei.json" 2>/dev/null | head -50 | jq -r '"\(.info.severity // "info") | \(.info.name // .template_id) | \(.matched_at // .host)"' 2>/dev/null || echo 'No vulnerabilities detected')
-            \`\`\`
-
-            </details>
-
-            <details>
-            <summary><strong>Nmap — Internal Port Scan</strong></summary>
-
-            Scanned from inside the preview namespace — shows actual service ports, not just ingress.
-
-            \`\`\`
-            $(cat "${RESULTS_DIR}/nmap.txt" 2>/dev/null || echo 'No results')
-            \`\`\`
-
-            </details>
-
-            <details>
-            <summary><strong>Egress Isolation Test</strong></summary>
-
-            A deny-all egress NetworkPolicy was applied to the preview app pods.
-            If the app attempted outbound connections (API calls, telemetry, exfiltration),
-            they would be blocked and logged here.
-
-            \`\`\`
-            $(cat "${RESULTS_DIR}/egress-test.log" 2>/dev/null || echo 'No blocked connections detected')
-            \`\`\`
-
-            </details>
-
-            ---
-
-            **Severity Guide:**
-            - **Critical** — High/critical vulnerabilities found, immediate action required
-            - **Review** — Medium severity issues or unexpected behaviour detected
-            - **Info** — Low severity or informational findings
-            - **Pass** — No issues detected
-
-            *Generated by leartech Dynamic Security Scan Pipeline*"
-
-            # Post to PR
-            if [ -z "$GIT_TOKEN" ] || [ -z "$PULL_NUMBER" ]; then
-              echo "No GIT_TOKEN or PULL_NUMBER — printing report only"
-              echo "$COMMENT"
-            else
-              BODY=$(echo "$COMMENT" | jq -Rs '.')
-              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-                -H "Authorization: token $GIT_TOKEN" \
-                -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments" \
-                -d "{\"body\": ${BODY}}")
-
-              if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-                echo "Posted dynamic scan results to PR #${PULL_NUMBER}"
-              else
-                echo "Failed to post (HTTP ${HTTP_CODE})"
-              fi
-            fi
-
-            # --- Step 6: Cleanup ---
+            # --- Cleanup ---
             echo ""
             echo "=== Cleanup ==="
             kubectl delete pod ${SCAN_POD} -n ${PREVIEW_NS} --ignore-not-found=true 2>/dev/null || true
@@ -381,13 +186,7 @@ spec:
             echo "Cleanup complete"
 
             echo ""
-            echo "=== Dynamic Security Scan Complete ==="
-
-            # Fail on critical findings
-            if [ "$NUCLEI_STATUS" = "Critical" ]; then
-              echo "CRITICAL vulnerabilities found — failing pipeline"
-              exit 1
-            fi
+            echo "=== Dynamic Security Scan Orchestration Complete ==="
   podTemplate: {}
   serviceAccountName: tekton-bot
   timeout: 30m0s

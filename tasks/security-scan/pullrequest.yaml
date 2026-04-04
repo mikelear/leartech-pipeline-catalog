@@ -22,85 +22,8 @@ spec:
           name: ""
           resources: {}
         - image: ghcr.io/mikelear/security-tools:latest
-          name: gitleaks-scan
-          env:
-            - name: CLUSTER_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: ai-review-cluster-config
-                  key: CLUSTER_ID
-                  optional: true
-          script: |
-            #!/bin/bash
-            set -e
-            echo "=== Gitleaks: scanning for secrets in PR diff ==="
-
-            # Scan the repo for secrets (detect mode — no git history, just working tree)
-            gitleaks detect --source /workspace/source \
-              --no-git \
-              --report-format json \
-              --report-path /workspace/gitleaks-report.json \
-              --exit-code 0 || true
-
-            FINDINGS=$(jq 'length' /workspace/gitleaks-report.json 2>/dev/null || echo "0")
-            echo "Gitleaks findings: $FINDINGS"
-
-            # Write summary for the comment step
-            if [ "$FINDINGS" -gt 0 ]; then
-              echo "FAIL" > /workspace/gitleaks-verdict.txt
-              # Extract finding details
-              jq -r '.[] | "| \(.RuleID) | \(.File):\(.StartLine) | \(.Description) |"' \
-                /workspace/gitleaks-report.json > /workspace/gitleaks-table.txt
-            else
-              echo "PASS" > /workspace/gitleaks-verdict.txt
-              echo "" > /workspace/gitleaks-table.txt
-            fi
-            echo "$FINDINGS" > /workspace/gitleaks-count.txt
-        - image: ghcr.io/mikelear/security-tools:latest
-          name: semgrep-scan
-          env:
-            - name: CLUSTER_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: ai-review-cluster-config
-                  key: CLUSTER_ID
-                  optional: true
-          script: |
-            #!/bin/bash
-            set -e
-            echo "=== Semgrep: static analysis ==="
-
-            # Run semgrep with auto config (uses curated rules)
-            semgrep scan --config auto \
-              --json \
-              --output /workspace/semgrep-report.json \
-              /workspace/source 2>/dev/null || true
-
-            # Parse results
-            ERRORS=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' /workspace/semgrep-report.json 2>/dev/null || echo "0")
-            WARNINGS=$(jq '[.results[] | select(.extra.severity == "WARNING")] | length' /workspace/semgrep-report.json 2>/dev/null || echo "0")
-            INFOS=$(jq '[.results[] | select(.extra.severity == "INFO")] | length' /workspace/semgrep-report.json 2>/dev/null || echo "0")
-            TOTAL=$((ERRORS + WARNINGS + INFOS))
-            echo "Semgrep findings: $TOTAL (errors=$ERRORS, warnings=$WARNINGS, info=$INFOS)"
-
-            # Write summary
-            if [ "$ERRORS" -gt 0 ]; then
-              echo "FAIL" > /workspace/semgrep-verdict.txt
-            elif [ "$WARNINGS" -gt 0 ]; then
-              echo "WARN" > /workspace/semgrep-verdict.txt
-            else
-              echo "PASS" > /workspace/semgrep-verdict.txt
-            fi
-
-            echo "$ERRORS" > /workspace/semgrep-errors.txt
-            echo "$WARNINGS" > /workspace/semgrep-warnings.txt
-            echo "$INFOS" > /workspace/semgrep-infos.txt
-
-            # Build findings table (top 20 to avoid huge comments)
-            jq -r '.results[:20][] | "| \(.extra.severity) | \(.check_id | split(".")[-1]) | \(.path):\(.start.line) | \(.extra.message | gsub("\n"; " ") | .[:80]) |"' \
-              /workspace/semgrep-report.json > /workspace/semgrep-table.txt 2>/dev/null || echo "" > /workspace/semgrep-table.txt
-        - image: ghcr.io/mikelear/security-tools:latest
-          name: post-results
+          name: static-security-scan
+          resources: {}
           env:
             - name: GIT_TOKEN
               valueFrom:
@@ -116,94 +39,12 @@ spec:
                   optional: true
           script: |
             #!/bin/bash
-            set -e
-            echo "=== Posting security scan results to PR ==="
-
-            # Read scan results
-            GL_VERDICT=$(cat /workspace/gitleaks-verdict.txt 2>/dev/null || echo "SKIP")
-            GL_COUNT=$(cat /workspace/gitleaks-count.txt 2>/dev/null || echo "0")
-            SG_VERDICT=$(cat /workspace/semgrep-verdict.txt 2>/dev/null || echo "SKIP")
-            SG_ERRORS=$(cat /workspace/semgrep-errors.txt 2>/dev/null || echo "0")
-            SG_WARNINGS=$(cat /workspace/semgrep-warnings.txt 2>/dev/null || echo "0")
-            SG_INFOS=$(cat /workspace/semgrep-infos.txt 2>/dev/null || echo "0")
-
-            # Overall verdict
-            if [ "$GL_VERDICT" = "FAIL" ] || [ "$SG_VERDICT" = "FAIL" ]; then
-              OVERALL="FAIL"
-              ICON="x"
-            elif [ "$SG_VERDICT" = "WARN" ]; then
-              OVERALL="WARN"
-              ICON="warning"
-            else
-              OVERALL="PASS"
-              ICON="white_check_mark"
-            fi
-
-            # Cluster tag
-            TAG=""
-            if [ -n "$CLUSTER_ID" ]; then
-              TAG=" \`[$CLUSTER_ID]\`"
-            fi
-
-            # Build comment body
-            COMMENT="## :shield: Security Scan: **${OVERALL}**${TAG}
-
-            | Scanner | Verdict | Findings |
-            |---|---|---|
-            | Gitleaks (secrets) | ${GL_VERDICT} | ${GL_COUNT} leaked secrets |
-            | Semgrep (SAST) | ${SG_VERDICT} | ${SG_ERRORS} errors, ${SG_WARNINGS} warnings, ${SG_INFOS} info |"
-
-            # Add Gitleaks details if findings
-            if [ "$GL_COUNT" -gt 0 ]; then
-              COMMENT="${COMMENT}
-
-            ### :rotating_light: Gitleaks — Leaked Secrets
-
-            | Rule | Location | Description |
-            |---|---|---|
-            $(cat /workspace/gitleaks-table.txt)"
-            fi
-
-            # Add Semgrep details if findings
-            SG_TOTAL=$((SG_ERRORS + SG_WARNINGS + SG_INFOS))
-            if [ "$SG_TOTAL" -gt 0 ]; then
-              COMMENT="${COMMENT}
-
-            ### :mag: Semgrep — Static Analysis
-
-            | Severity | Rule | Location | Message |
-            |---|---|---|---|
-            $(cat /workspace/semgrep-table.txt)"
-
-              if [ "$SG_TOTAL" -gt 20 ]; then
-                COMMENT="${COMMENT}
-            > Showing top 20 of ${SG_TOTAL} findings"
-              fi
-            fi
-
-            # Post to PR via GitHub API
-            if [ -z "$GIT_TOKEN" ]; then
-              echo "WARNING: No GIT_TOKEN, cannot post to PR"
-              echo "$COMMENT"
-              exit 0
-            fi
-
-            # Use jq to safely escape the comment for JSON
-            BODY=$(echo "$COMMENT" | jq -Rs '.')
-
-            curl -s -X POST \
-              -H "Authorization: token $GIT_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments" \
-              -d "{\"body\": ${BODY}}" > /dev/null
-
-            echo "Posted security scan results to PR #${PULL_NUMBER}"
-
-            # Fail the pipeline if critical issues
-            if [ "$OVERALL" = "FAIL" ]; then
-              echo "Security scan FAILED — PR needs attention"
-              exit 1
-            fi
+            /app/static-scan.sh \
+              --source-dir /workspace/source \
+              --cluster-id "${CLUSTER_ID:-unknown}" \
+              --repo "${REPO_OWNER}/${REPO_NAME}" \
+              --pr "${PULL_NUMBER}" \
+              --token "${GIT_TOKEN}"
   podTemplate: {}
   serviceAccountName: tekton-bot
   timeout: 30m0s
