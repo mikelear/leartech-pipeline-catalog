@@ -27,9 +27,8 @@ spec:
           script: |
             #!/bin/bash
             set -e
-            source .jx/variables.sh || true
 
-            PREVIEW_NAMESPACE="jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}"
+            PREVIEW_NAMESPACE="jx-${REPO_OWNER}-${REPO_NAME}-pr-${PULL_NUMBER}"
 
             echo "=== Applying Security Scan Network Isolation ==="
             echo "Preview namespace: ${PREVIEW_NAMESPACE}"
@@ -106,8 +105,10 @@ spec:
           script: |
             #!/bin/bash
             set -e
-            source .jx/variables.sh || true
 
+            # Lighthouse provides REPO_OWNER, REPO_NAME, PULL_NUMBER as env vars
+            # APP_NAME is not available without jx-variables step, so derive from REPO_NAME
+            APP_NAME="${REPO_NAME}"
             PREVIEW_NAMESPACE="jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}"
             CLUSTER_ID="${CLUSTER_ID:-unknown}"
             RESULTS_DIR="/workspace/source/scan-results"
@@ -116,7 +117,7 @@ spec:
             mkdir -p "${RESULTS_DIR}"
 
             # Construct preview URL from JX3 naming convention
-            # Pattern: preview-{APP_NAME}-jx-{OWNER}-{APP_NAME}-pr-{NUMBER}.{DOMAIN}
+            # Pattern: preview-{APP_NAME}-{PREVIEW_NAMESPACE}.{DOMAIN}
             case "$CLUSTER_ID" in
               az)  DOMAIN="az.leartech.com" ;;
               gcp) DOMAIN="jx.leartech.com" ;;
@@ -126,6 +127,7 @@ spec:
             INGRESS_HOST="preview-${APP_NAME}-${PREVIEW_NAMESPACE}.${DOMAIN}"
             PREVIEW_URL="https://${INGRESS_HOST}"
             echo "Preview URL: ${PREVIEW_URL}"
+            echo "Namespace: ${PREVIEW_NAMESPACE}"
 
             # Wait for preview to respond
             echo "=== Waiting for preview to respond ==="
@@ -179,10 +181,10 @@ spec:
 
             [ -f "${RESULTS_DIR}/nuclei.json" ] || echo "" > "${RESULTS_DIR}/nuclei.json"
 
-            NUCLEI_CRITICAL=$(grep -c '"severity":"critical"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null || echo "0")
-            NUCLEI_HIGH=$(grep -c '"severity":"high"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null || echo "0")
-            NUCLEI_MEDIUM=$(grep -c '"severity":"medium"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null || echo "0")
-            NUCLEI_LOW=$(grep -c '"severity":"low"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null || echo "0")
+            NUCLEI_CRITICAL=$(grep -c '"severity":"critical"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null | tr -d '\n' || echo "0")
+            NUCLEI_HIGH=$(grep -c '"severity":"high"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null | tr -d '\n' || echo "0")
+            NUCLEI_MEDIUM=$(grep -c '"severity":"medium"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null | tr -d '\n' || echo "0")
+            NUCLEI_LOW=$(grep -c '"severity":"low"' "${RESULTS_DIR}/nuclei.json" 2>/dev/null | tr -d '\n' || echo "0")
             NUCLEI_TOTAL=$((NUCLEI_CRITICAL + NUCLEI_HIGH + NUCLEI_MEDIUM + NUCLEI_LOW))
 
             NUCLEI_STATUS="Pass"
