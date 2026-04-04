@@ -167,7 +167,7 @@ spec:
             echo ""
             echo "=== Waiting for scan pod to complete ==="
             kubectl wait --for=condition=Ready pod/${SCAN_POD} -n ${PREVIEW_NS} --timeout=60s 2>/dev/null || true
-            kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/${SCAN_POD} -n ${PREVIEW_NS} --timeout=600s 2>/dev/null || {
+            kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/${SCAN_POD} -n ${PREVIEW_NS} --timeout=900s 2>/dev/null || {
               echo "WARNING: Scan pod did not succeed"
               kubectl get pod ${SCAN_POD} -n ${PREVIEW_NS} 2>/dev/null
               kubectl logs ${SCAN_POD} -n ${PREVIEW_NS} --tail=20 2>/dev/null
