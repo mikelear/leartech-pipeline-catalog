@@ -1,0 +1,29 @@
+# Test external scan against pipeline-test nginx (through ingress)
+# Usage: kubectl apply -f test/taskrun-external-scan.yaml
+# Check: kubectl logs -n pipeline-test external-scan-test -f
+apiVersion: v1
+kind: Pod
+metadata:
+  name: external-scan-test
+  namespace: pipeline-test
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 600
+  containers:
+  - name: scanner
+    image: ghcr.io/mikelear/security-tools:latest
+    command:
+    - /app/external-scan.sh
+    args:
+    - --preview-url
+    - https://pipeline-test.jx.leartech.com
+    - --cluster-id
+    - test
+    - --results-dir
+    - /tmp/results
+    - --repo
+    - mikelear/future-lending-ui
+    - --pr
+    - "0"
+    - --token
+    - ""

@@ -1,0 +1,29 @@
+# Test internal scan against pipeline-test nginx (inside namespace)
+# Usage: kubectl apply -f test/taskrun-internal-scan.yaml
+# Check: kubectl logs -n pipeline-test internal-scan-test -f
+apiVersion: v1
+kind: Pod
+metadata:
+  name: internal-scan-test
+  namespace: pipeline-test
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 600
+  containers:
+  - name: scanner
+    image: ghcr.io/mikelear/security-tools:latest
+    command:
+    - /app/internal-scan.sh
+    args:
+    - --svc-name
+    - test-app
+    - --cluster-id
+    - test
+    - --results-dir
+    - /tmp/results
+    - --repo
+    - mikelear/future-lending-ui
+    - --pr
+    - "0"
+    - --token
+    - ""

@@ -10,7 +10,7 @@ Shared Tekton pipeline tasks for JX3 clusters. App repos reference these tasks v
 | `tasks/ai-review/feedback.yaml` | `/ai-feedback` comment | Process review feedback for training data |
 | `tasks/security-scan/pullrequest.yaml` | PR | Gitleaks (secrets) + Semgrep (SAST) |
 | `tasks/security-scan/image-scan.yaml` | PR | Grype dependency vulnerability scan |
-| `tasks/security-scan/dynamic/pullrequest.yaml` | PR | Nuclei + Nikto + Nmap against live preview environment |
+| `tasks/security-scan/dynamic/pullrequest.yaml` | PR | External scan (Nikto + Nuclei through ingress) + Internal scan (Nmap + egress isolation inside namespace) |
 | `tasks/helm/release.yaml` | Merge to main | Helm release with cosign image signing |
 | `tasks/tools/preview-copy-secrets.yaml` | PR | Copy secrets to preview namespaces |
 
@@ -224,29 +224,35 @@ This prints:
   Usage:  make -f test/Makefile <target> [AZURE=1]
 
   Targets:
-    test-static     Run Gitleaks + Semgrep against test data
-    test-image      Run Grype dependency scan against test data
-    test-dynamic    Run Nuclei + Nikto + Nmap against pipeline-test nginx
-    test-all        Run all scan tests sequentially
+    test-static      Run Gitleaks + Semgrep against test data
+    test-image       Run Grype dependency scan against test data
+    test-dynamic     Run both external + internal scans (full dynamic)
+    test-external    Run Nikto + Nuclei through ingress (attacker view)
+    test-internal    Run Nmap + egress test inside namespace
+    test-all         Run all scan tests sequentially
 
-    logs TASK=x     Tail logs for a test (x = static, image, or dynamic)
-    clean           Delete all test pods
+    logs TASK=x      Tail logs (x = static, image, dynamic, external, internal)
+    clean            Delete all test pods
 
   Options:
-    AZURE=1         Run against Azure cluster (modern-burro-admin context)
+    AZURE=1          Run against Azure cluster (modern-burro-admin context)
 
   Examples:
-    make -f test/Makefile test-static            # GCP static scan
-    make -f test/Makefile test-dynamic AZURE=1   # Azure dynamic scan
-    make -f test/Makefile test-all               # All scans on GCP
-    make -f test/Makefile logs TASK=dynamic      # Watch dynamic scan logs
+    make -f test/Makefile test-static              # GCP static scan
+    make -f test/Makefile test-external            # External scan (Nikto + Nuclei)
+    make -f test/Makefile test-internal            # Internal scan (Nmap + egress)
+    make -f test/Makefile test-dynamic             # Both external + internal
+    make -f test/Makefile test-dynamic AZURE=1     # Azure dynamic scan
+    make -f test/Makefile test-all                 # All scans on GCP
+    make -f test/Makefile logs TASK=external       # Watch external scan logs
 ```
 
 Run individual tests:
 ```bash
-make -f test/Makefile test-static             # GCP
-make -f test/Makefile test-dynamic AZURE=1    # Azure
-make -f test/Makefile test-all                # All scans
+make -f test/Makefile test-external           # Attacker view (Nikto + Nuclei through ingress)
+make -f test/Makefile test-internal           # Inside namespace (Nmap + egress isolation)
+make -f test/Makefile test-dynamic            # Both phases
+make -f test/Makefile test-all AZURE=1        # All scans on Azure
 make -f test/Makefile clean                   # Clean up
 ```
 
@@ -331,7 +337,9 @@ All scan logic lives in shell scripts inside the `ghcr.io/mikelear/security-tool
 |--------|-------------|
 | `/app/static-scan.sh` | Gitleaks + Semgrep, formats and posts results |
 | `/app/image-scan.sh` | Grype dependency scan, formats and posts results |
-| `/app/dynamic-scan.sh` | Nuclei + Nikto + Nmap + egress isolation test |
+| `/app/external-scan.sh` | Nikto + Nuclei through ingress + TLS check (attacker view) |
+| `/app/internal-scan.sh` | Nmap port scan + egress isolation test (inside namespace) |
+| `/app/dynamic-scan.sh` | Wrapper: runs external + internal sequentially (for testing) |
 | `/app/post-scan-comment.sh` | Shared utility: formats markdown and posts to GitHub PR |
 
 Scripts accept `--pr 0 --token ""` for dry-run mode (prints comment, no API call).
