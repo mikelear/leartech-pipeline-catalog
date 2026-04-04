@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 9am on Monday"],
+  "platformAutomerge": true,
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "groupName": "patch updates"
+    },
+    {
+      "matchUpdateTypes": ["minor"],
+      "groupName": "minor updates"
+    },
+    {
+      "matchManagers": ["helmv3"],
+      "groupName": "helm chart updates"
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "groupName": "docker base image updates"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["\.lighthouse/.+\.yaml$"],
+      "matchStrings": ["image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"],
+      "datasourceTemplate": "docker"
+    }
+  ]
+}
