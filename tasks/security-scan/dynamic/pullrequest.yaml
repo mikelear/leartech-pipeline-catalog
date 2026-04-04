@@ -115,31 +115,15 @@ spec:
 
             mkdir -p "${RESULTS_DIR}"
 
-            # Construct preview URL from ingress
-            echo "=== Waiting for preview ingress in ${PREVIEW_NAMESPACE} ==="
-            INGRESS_HOST=""
-            WAIT=0
-            MAX_WAIT=180
+            # Construct preview URL from JX3 naming convention
+            # Pattern: preview-{APP_NAME}-jx-{OWNER}-{APP_NAME}-pr-{NUMBER}.{DOMAIN}
+            case "$CLUSTER_ID" in
+              az)  DOMAIN="az.leartech.com" ;;
+              gcp) DOMAIN="jx.leartech.com" ;;
+              *)   DOMAIN="jx.leartech.com" ;;
+            esac
 
-            while [ -z "${INGRESS_HOST}" ] && [ $WAIT -lt $MAX_WAIT ]; do
-              INGRESS_HOST=$(curl -s -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
-                --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
-                "https://kubernetes.default.svc/apis/networking.k8s.io/v1/namespaces/${PREVIEW_NAMESPACE}/ingresses" 2>/dev/null \
-                | jq -r '.items[0].spec.rules[0].host // empty' 2>/dev/null)
-
-              if [ -z "${INGRESS_HOST}" ]; then
-                echo "Waiting for ingress... (${WAIT}s)"
-                sleep 10
-                WAIT=$((WAIT + 10))
-              fi
-            done
-
-            if [ -z "${INGRESS_HOST}" ]; then
-              # Fallback: construct from known pattern
-              INGRESS_HOST="preview-${APP_NAME}-${PREVIEW_NAMESPACE}.jx.leartech.com"
-              echo "WARNING: Could not fetch ingress, using constructed URL"
-            fi
-
+            INGRESS_HOST="preview-${APP_NAME}-${PREVIEW_NAMESPACE}.${DOMAIN}"
             PREVIEW_URL="https://${INGRESS_HOST}"
             echo "Preview URL: ${PREVIEW_URL}"
 
