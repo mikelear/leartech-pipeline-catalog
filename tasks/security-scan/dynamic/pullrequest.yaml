@@ -71,8 +71,26 @@ spec:
             echo "=== Waiting for preview namespace ${PREVIEW_NS} ==="
             WAIT=0
             while ! kubectl get namespace ${PREVIEW_NS} >/dev/null 2>&1; do
-              if [ $WAIT -ge 600 ]; then
-                echo "ERROR: Preview namespace not created after 600s — aborting"
+              if [ $WAIT -ge 900 ]; then
+                echo "WARNING: Preview namespace not created after 900s"
+                echo "Posting skipped notice to PR..."
+                # Post a "skipped" comment so it's visible on the PR
+                TAG=""
+                [ -n "$CLUSTER_ID" ] && TAG=" \`[$CLUSTER_ID]\`"
+                SKIP_COMMENT="## :hourglass: Dynamic Security Scan: **Skipped**${TAG}
+
+            Preview namespace \`${PREVIEW_NS}\` was not ready within 900s.
+            The PR build may still be running. Re-run with \`/test dynamic-security-scan\` after the preview is deployed."
+
+                if [ -n "$GIT_TOKEN" ] && [ -n "$PULL_NUMBER" ]; then
+                  # Escape for JSON without jq — replace newlines with \n, escape quotes
+                  BODY=$(printf '%s' "$SKIP_COMMENT" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+                  curl -s -o /dev/null -X POST \
+                    -H "Authorization: token $GIT_TOKEN" \
+                    -H "Accept: application/vnd.github.v3+json" \
+                    "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments" \
+                    -d "{\"body\": \"${BODY}\"}" || true
+                fi
                 exit 0
               fi
               echo "Waiting for namespace... (${WAIT}s)"
