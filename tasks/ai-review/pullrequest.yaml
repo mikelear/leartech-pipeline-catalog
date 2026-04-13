@@ -154,11 +154,12 @@ spec:
               exit 0
             fi
 
-            # Aggregate
+            # Aggregate (pass diff for hallucination validation)
             REVIEW_LIST=$(echo $REVIEWS | tr ' ' ',')
             python3 /app/aggregate.py \
               --reviews "$REVIEW_LIST" \
               --threshold "$REVIEW_COUNT" \
+              --diff /tmp/diff.txt \
               --output /tmp/aggregate-result.json
 
             # Post to PR
@@ -181,15 +182,9 @@ spec:
               --collection code-reviews \
               --feedback-repo "https://github.com/mikelear/leartech-llm-training-data.git" || echo "WARNING: auto-capture failed (non-blocking)"
 
-            # Process any /ai-feedback comments on this PR
-            python3 /app/feedback.py \
-              --mode comment-feedback \
-              --owner "$REPO_OWNER" \
-              --repo "$REPO_NAME" \
-              --pr "$PULL_NUMBER" \
-              --chromadb-url "$CHROMADB_ENDPOINT" \
-              --collection code-reviews \
-              --feedback-repo "https://github.com/mikelear/leartech-llm-training-data.git" || echo "WARNING: comment-feedback failed (non-blocking)"
+            # NOTE: /ai-feedback comment processing is handled by the dedicated
+            # feedback trigger (ai-review/feedback.yaml) — NOT here. Running it
+            # in every review caused 3x duplicate ack comments (2 clusters + reruns).
 
             # Exit with failure if score below threshold
             SCORE=$(python3 -c "import json; r=json.load(open('/tmp/aggregate-result.json')); print(r.get('overall_score', 0))")
