@@ -68,6 +68,10 @@ spec:
                   optional: true
           script: |
             #!/bin/sh
+            set -e
+            # Optional API-key env vars (CLAUDE_API_KEY, DEEPSEEK_API_KEY) may be unset — `set -u` would
+            # break the `[ -n "$VAR" ]` guards, so we use `set -e` only.
+            # Steps that are intentionally non-blocking use `|| true` (RAG, auto-capture).
             echo "AI Code Review for $REPO_OWNER/$REPO_NAME PR #$PULL_NUMBER"
 
             # Clone standards repo for review context
@@ -186,14 +190,13 @@ spec:
             # feedback trigger (ai-review/feedback.yaml) — NOT here. Running it
             # in every review caused 3x duplicate ack comments (2 clusters + reruns).
 
-            # Exit with failure if score below threshold
-            SCORE=$(python3 -c "import json; r=json.load(open('/tmp/aggregate-result.json')); print(r.get('overall_score', 0))")
-            VERDICT=$(python3 -c "import json; r=json.load(open('/tmp/aggregate-result.json')); print(r.get('overall_verdict', 'ERROR'))")
-            echo "Final: $SCORE/100 $VERDICT"
-            if [ "$VERDICT" = "FAIL" ] || [ "$VERDICT" = "ERROR" ]; then
-              echo "AI review FAILED ($SCORE/100) — PR needs attention"
+            # Exit with failure if score below threshold.
+            # set -eu guarantees these commands hard-fail if /tmp/aggregate-result.json is missing or malformed.
+            if [ ! -f /tmp/aggregate-result.json ]; then
+              echo "ERROR: aggregate-result.json missing — earlier step failed silently"
               exit 1
             fi
+            python3 -c "import json,sys; r=json.load(open('/tmp/aggregate-result.json')); print(f\"Final: {r['overall_score']}/100 {r['overall_verdict']}\"); sys.exit(1 if r['overall_verdict'] in ('FAIL','ERROR') else 0)"
   podTemplate: {}
   serviceAccountName: tekton-bot
   timeout: 30m0s
