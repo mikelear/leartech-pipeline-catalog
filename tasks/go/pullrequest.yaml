@@ -1,0 +1,78 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: pullrequest
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        - image: golang:1.25-alpine
+          name: build-make-build
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            apk add --no-cache git make
+            # Populate module cache. If the repo has private deps via
+            # leartech-go-common or similar, make the dep repo public
+            # (preferred) or inline an override step that sets GIT_TOKEN +
+            # GOPRIVATE before this step runs.
+            go mod download
+            # Regenerate OpenAPI docs via swaggo/swag if the Makefile has a
+            # `swag:` target. No-op otherwise — services without Swagger just
+            # skip this.
+            [ -f Makefile ] && grep -q "^swag:" Makefile && make swag || true
+            # BUILD_TARGET lets monorepos point at a non-default entrypoint.
+            # Default matches the golden-standard layout (cmd/server/main.go).
+            go build -trimpath -ldflags="-s -w" -o bin/server "${BUILD_TARGET:-./cmd/server}"
+        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+          name: build-container-build
+          resources: {}
+          script: |
+            #!/busybox/sh
+            source .jx/variables.sh
+            cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            /kaniko/executor $KANIKO_FLAGS \
+              --context=/workspace/source \
+              --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
+              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: promote-jx-preview
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+            source .jx/variables.sh
+            jx preview create --docker-register-org "$DOCKER_REGISTRY_ORG"
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 2h0m0s
+status: {}

@@ -1,0 +1,145 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: release
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-release-version:2.8.0
+          name: next-version
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            # Reads existing git tags, bumps per conventional-commits, emits
+            # VERSION WITHOUT pushing the tag. promote-changelog below handles
+            # tag push with cluster suffix so gcp + az don't race on the same
+            # ref. See hub/shared-rules/conventions.md § "Golden release pattern".
+            jx-release-version --previous-version from-tag > VERSION
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        - image: golang:1.25-alpine
+          name: build-make-build
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            apk add --no-cache git make
+            go mod download
+            [ -f Makefile ] && grep -q "^swag:" Makefile && make swag || true
+            go build -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o bin/server "${BUILD_TARGET:-./cmd/server}"
+        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+          name: build-container-build
+          resources: {}
+          script: |
+            #!/busybox/sh
+            source .jx/variables.sh
+            cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            /kaniko/executor $KANIKO_FLAGS \
+              --context=/workspace/source \
+              --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
+              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: promote-changelog
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+            source .jx/variables.sh
+
+            if [ -d "charts/$REPO_NAME" ]; then
+              jx gitops yset -p version    -v "$VERSION" -f "./charts/$REPO_NAME/Chart.yaml"
+              jx gitops yset -p appVersion -v "$VERSION" -f "./charts/$REPO_NAME/Chart.yaml"
+              jx gitops yset -p 'image.repository' -v "$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME" -f "./charts/$REPO_NAME/values.yaml"
+              jx gitops yset -p 'image.tag'        -v "$VERSION" -f "./charts/$REPO_NAME/values.yaml"
+            else
+              echo "no charts/$REPO_NAME directory — skipping chart update"
+            fi
+
+            TAG_SUFFIX=""
+            [ -n "$CLUSTER_ID" ] && TAG_SUFFIX="-$CLUSTER_ID"
+
+            git add * || true
+            git commit -a -m "chore: release $VERSION" --allow-empty
+            git tag -fa "v${VERSION}${TAG_SUFFIX}" -m "Release v${VERSION}${TAG_SUFFIX}"
+            git push --force origin "v${VERSION}${TAG_SUFFIX}"
+
+            jx changelog create --version "v${VERSION}${TAG_SUFFIX}" --output-markdown ../changelog.md
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: promote-helm-release
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+            source .jx/variables.sh
+            jx gitops helm release
+        - image: bitnami/cosign:latest
+          name: cosign-sign
+          resources: {}
+          securityContext:
+            runAsUser: 0
+          env:
+          - name: COSIGN_KEY
+            valueFrom:
+              secretKeyRef:
+                name: cosign-keys
+                key: cosign.key
+          script: |
+            #!/bin/bash
+            set -e
+            source .jx/variables.sh
+            export COSIGN_PASSWORD=""
+
+            mkdir -p /root/.docker
+            sed 's/"credHelpers":{[^}]*},//' /tekton/creds/.docker/config.json > /root/.docker/config.json
+            export DOCKER_CONFIG=/root/.docker
+
+            echo "$COSIGN_KEY" > /tmp/cosign.key
+            IMAGE="$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+            echo "Signing $IMAGE"
+            cosign sign --key /tmp/cosign.key --yes "$IMAGE"
+            rm -f /tmp/cosign.key
+        - image: ghcr.io/jenkins-x-plugins/jx-promote:0.6.33
+          name: promote-jx-promote
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+            source .jx/variables.sh
+            jx promote -b --all --timeout 1h --no-poll --add-changelog ../changelog.md
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}

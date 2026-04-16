@@ -1,0 +1,74 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: go-test
+spec:
+  pipelineSpec:
+    tasks:
+    - name: go-test
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 400m
+              memory: 512Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        # Non-alpine golang image: -race needs cgo + gcc which alpine lacks
+        # by default. Slightly bigger image, but no apk add build-base.
+        - image: golang:1.25
+          name: go-test
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+
+            # Consumer-overridable via env:
+            #   COVERAGE_THRESHOLD — minimum acceptable total coverage % (default 60)
+            #   COVERAGE_SCOPE     — go test packages for -coverpkg (default ./internal/...)
+            # TODO: migrate these to Tekton task params once the catalog uses:
+            # mechanism is properly wired to pass them through.
+            THRESHOLD="${COVERAGE_THRESHOLD:-60.0}"
+            SCOPE="${COVERAGE_SCOPE:-./internal/...}"
+
+            echo "=== go test -race -coverprofile (scope=$SCOPE, threshold=$THRESHOLD%) ==="
+            go test ./... -v -count=1 -race -coverpkg="$SCOPE" -coverprofile=cover.out
+
+            echo
+            echo "=== per-function coverage ==="
+            go tool cover -func=cover.out
+
+            TOTAL=$(go tool cover -func=cover.out | awk '/^total:/ {print $3}' | sed 's/%//')
+
+            echo
+            echo "=== coverage summary ==="
+            echo "total=${TOTAL}%  threshold=${THRESHOLD}%"
+
+            if awk -v t="$TOTAL" -v th="$THRESHOLD" 'BEGIN { exit !(t < th) }'; then
+              echo "FAIL: coverage ${TOTAL}% is below threshold ${THRESHOLD}%"
+              exit 1
+            fi
+            echo "PASS: coverage ${TOTAL}% meets threshold ${THRESHOLD}%"
+
+            # TODO: post the coverage summary as a PR comment (mirror the pattern
+            # from security-scan/pullrequest.yaml that posts via tekton-bot's
+            # GitHub credentials). Once wired, every go-test run leaves a visible
+            # coverage breakdown on the PR.
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 1h0m0s
+status: {}
