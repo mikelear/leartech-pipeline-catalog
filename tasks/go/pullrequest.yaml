@@ -71,7 +71,9 @@ spec:
             #!/usr/bin/env sh
             set -e
             source .jx/variables.sh
-            jx preview create --docker-register-org "$DOCKER_REGISTRY_ORG"
+            # DOCKER_REGISTRY_ORG is read from .jx/variables.sh directly.
+            # jx-preview v0.7.3+ dropped the --docker-register-org flag.
+            jx preview create
   podTemplate: {}
   serviceAccountName: tekton-bot
   timeout: 2h0m0s
