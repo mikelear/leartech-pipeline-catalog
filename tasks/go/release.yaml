@@ -39,11 +39,35 @@ spec:
           resources: {}
           script: |
             #!/usr/bin/env sh
-            # Reads existing git tags, bumps per conventional-commits, emits
-            # VERSION WITHOUT pushing the tag. promote-changelog below handles
-            # tag push with cluster suffix so gcp + az don't race on the same
-            # ref. See hub/shared-rules/conventions.md § "Golden release pattern".
-            jx-release-version --previous-version from-tag > VERSION
+            set -e
+
+            # Multi-cluster version computation:
+            #
+            # --previous-version from-tag alone doesn't progress past the
+            # first minor bump — because `v0.1.0-gcp` sorts as a SemVer
+            # PRERELEASE of 0.1.0 and jx-release-version's bump calc sees
+            # the plain `v0.0.1` base tag as "latest clean version" and
+            # keeps recomputing 0.1.0 from the same feat: commit history.
+            #
+            # Fix: explicitly find the latest tag matching THIS cluster's
+            # suffix, strip the suffix, and pass as --previous-version.
+            # Then jx-release-version computes next from there based on
+            # conventional-commits since that tag.
+            #
+            # Seeded base (`v0.0.1` with no suffix) is the fallback for
+            # the first release ever on a fresh clone.
+            apk add --no-cache git sed 2>/dev/null || true
+
+            if [ -n "$CLUSTER_ID" ]; then
+              PREV=$(git tag -l "v*-${CLUSTER_ID}" --sort=-v:refname | head -1 | sed "s|^v||;s|-${CLUSTER_ID}\$||")
+            else
+              PREV=$(git tag -l "v*" --sort=-v:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -1 | sed "s|^v||")
+            fi
+            PREV=${PREV:-0.0.0}
+            echo "computed previous version: $PREV  (cluster: ${CLUSTER_ID:-<none>})"
+
+            jx-release-version --previous-version="$PREV" > VERSION
+            echo "next version: $(cat VERSION)"
         - image: ghcr.io/jenkins-x/jx-boot:3.16.59
           name: jx-variables
           resources: {}
