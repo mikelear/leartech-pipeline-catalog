@@ -19,10 +19,13 @@ spec:
               name: jx-boot-job-env-vars
               optional: true
           name: ""
+          # Pod-level scheduling is sum of all step containers (Tekton steps
+          # run sequentially but reserved up-front). Keep modest so the pod
+          # fits on a standard node.
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 100m
+              memory: 256Mi
           workingDir: /workspace/source
         steps:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream

@@ -25,10 +25,16 @@ spec:
               name: jx-boot-job-env-vars
               optional: true
           name: ""
+          # NB: Kubernetes schedules the pod based on SUM of all step
+          # containers' requests (Tekton runs steps sequentially but all
+          # containers exist up-front). 9 steps × stepTemplate.requests =
+          # total pod request. Keeping per-step requests modest so the pod
+          # fits on a standard AKS/GKE node (~2 CPU / ~7 GiB). Individual
+          # heavy steps (build, kaniko) can override if needed.
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 100m
+              memory: 256Mi
           workingDir: /workspace/source
         steps:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
