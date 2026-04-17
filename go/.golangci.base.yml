@@ -1,20 +1,27 @@
-# Canonical golangci-lint config for leartech Go services.
+# Canonical golangci-lint v2 config for leartech Go services.
 #
 # Consumers don't edit this file directly. The go-lint pipeline task
 # (tasks/go-lint/pullrequest.yaml) curls it at CI time and yq-merges it
 # with each repo's own .golangci.yml, which carries only the per-repo
-# override (goimports.local-prefixes).
+# override (formatters.settings.goimports.local-prefixes).
 #
-# Local dev mirrors the same merge via `make lint` (see template Makefile).
+# Local dev mirrors the same merge via `make lint-config` + `make lint`.
 #
 # Linter additions / rule tweaks land HERE first, then propagate to every
 # Go consumer with zero per-repo churn.
+
+version: "2"
+
 run:
   timeout: 5m
   tests: true
 
+output:
+  formats:
+    text:
+      path: stdout
+
 linters:
-  disable-all: true
   enable:
     - errcheck
     - gosimple
@@ -22,8 +29,6 @@ linters:
     - ineffassign
     - staticcheck
     - unused
-    - gofmt
-    - goimports
     - misspell
     - unconvert
     - prealloc
@@ -32,23 +37,30 @@ linters:
     - revive
     - nolintlint
 
-linters-settings:
-  gosec:
-    # G104: unhandled errors — errcheck covers this better
-    excludes:
-      - G104
-  revive:
-    rules:
-      - name: exported
-      - name: package-comments
-      - name: var-naming
-      - name: indent-error-flow
+  settings:
+    gosec:
+      # G104: unhandled errors — errcheck covers this better
+      config:
+        G104:
+          - ".*"
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+        - name: indent-error-flow
 
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gosec
-        - errcheck
-  max-issues-per-linter: 0
-  max-same-issues: 0
+  exclusions:
+    warn-unused: true
+    rules:
+      - path: '_test\.go'
+        linters:
+          - gosec
+          - errcheck
+    max-issues-per-linter: 0
+    max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

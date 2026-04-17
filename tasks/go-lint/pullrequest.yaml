@@ -28,17 +28,19 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: golangci/golangci-lint:v1.64.8-alpine
+        - image: golangci/golangci-lint:v2.1.6
           name: golangci-lint
           resources: {}
           script: |
             #!/bin/sh
             set -eu
-            # The golangci-lint alpine image ships with Go 1.24 (v1.64.8-alpine).
-            # Bump this pin if consumers move to go 1.25 and lint starts
-            # reporting "Go language version used to build golangci-lint is
-            # lower than the targeted Go version".
-            apk add --no-cache git curl yq
+            # golangci-lint v2 (Go 1.24). v2 config format required in both
+            # the base config and per-repo overrides (version: "2", formatters
+            # section, linters.settings/exclusions).
+            apt-get update -qq && apt-get install -y -qq curl > /dev/null 2>&1
+            # yq for config merging (mikefarah/yq)
+            curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
+            chmod +x /usr/local/bin/yq
 
             # Centralised base config lives in leartech-pipeline-catalog.
             # Per-repo .golangci.yml carries only overrides (typically just
