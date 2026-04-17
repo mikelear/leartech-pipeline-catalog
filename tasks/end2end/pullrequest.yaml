@@ -143,7 +143,10 @@ spec:
                 echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR comment"
                 return 0
               fi
-              local api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments"
+              # ?per_page=100 so the marker search sees older comments on
+              # long-lived PRs. Without it GitHub defaults to 30 and the
+              # sticky-patch lookup misses — duplicate comments posted.
+              local api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments?per_page=100"
               local auth="Authorization: token ${GIT_TOKEN}"
               local accept="Accept: application/vnd.github+json"
               local existing_id

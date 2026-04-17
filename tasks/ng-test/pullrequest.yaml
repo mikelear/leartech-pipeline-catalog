@@ -137,7 +137,10 @@ spec:
                 "" \
                 "_Posted by \`tasks/ng-test/pullrequest.yaml\`._")
 
-              API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments"
+              # ?per_page=100 so the marker search sees older comments on
+              # long-lived PRs. Without it, GitHub defaults to 30 and the
+              # sticky-patch lookup misses — duplicate comments posted.
+              API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments?per_page=100"
               AUTH="Authorization: token ${GIT_TOKEN}"
               ACCEPT="Accept: application/vnd.github+json"
 
