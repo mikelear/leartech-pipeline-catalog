@@ -6,8 +6,9 @@
 # task posts a friendly "not configured" sticky comment and passes.
 # Adoption is opt-in per repo.
 #
-# Present: the task exports the env below, waits up to 5 min for the
-# preview to respond 200 on /health/live, invokes bash end2end/run.sh,
+# Present: the task exports the env below, waits up to 10 min (or
+# END2END_HEALTH_TIMEOUT seconds) for the preview to respond 200 on
+# /health/live, invokes bash end2end/run.sh,
 # then reads end2end/results.json and posts a sticky comment. The
 # check PASSES iff results.json.success == true. Non-zero exit from
 # run.sh without a valid results.json is treated as a script crash
@@ -183,8 +184,9 @@ spec:
             # between them so we don't catch the rolling-deploy window
             # where one pod serves /health/live right before being
             # terminated. Each probe: GET with 5s timeout.
-            echo "==> waiting up to 5 min for $PREVIEW_URL/health/live (3 consecutive 200s)"
-            DEADLINE=$(( $(date +%s) + 300 ))
+            MAX_WAIT="${END2END_HEALTH_TIMEOUT:-600}"
+            echo "==> waiting up to $((MAX_WAIT / 60)) min for $PREVIEW_URL/health/live (3 consecutive 200s)"
+            DEADLINE=$(( $(date +%s) + MAX_WAIT ))
             STREAK=0
             REQUIRED=3
             while [ "$STREAK" -lt "$REQUIRED" ]; do
@@ -200,7 +202,7 @@ spec:
                     "$MARKER" \
                     ":x: **End-to-end: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" \
                     "" \
-                    "\`$PREVIEW_URL/health/live\` never returned 3 consecutive 200s within 5 min. The PR's \`pr\` check (kaniko + jx-preview) may have failed or the preview pod may still be pulling images." \
+                    "\`$PREVIEW_URL/health/live\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min. The PR's \`pr\` check (kaniko + jx-preview) may have failed or the preview pod may still be pulling images." \
                     "" \
                     "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
                   post_sticky "$body"
