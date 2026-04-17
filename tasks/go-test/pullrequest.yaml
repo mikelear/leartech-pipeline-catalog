@@ -90,21 +90,25 @@ spec:
                 | head -5)
               [ -z "$LOWEST" ] && LOWEST="| — | — | all functions ≥ 100% |"
 
-              BODY=$(cat <<EOF
-<!-- leartech-coverage -->
-### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) — ${VERDICT}
-
-Scope: \`${SCOPE}\`
-
-**Lowest-covered functions**
-
-| File | Function | Coverage |
-|---|---|---|
-${LOWEST}
-
-_Posted by \`tasks/go-test/pullrequest.yaml\`._
-EOF
-)
+              # Build body via printf rather than HEREDOC — YAML `script: |`
+              # treats any line with less indentation than the first content
+              # line as the end of the block, so an un-indented heredoc body
+              # silently truncates the script at the catalog-parse layer
+              # (Lighthouse then skips creating the LighthouseJob — seen
+              # 2026-04-17 on PR #4 where the `test` trigger never fired).
+              BODY=$(printf '%s\n' \
+                "<!-- leartech-coverage -->" \
+                "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) — ${VERDICT}" \
+                "" \
+                "Scope: \`${SCOPE}\`" \
+                "" \
+                "**Lowest-covered functions**" \
+                "" \
+                "| File | Function | Coverage |" \
+                "|---|---|---|" \
+                "${LOWEST}" \
+                "" \
+                "_Posted by \`tasks/go-test/pullrequest.yaml\`._")
 
               API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments"
               AUTH="Authorization: token ${GIT_TOKEN}"
