@@ -45,6 +45,15 @@ spec:
             set -e
             apk add --no-cache git
             AUDIT_LEVEL="${AUDIT_LEVEL:-critical}"
+            # `npm audit` requires an existing lockfile. Templates that
+            # don't commit package-lock.json (first-clone state) get one
+            # generated on the fly here — no deps downloaded, just the
+            # lockfile computed. Consumers should commit a real lockfile
+            # after their first `npm install`.
+            if [ ! -f package-lock.json ]; then
+              echo "==> no package-lock.json found; generating one (--package-lock-only)"
+              npm install --package-lock-only --legacy-peer-deps
+            fi
             echo "==> npm audit --audit-level=$AUDIT_LEVEL"
             npm audit --audit-level="$AUDIT_LEVEL"
   podTemplate: {}
