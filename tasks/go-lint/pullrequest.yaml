@@ -33,7 +33,7 @@ spec:
           resources: {}
           script: |
             #!/bin/sh
-            set -e
+            set -eu
             # The golangci-lint alpine image ships with Go 1.24 (v1.64.8-alpine).
             # Bump this pin if consumers move to go 1.25 and lint starts
             # reporting "Go language version used to build golangci-lint is
@@ -46,15 +46,27 @@ spec:
             # wins on any conflicts. Falls back to base-only if the repo
             # hasn't added an override file.
             BASE_URL="https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/.golangci.base.yml"
+            echo "==> fetching base config from $BASE_URL"
             curl -fsSL -o /tmp/golangci.base.yml "$BASE_URL"
+            echo "==> base config fetched ($(wc -l < /tmp/golangci.base.yml) lines)"
+
             if [ -f .golangci.yml ]; then
+              echo "==> merging local .golangci.yml ($(wc -l < .golangci.yml) lines) onto base"
               yq eval-all '. as $item ireduce ({}; . *+ $item)' /tmp/golangci.base.yml .golangci.yml > /tmp/golangci.merged.yml
             else
+              echo "==> no local .golangci.yml; using base as-is"
               cp /tmp/golangci.base.yml /tmp/golangci.merged.yml
             fi
+            echo "==> merged config ($(wc -l < /tmp/golangci.merged.yml) lines):"
+            cat /tmp/golangci.merged.yml
+            echo "==> end merged config"
 
+            echo "==> go mod download"
             go mod download
-            golangci-lint run --config /tmp/golangci.merged.yml ./...
+
+            echo "==> golangci-lint run -v"
+            golangci-lint run -v --config /tmp/golangci.merged.yml ./...
+            echo "==> lint complete"
   podTemplate: {}
   serviceAccountName: tekton-bot
   timeout: 30m0s
