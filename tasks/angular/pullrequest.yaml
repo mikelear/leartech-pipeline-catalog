@@ -1,0 +1,78 @@
+# Angular PR orchestrator. Thin wrapper: npm install + ng build +
+# kaniko image build + jx-preview.
+#
+# Shared steps (git-clone, jx-variables, kaniko build, jx-preview) come
+# from the jenkins-x versionStream catalog. Only the ng-build step is
+# Angular-specific.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: pullrequest
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        - image: node:22-alpine
+          name: build-npm-install
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            # Kaniko does its own npm install inside the Dockerfile; this
+            # step exists mainly to catch dependency-resolution issues
+            # quickly (before the expensive container build). --legacy-peer-deps
+            # matches the Dockerfile invocation — some Angular peer deps
+            # still lag upstream.
+            apk add --no-cache git
+            npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+          name: build-container-build
+          resources: {}
+          script: |
+            #!/busybox/sh
+            source .jx/variables.sh
+            cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            /kaniko/executor $KANIKO_FLAGS \
+              --context=/workspace/source \
+              --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
+              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: promote-jx-preview
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+            source .jx/variables.sh
+            jx preview create
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 2h0m0s
+status: {}

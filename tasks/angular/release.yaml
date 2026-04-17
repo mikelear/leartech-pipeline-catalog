@@ -1,0 +1,81 @@
+# Angular release orchestrator. Composes language-agnostic release/*
+# extracted steps with the Angular build stage. Mirrors tasks/go/release.yaml.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: release
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          # Pod-level scheduling = sum of all step containers. Keep modest
+          # so the pod fits on a standard AKS/GKE node.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        - image: node:22-alpine
+          name: build-npm-install
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            apk add --no-cache git
+            npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+            # `ng build` is invoked inside the Dockerfile (runs in kaniko),
+            # so this step just proves deps resolve + exits. Keeps the
+            # fail-fast benefit without duplicating the build work.
+        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+          name: build-container-build
+          resources: {}
+          script: |
+            #!/busybox/sh
+            source .jx/variables.sh
+            cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            /kaniko/executor $KANIKO_FLAGS \
+              --context=/workspace/source \
+              --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
+              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/promote-cluster-suffixed.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/helm-release.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/cosign-sign.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/jx-promote.yaml@main
+          name: ""
+          resources: {}
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}
