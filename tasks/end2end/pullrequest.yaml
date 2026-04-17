@@ -129,6 +129,12 @@ spec:
             HAS_SCRIPT=0
             [ -x end2end/run.sh ] && HAS_SCRIPT=1
 
+            # Per-cluster sticky marker so GCP and Azure comments coexist
+            # instead of clobbering each other (mirrors the security-scan
+            # + ai-review conventions).
+            CLUSTER_TAG="${CLUSTER_ID:-unknown}"
+            MARKER="<!-- leartech-end2end-${CLUSTER_TAG} -->"
+
             # ── helper: post/patch sticky comment ──────────────────────
             post_sticky() {
               local body="$1"
@@ -141,16 +147,16 @@ spec:
               local accept="Accept: application/vnd.github+json"
               local existing_id
               existing_id=$(curl -fsSL -H "$auth" -H "$accept" "$api" \
-                | jq -r '.[] | select(.body | startswith("<!-- leartech-end2end -->")) | .id' \
+                | jq -r --arg marker "$MARKER" '.[] | select(.body | startswith($marker)) | .id' \
                 | head -1)
               local payload
               payload=$(jq -cn --arg body "$body" '{body: $body}')
               if [ -n "$existing_id" ]; then
-                echo "==> updating existing end2end comment $existing_id"
+                echo "==> updating existing end2end [$CLUSTER_TAG] comment $existing_id"
                 curl -fsSL -X PATCH -H "$auth" -H "$accept" -d "$payload" \
                   "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${existing_id}" >/dev/null
               else
-                echo "==> posting new end2end comment"
+                echo "==> posting new end2end [$CLUSTER_TAG] comment"
                 curl -fsSL -X POST -H "$auth" -H "$accept" -d "$payload" "$api" >/dev/null
               fi
             }
@@ -159,8 +165,8 @@ spec:
             if [ "$HAS_SCRIPT" = "0" ]; then
               echo "==> no executable end2end/run.sh in repo; posting 'not configured' note"
               body=$(printf '%s\n' \
-                "<!-- leartech-end2end -->" \
-                ":information_source: **End-to-end: not configured**" \
+                "$MARKER" \
+                ":information_source: **End-to-end: not configured** \`[$CLUSTER_TAG]\`" \
                 "" \
                 "This repo has no executable \`end2end/run.sh\`. Add one (make it \`chmod +x\`) to run presubmit checks against the preview deploy." \
                 "" \
@@ -191,8 +197,8 @@ spec:
               if [ "$STREAK" -lt "$REQUIRED" ]; then
                 if [ "$(date +%s)" -ge "$DEADLINE" ]; then
                   body=$(printf '%s\n' \
-                    "<!-- leartech-end2end -->" \
-                    ":x: **End-to-end: FAIL (preview not ready)**" \
+                    "$MARKER" \
+                    ":x: **End-to-end: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" \
                     "" \
                     "\`$PREVIEW_URL/health/live\` never returned 3 consecutive 200s within 5 min. The PR's \`pr\` check (kaniko + jx-preview) may have failed or the preview pod may still be pulling images." \
                     "" \
@@ -216,8 +222,8 @@ spec:
 
             if [ ! -f end2end/results.json ]; then
               body=$(printf '%s\n' \
-                "<!-- leartech-end2end -->" \
-                ":x: **End-to-end: FAIL (no results.json)**" \
+                "$MARKER" \
+                ":x: **End-to-end: FAIL (no results.json)** \`[$CLUSTER_TAG]\`" \
                 "" \
                 "\`end2end/run.sh\` exited $SCRIPT_EXIT without writing \`end2end/results.json\`. See the \`end2end\` check logs for script output." \
                 "" \
@@ -231,8 +237,8 @@ spec:
 
             if ! jq -e . end2end/results.json >/dev/null 2>&1; then
               body=$(printf '%s\n' \
-                "<!-- leartech-end2end -->" \
-                ":x: **End-to-end: FAIL (results.json malformed)**" \
+                "$MARKER" \
+                ":x: **End-to-end: FAIL (results.json malformed)** \`[$CLUSTER_TAG]\`" \
                 "" \
                 "\`end2end/results.json\` is not valid JSON. See check logs." \
                 "" \
@@ -260,8 +266,8 @@ spec:
             fi
 
             body=$(printf '%s\n' \
-              "<!-- leartech-end2end -->" \
-              ":${ICON}: **End-to-end: ${VERDICT}** — ${SUMMARY}" \
+              "$MARKER" \
+              ":${ICON}: **End-to-end: ${VERDICT}** \`[$CLUSTER_TAG]\` — ${SUMMARY}" \
               "" \
               "Preview: ${PREVIEW_URL}" \
               "" \

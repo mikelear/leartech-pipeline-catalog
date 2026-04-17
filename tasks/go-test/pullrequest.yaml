@@ -14,6 +14,12 @@ spec:
           env:
           - name: HOME
             value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           envFrom:
           - secretRef:
               name: jx-boot-job-env-vars
@@ -68,11 +74,15 @@ spec:
               STATUS="fail"
             fi
 
-            # Build PR sticky comment. <!-- leartech-coverage --> marker lets
-            # subsequent runs find + replace the previous comment instead of
-            # stacking a new one on every push.
+            # Build PR sticky comment. Per-cluster marker
+            # <!-- leartech-coverage-<cluster> --> so GCP and Azure
+            # coexist instead of clobbering each other (mirrors the
+            # security-scan + ai-review conventions).
             if [ -n "${GIT_TOKEN:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
               apt-get update -qq && apt-get install -y -qq --no-install-recommends jq curl >/dev/null
+
+              CLUSTER_TAG="${CLUSTER_ID:-unknown}"
+              MARKER="<!-- leartech-coverage-${CLUSTER_TAG} -->"
 
               ICON="white_check_mark"
               VERDICT="PASS"
@@ -97,8 +107,8 @@ spec:
               # (Lighthouse then skips creating the LighthouseJob — seen
               # 2026-04-17 on PR #4 where the `test` trigger never fired).
               BODY=$(printf '%s\n' \
-                "<!-- leartech-coverage -->" \
-                "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) — ${VERDICT}" \
+                "$MARKER" \
+                "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) \`[${CLUSTER_TAG}]\` — ${VERDICT}" \
                 "" \
                 "Scope: \`${SCOPE}\`" \
                 "" \
@@ -114,19 +124,19 @@ spec:
               AUTH="Authorization: token ${GIT_TOKEN}"
               ACCEPT="Accept: application/vnd.github+json"
 
-              # Find existing sticky comment
+              # Find existing sticky comment (by per-cluster marker)
               EXISTING_ID=$(curl -fsSL -H "$AUTH" -H "$ACCEPT" "$API" \
-                | jq -r '.[] | select(.body | startswith("<!-- leartech-coverage -->")) | .id' \
+                | jq -r --arg marker "$MARKER" '.[] | select(.body | startswith($marker)) | .id' \
                 | head -1)
 
               PAYLOAD=$(jq -cn --arg body "$BODY" '{body: $body}')
 
               if [ -n "$EXISTING_ID" ]; then
-                echo "==> updating existing coverage comment $EXISTING_ID"
+                echo "==> updating existing coverage [$CLUSTER_TAG] comment $EXISTING_ID"
                 curl -fsSL -X PATCH -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" \
                   "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${EXISTING_ID}" >/dev/null
               else
-                echo "==> posting new coverage comment"
+                echo "==> posting new coverage [$CLUSTER_TAG] comment"
                 curl -fsSL -X POST  -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" "$API" >/dev/null
               fi
             else
