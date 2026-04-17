@@ -36,10 +36,13 @@ spec:
             set -e
             apk add --no-cache git
             go mod download
-            # govulncheck @latest often requires a newer Go than the base image.
-            # If a consumer's go.mod is `go 1.25.x`, `@latest` works; if it's
-            # 1.24.x, pin to @v1.1.4 (last release that supports Go 1.24).
-            go install golang.org/x/vuln/cmd/govulncheck@latest
+            # govulncheck version tracks the minimum Go it supports.
+            # v1.2.0 (current @latest as of 2026-04) requires go >= 1.25.0.
+            # Most leartech Go services are still on go 1.24.x, so pin to
+            # v1.1.4 — the last release compatible with Go 1.24. Bump this
+            # alongside the fleet-wide go.mod upgrade to 1.25.
+            GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION:-v1.1.4}"
+            go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
             govulncheck ./...
   podTemplate: {}
   serviceAccountName: tekton-bot
