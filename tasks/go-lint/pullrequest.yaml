@@ -34,14 +34,27 @@ spec:
           script: |
             #!/bin/sh
             set -e
-            # The golangci-lint alpine image is built with a specific Go version.
-            # v1.64.8-alpine uses Go 1.24, which handles consumer go.mod declaring
-            # `go 1.24.x`. If a consumer bumps to `go 1.25.x` and lint starts
-            # reporting "Go language version used to build golangci-lint is lower
-            # than the targeted Go version", bump this image pin.
-            apk add --no-cache git
+            # The golangci-lint alpine image ships with Go 1.24 (v1.64.8-alpine).
+            # Bump this pin if consumers move to go 1.25 and lint starts
+            # reporting "Go language version used to build golangci-lint is
+            # lower than the targeted Go version".
+            apk add --no-cache git curl yq
+
+            # Centralised base config lives in leartech-pipeline-catalog.
+            # Per-repo .golangci.yml carries only overrides (typically just
+            # goimports.local-prefixes). yq deep-merges base ← local so local
+            # wins on any conflicts. Falls back to base-only if the repo
+            # hasn't added an override file.
+            BASE_URL="https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/.golangci.base.yml"
+            curl -fsSL -o /tmp/golangci.base.yml "$BASE_URL"
+            if [ -f .golangci.yml ]; then
+              yq eval-all '. as $item ireduce ({}; . *+ $item)' /tmp/golangci.base.yml .golangci.yml > /tmp/golangci.merged.yml
+            else
+              cp /tmp/golangci.base.yml /tmp/golangci.merged.yml
+            fi
+
             go mod download
-            golangci-lint run ./...
+            golangci-lint run --config /tmp/golangci.merged.yml ./...
   podTemplate: {}
   serviceAccountName: tekton-bot
   timeout: 30m0s
