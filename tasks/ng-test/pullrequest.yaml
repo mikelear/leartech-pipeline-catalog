@@ -42,10 +42,13 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        # zenika/alpine-chrome has Chromium + node pre-installed. Karma's
-        # ChromeHeadless launcher needs a real Chromium binary, which isn't
-        # shipped with node:22-alpine.
-        - image: zenika/alpine-chrome:with-node
+        # node:22-alpine + chromium installed inline. zenika/alpine-chrome
+        # runs as uid 1000 by default, which breaks Tekton's cred-inject
+        # (credentials land in /tekton/home which is root-owned) and also
+        # blocks `apk add`. Staying on node:22-alpine (runs as root) keeps
+        # the whole pipeline pattern consistent with every other catalog
+        # task in this repo.
+        - image: node:22-alpine
           name: ng-test
           resources: {}
           env:
@@ -57,10 +60,12 @@ spec:
                   optional: true
             - name: CHROME_BIN
               value: /usr/bin/chromium-browser
+            - name: CHROMIUM_FLAGS
+              value: "--no-sandbox --disable-gpu --disable-dev-shm-usage"
           script: |
             #!/bin/sh
             set -eo pipefail
-            apk add --no-cache git jq curl
+            apk add --no-cache git jq curl chromium nss freetype harfbuzz ttf-freefont
 
             THRESHOLD="${COVERAGE_THRESHOLD:-60.0}"
 
