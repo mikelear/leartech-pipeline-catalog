@@ -9,8 +9,9 @@
 #
 # Linter additions / rule tweaks land HERE first, then propagate to every
 # Go consumer with zero per-repo churn.
-
-version: "2"
+#
+# NOTE: Do NOT put `version: "2"` here. Per-repo .golangci.yml sets it.
+# If the base also sets it, yq merge + viper unmarshal can choke.
 
 run:
   timeout: 5m
