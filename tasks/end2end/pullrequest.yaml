@@ -112,7 +112,10 @@ spec:
 
             # Tools the contract guarantees to consumer scripts.
             apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-              ca-certificates curl jq bash python3 openssl >/dev/null
+              ca-certificates curl jq bash python3 python3-pip openssl >/dev/null
+            # kubectl for scripts that need cluster-internal access (e.g. Hydra admin, Mongo seed)
+            curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl
+            chmod +x /usr/local/bin/kubectl
 
             source .jx/variables.sh
 
