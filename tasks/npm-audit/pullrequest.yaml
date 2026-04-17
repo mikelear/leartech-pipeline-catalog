@@ -1,0 +1,52 @@
+# npm audit presubmit — vulnerability check equivalent to govulncheck.
+#
+# Runs `npm audit --audit-level=high` which exits non-zero on HIGH or
+# CRITICAL advisories. Transitive LOW/MODERATE findings don't block the
+# PR (too noisy in the Angular/React ecosystem).
+#
+# Consumer-overridable via env:
+#   AUDIT_LEVEL  low | moderate | high | critical  (default: high)
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: npm-audit
+spec:
+  pipelineSpec:
+    tasks:
+    - name: npm-audit
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: node:22-alpine
+          name: npm-audit
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            apk add --no-cache git
+            AUDIT_LEVEL="${AUDIT_LEVEL:-high}"
+            echo "==> npm audit --audit-level=$AUDIT_LEVEL"
+            npm audit --audit-level="$AUDIT_LEVEL"
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 15m0s
+status: {}

@@ -1,0 +1,48 @@
+# Angular ESLint presubmit. Thin: npm ci + npm run lint.
+#
+# Consumers own their eslint.config.mjs (ESLint flat config doesn't
+# compose cleanly over HTTP — see leartech-angular-service-template
+# eslint.config.mjs header for the centralisation migration path).
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: ng-lint
+spec:
+  pipelineSpec:
+    tasks:
+    - name: ng-lint
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: node:22-alpine
+          name: ng-lint
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            apk add --no-cache git
+            npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+            npm run lint
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}

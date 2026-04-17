@@ -1,0 +1,165 @@
+# Angular Karma test presubmit. Runs ng test with --code-coverage,
+# parses the emitted LCOV to compute total line coverage %, compares
+# against COVERAGE_THRESHOLD, and posts a per-cluster sticky PR comment
+# with the top lowest-covered files.
+#
+# Consumer-overridable via env:
+#   COVERAGE_THRESHOLD  minimum line-coverage % (default 60.0, matches
+#                       golden-service-standard)
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: ng-test
+spec:
+  pipelineSpec:
+    tasks:
+    - name: ng-test
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        # zenika/alpine-chrome has Chromium + node pre-installed. Karma's
+        # ChromeHeadless launcher needs a real Chromium binary, which isn't
+        # shipped with node:22-alpine.
+        - image: zenika/alpine-chrome:with-node
+          name: ng-test
+          resources: {}
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+            - name: CHROME_BIN
+              value: /usr/bin/chromium-browser
+          script: |
+            #!/bin/sh
+            set -eo pipefail
+            apk add --no-cache git jq curl
+
+            THRESHOLD="${COVERAGE_THRESHOLD:-60.0}"
+
+            echo "==> npm ci"
+            npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+
+            echo "==> ng test --watch=false --code-coverage"
+            npm test
+
+            # Find the emitted lcov. Angular emits into
+            # coverage/<project>/lcov.info. Glob + first match is reliable.
+            LCOV=$(find coverage -name 'lcov.info' -type f 2>/dev/null | head -1)
+            if [ -z "$LCOV" ]; then
+              echo "FAIL: no lcov.info produced by Karma — did the test suite run?"
+              exit 1
+            fi
+            echo "==> parsing $LCOV"
+
+            # LCOV records totals as LF (lines found) + LH (lines hit)
+            # per file. Sum across the file.
+            LF=$(awk -F: '/^LF:/ { sum += $2 } END { print sum+0 }' "$LCOV")
+            LH=$(awk -F: '/^LH:/ { sum += $2 } END { print sum+0 }' "$LCOV")
+            TOTAL=$(awk -v h="$LH" -v f="$LF" 'BEGIN { if (f == 0) print "0.0"; else printf "%.1f", (h/f)*100 }')
+            echo "total=${TOTAL}%  threshold=${THRESHOLD}%"
+
+            STATUS="pass"
+            if awk -v t="$TOTAL" -v th="$THRESHOLD" 'BEGIN { exit !(t < th) }'; then
+              STATUS="fail"
+            fi
+
+            # Per-cluster sticky marker so GCP + Azure comments coexist.
+            if [ -n "${GIT_TOKEN:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
+              CLUSTER_TAG="${CLUSTER_ID:-unknown}"
+              MARKER="<!-- leartech-coverage-${CLUSTER_TAG} -->"
+
+              ICON="white_check_mark"
+              VERDICT="PASS"
+              if [ "$STATUS" = "fail" ]; then
+                ICON="x"
+                VERDICT="FAIL"
+              fi
+
+              # Top 5 lowest-covered FILES (Karma reports per-file, not
+              # per-function like go). Skip 100%-covered to keep the
+              # table useful on well-tested repos.
+              LOWEST=$(awk -v FS=: '
+                /^SF:/ { file=$2; lf=0; lh=0; }
+                /^LF:/ { lf=$2; }
+                /^LH:/ { lh=$2; }
+                /^end_of_record/ {
+                  if (lf > 0) {
+                    pct = (lh/lf)*100;
+                    if (pct < 100.0) printf "| `%s` | %.1f%% | %d/%d |\n", file, pct, lh, lf;
+                  }
+                }' "$LCOV" | sort -t '|' -k3 -g | head -5)
+              [ -z "$LOWEST" ] && LOWEST="| — | — | all files ≥ 100% |"
+
+              BODY=$(printf '%s\n' \
+                "$MARKER" \
+                "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) \`[${CLUSTER_TAG}]\` — ${VERDICT}" \
+                "" \
+                "${LH} of ${LF} lines hit." \
+                "" \
+                "**Lowest-covered files**" \
+                "" \
+                "| File | Coverage | Hit/Total |" \
+                "|---|---|---|" \
+                "${LOWEST}" \
+                "" \
+                "_Posted by \`tasks/ng-test/pullrequest.yaml\`._")
+
+              API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments"
+              AUTH="Authorization: token ${GIT_TOKEN}"
+              ACCEPT="Accept: application/vnd.github+json"
+
+              EXISTING_ID=$(curl -fsSL -H "$AUTH" -H "$ACCEPT" "$API" \
+                | jq -r --arg marker "$MARKER" '.[] | select(.body | startswith($marker)) | .id' \
+                | head -1)
+
+              PAYLOAD=$(jq -cn --arg body "$BODY" '{body: $body}')
+
+              if [ -n "$EXISTING_ID" ]; then
+                echo "==> updating existing coverage [$CLUSTER_TAG] comment $EXISTING_ID"
+                curl -fsSL -X PATCH -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" \
+                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${EXISTING_ID}" >/dev/null
+              else
+                echo "==> posting new coverage [$CLUSTER_TAG] comment"
+                curl -fsSL -X POST  -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" "$API" >/dev/null
+              fi
+            else
+              echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR coverage comment"
+            fi
+
+            if [ "$STATUS" = "fail" ]; then
+              echo "FAIL: coverage ${TOTAL}% is below threshold ${THRESHOLD}%"
+              exit 1
+            fi
+            echo "PASS: coverage ${TOTAL}% meets threshold ${THRESHOLD}%"
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 1h0m0s
+status: {}
