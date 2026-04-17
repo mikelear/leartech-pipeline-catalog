@@ -1,0 +1,266 @@
+# end2end presubmit — exercises the live preview deploy of a PR.
+#
+# ── CONTRACT FOR CONSUMERS ────────────────────────────────────────────
+#
+# Missing: if the consumer repo has no executable end2end/run.sh, this
+# task posts a friendly "not configured" sticky comment and passes.
+# Adoption is opt-in per repo.
+#
+# Present: the task exports the env below, waits up to 5 min for the
+# preview to respond 200 on /health/live, invokes bash end2end/run.sh,
+# then reads end2end/results.json and posts a sticky comment. The
+# check PASSES iff results.json.success == true. Non-zero exit from
+# run.sh without a valid results.json is treated as a script crash
+# (check fails, sticky comment flags the crash).
+#
+# ── ENV AVAILABLE TO end2end/run.sh ────────────────────────────────────
+#
+#   PREVIEW_URL         https://<APP_NAME>-pr-<PULL_NUMBER>.jx.leartech.com
+#   PREVIEW_HOST_BASE   pr-<PULL_NUMBER>.jx.leartech.com
+#                       (suffix shared by all preview hostnames — useful
+#                       for multi-subdomain stacks like auth-ui + auth-api
+#                       + hydra; see leartech-auth-ui for an example)
+#   PREVIEW_NAMESPACE   jx-<REPO_OWNER>-<APP_NAME>-pr-<PULL_NUMBER>
+#   APP_NAME            service repo name
+#   PULL_NUMBER         PR number on GitHub
+#   REPO_OWNER          e.g. mikelear
+#   REPO_NAME           same as APP_NAME for now
+#   CLUSTER_ID          gcp | azure (from jx-cluster-config ConfigMap)
+#   VERSION             0.0.0-PR-<N>-<ITER>-SNAPSHOT
+#   GIT_TOKEN           tekton-bot GitHub token — use CAREFULLY, this
+#                       writes as tekton-bot. Prefer read-only usage.
+#
+# Standard debian-slim packages are pre-installed (jq, curl, bash,
+# python3, openssl) so scripts can call them without apk/apt-get.
+#
+# ── end2end/results.json SCHEMA ────────────────────────────────────────
+#
+#   {
+#     "success": true,                      // overall pass/fail
+#     "summary": "3/3 checks passed",       // 1-line human-readable
+#     "tests": [
+#       { "name": "health-live",            // short identifier
+#         "status": "pass",                 // pass | fail | skip
+#         "duration_ms": 127,
+#         "message": "HTTP 200" }           // short context or tail
+#     ],
+#     "metadata": {
+#       "preview_url": "https://...",       // echoed for convenience
+#       "version":     "0.0.0-PR-4-1-SNAPSHOT"
+#     }
+#   }
+#
+# The task does not second-guess the shape beyond these fields. If you
+# need richer data (screenshots, traces, perf numbers) add them under
+# metadata or extend tests[].
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: end2end
+spec:
+  pipelineSpec:
+    tasks:
+    - name: end2end
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        - image: debian:12-slim
+          name: end2end
+          resources: {}
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+
+            # Tools the contract guarantees to consumer scripts.
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+              ca-certificates curl jq bash python3 openssl >/dev/null
+
+            source .jx/variables.sh
+
+            export PREVIEW_HOST_BASE="pr-${PULL_NUMBER}.jx.leartech.com"
+            export PREVIEW_URL="https://${APP_NAME}-${PREVIEW_HOST_BASE}"
+            export PREVIEW_NAMESPACE="jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}"
+
+            echo "==> consumer env:"
+            echo "    PREVIEW_URL=$PREVIEW_URL"
+            echo "    PREVIEW_HOST_BASE=$PREVIEW_HOST_BASE"
+            echo "    PREVIEW_NAMESPACE=$PREVIEW_NAMESPACE"
+            echo "    APP_NAME=$APP_NAME  PULL_NUMBER=$PULL_NUMBER  CLUSTER_ID=${CLUSTER_ID:-}"
+
+            # ── consumer-script resolution ─────────────────────────────
+            HAS_SCRIPT=0
+            [ -x end2end/run.sh ] && HAS_SCRIPT=1
+
+            # ── helper: post/patch sticky comment ──────────────────────
+            post_sticky() {
+              local body="$1"
+              if [ -z "${GIT_TOKEN:-}" ] || [ -z "${PULL_NUMBER:-}" ]; then
+                echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR comment"
+                return 0
+              fi
+              local api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments"
+              local auth="Authorization: token ${GIT_TOKEN}"
+              local accept="Accept: application/vnd.github+json"
+              local existing_id
+              existing_id=$(curl -fsSL -H "$auth" -H "$accept" "$api" \
+                | jq -r '.[] | select(.body | startswith("<!-- leartech-end2end -->")) | .id' \
+                | head -1)
+              local payload
+              payload=$(jq -cn --arg body "$body" '{body: $body}')
+              if [ -n "$existing_id" ]; then
+                echo "==> updating existing end2end comment $existing_id"
+                curl -fsSL -X PATCH -H "$auth" -H "$accept" -d "$payload" \
+                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${existing_id}" >/dev/null
+              else
+                echo "==> posting new end2end comment"
+                curl -fsSL -X POST -H "$auth" -H "$accept" -d "$payload" "$api" >/dev/null
+              fi
+            }
+
+            # ── branch 1: no end2end/run.sh → friendly pass ─────────────
+            if [ "$HAS_SCRIPT" = "0" ]; then
+              echo "==> no executable end2end/run.sh in repo; posting 'not configured' note"
+              body=$(printf '%s\n' \
+                "<!-- leartech-end2end -->" \
+                ":information_source: **End-to-end: not configured**" \
+                "" \
+                "This repo has no executable \`end2end/run.sh\`. Add one (make it \`chmod +x\`) to run presubmit checks against the preview deploy." \
+                "" \
+                "Contract: \`tasks/end2end/pullrequest.yaml\` in \`leartech-pipeline-catalog\`." \
+                "" \
+                "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
+              post_sticky "$body"
+              echo "PASS: no end2end configured"
+              exit 0
+            fi
+
+            # ── branch 2: wait for preview ─────────────────────────────
+            echo "==> waiting up to 5 min for $PREVIEW_URL/health/live"
+            DEADLINE=$(( $(date +%s) + 300 ))
+            until curl -sSf -o /dev/null -m 5 "$PREVIEW_URL/health/live"; do
+              if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+                body=$(printf '%s\n' \
+                  "<!-- leartech-end2end -->" \
+                  ":x: **End-to-end: FAIL (preview not ready)**" \
+                  "" \
+                  "\`$PREVIEW_URL/health/live\` never returned 200 within 5 min. The PR's \`pr\` check (kaniko + jx-preview) may have failed or the preview pod may still be pulling images." \
+                  "" \
+                  "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
+                post_sticky "$body"
+                echo "FAIL: preview never reached ready state"
+                exit 1
+              fi
+              sleep 10
+            done
+            echo "==> preview up; invoking end2end/run.sh"
+
+            # ── branch 3: run consumer script ──────────────────────────
+            SCRIPT_EXIT=0
+            bash end2end/run.sh || SCRIPT_EXIT=$?
+            echo "==> end2end/run.sh exited with $SCRIPT_EXIT"
+
+            if [ ! -f end2end/results.json ]; then
+              body=$(printf '%s\n' \
+                "<!-- leartech-end2end -->" \
+                ":x: **End-to-end: FAIL (no results.json)**" \
+                "" \
+                "\`end2end/run.sh\` exited $SCRIPT_EXIT without writing \`end2end/results.json\`. See the \`end2end\` check logs for script output." \
+                "" \
+                "The script must emit \`end2end/results.json\` per the schema in \`tasks/end2end/pullrequest.yaml\` so the sticky PR comment can render." \
+                "" \
+                "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
+              post_sticky "$body"
+              echo "FAIL: no results.json"
+              exit 1
+            fi
+
+            if ! jq -e . end2end/results.json >/dev/null 2>&1; then
+              body=$(printf '%s\n' \
+                "<!-- leartech-end2end -->" \
+                ":x: **End-to-end: FAIL (results.json malformed)**" \
+                "" \
+                "\`end2end/results.json\` is not valid JSON. See check logs." \
+                "" \
+                "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
+              post_sticky "$body"
+              echo "FAIL: results.json malformed"
+              exit 1
+            fi
+
+            SUCCESS=$(jq -r '.success' end2end/results.json)
+            SUMMARY=$(jq -r '.summary // "(no summary)"' end2end/results.json)
+
+            TEST_ROWS=$(jq -r '.tests[]? |
+              "| `\(.name)` | " +
+              (if .status=="pass" then ":white_check_mark: pass"
+               elif .status=="fail" then ":x: fail"
+               else ":large_blue_circle: \(.status)" end) +
+              " | \(.duration_ms // 0)ms | \(.message // "") |"' end2end/results.json)
+            [ -z "$TEST_ROWS" ] && TEST_ROWS="| — | — | — | (no tests emitted) |"
+
+            if [ "$SUCCESS" = "true" ]; then
+              ICON="white_check_mark"; VERDICT="PASS"
+            else
+              ICON="x"; VERDICT="FAIL"
+            fi
+
+            body=$(printf '%s\n' \
+              "<!-- leartech-end2end -->" \
+              ":${ICON}: **End-to-end: ${VERDICT}** — ${SUMMARY}" \
+              "" \
+              "Preview: ${PREVIEW_URL}" \
+              "" \
+              "| Test | Status | Duration | Message |" \
+              "|---|---|---|---|" \
+              "${TEST_ROWS}" \
+              "" \
+              "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
+            post_sticky "$body"
+
+            if [ "$SUCCESS" != "true" ]; then
+              echo "FAIL: end2end results.success != true"
+              exit 1
+            fi
+            echo "PASS: end2end complete"
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}
