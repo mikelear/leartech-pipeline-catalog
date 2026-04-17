@@ -120,7 +120,15 @@ spec:
             source .jx/variables.sh
 
             export PREVIEW_HOST_BASE="pr-${PULL_NUMBER}.jx.leartech.com"
-            export PREVIEW_URL="https://${APP_NAME}-${PREVIEW_HOST_BASE}"
+            # Ingress prefix defaults to APP_NAME — matches the pattern
+            # used by leartech-angular-service-template +
+            # leartech-go-service-template. Consumers with shortened
+            # subdomains (e.g. leartech-auth-ui ingress is
+            # auth-ui-pr-N.jx.leartech.com not leartech-auth-ui-pr-N)
+            # override via stepTemplate.env.PREVIEW_HOST_PREFIX in their
+            # .lighthouse/jenkins-x/end2end.yaml.
+            : "${PREVIEW_HOST_PREFIX:=${APP_NAME}}"
+            export PREVIEW_URL="https://${PREVIEW_HOST_PREFIX}-${PREVIEW_HOST_BASE}"
             export PREVIEW_NAMESPACE="jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}"
 
             echo "==> consumer env:"
@@ -191,12 +199,16 @@ spec:
             # where one pod serves /health/live right before being
             # terminated. Each probe: GET with 5s timeout.
             MAX_WAIT="${END2END_HEALTH_TIMEOUT:-600}"
-            echo "==> waiting up to $((MAX_WAIT / 60)) min for $PREVIEW_URL/health/live (3 consecutive 200s)"
+            # Health probe path default: /health/live (Go services).
+            # SPAs on leartech-nginx expose /health (no /live). Consumers
+            # override via stepTemplate.env.END2END_HEALTH_PATH.
+            HEALTH_PATH="${END2END_HEALTH_PATH:-/health/live}"
+            echo "==> waiting up to $((MAX_WAIT / 60)) min for $PREVIEW_URL$HEALTH_PATH (3 consecutive 200s)"
             DEADLINE=$(( $(date +%s) + MAX_WAIT ))
             STREAK=0
             REQUIRED=3
             while [ "$STREAK" -lt "$REQUIRED" ]; do
-              if curl -sSf -o /dev/null -m 5 "$PREVIEW_URL/health/live" 2>/dev/null; then
+              if curl -sSf -o /dev/null -m 5 "$PREVIEW_URL$HEALTH_PATH" 2>/dev/null; then
                 STREAK=$((STREAK + 1))
                 echo "   probe $STREAK/$REQUIRED ok"
               else
@@ -208,7 +220,7 @@ spec:
                     "$MARKER" \
                     ":x: **End-to-end: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" \
                     "" \
-                    "\`$PREVIEW_URL/health/live\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min. The PR's \`pr\` check (kaniko + jx-preview) may have failed or the preview pod may still be pulling images." \
+                    "\`$PREVIEW_URL$HEALTH_PATH\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min. The PR's \`pr\` check (kaniko + jx-preview) may have failed or the preview pod may still be pulling images." \
                     "" \
                     "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
                   post_sticky "$body"
