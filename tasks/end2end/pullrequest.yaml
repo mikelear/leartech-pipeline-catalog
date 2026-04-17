@@ -173,24 +173,41 @@ spec:
             fi
 
             # ── branch 2: wait for preview ─────────────────────────────
-            echo "==> waiting up to 5 min for $PREVIEW_URL/health/live"
+            # Require 3 consecutive successful probes with a small gap
+            # between them so we don't catch the rolling-deploy window
+            # where one pod serves /health/live right before being
+            # terminated. Each probe: GET with 5s timeout.
+            echo "==> waiting up to 5 min for $PREVIEW_URL/health/live (3 consecutive 200s)"
             DEADLINE=$(( $(date +%s) + 300 ))
-            until curl -sSf -o /dev/null -m 5 "$PREVIEW_URL/health/live"; do
-              if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-                body=$(printf '%s\n' \
-                  "<!-- leartech-end2end -->" \
-                  ":x: **End-to-end: FAIL (preview not ready)**" \
-                  "" \
-                  "\`$PREVIEW_URL/health/live\` never returned 200 within 5 min. The PR's \`pr\` check (kaniko + jx-preview) may have failed or the preview pod may still be pulling images." \
-                  "" \
-                  "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
-                post_sticky "$body"
-                echo "FAIL: preview never reached ready state"
-                exit 1
+            STREAK=0
+            REQUIRED=3
+            while [ "$STREAK" -lt "$REQUIRED" ]; do
+              if curl -sSf -o /dev/null -m 5 "$PREVIEW_URL/health/live" 2>/dev/null; then
+                STREAK=$((STREAK + 1))
+                echo "   probe $STREAK/$REQUIRED ok"
+              else
+                STREAK=0
               fi
-              sleep 10
+              if [ "$STREAK" -lt "$REQUIRED" ]; then
+                if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+                  body=$(printf '%s\n' \
+                    "<!-- leartech-end2end -->" \
+                    ":x: **End-to-end: FAIL (preview not ready)**" \
+                    "" \
+                    "\`$PREVIEW_URL/health/live\` never returned 3 consecutive 200s within 5 min. The PR's \`pr\` check (kaniko + jx-preview) may have failed or the preview pod may still be pulling images." \
+                    "" \
+                    "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
+                  post_sticky "$body"
+                  echo "FAIL: preview never reached stable ready state"
+                  exit 1
+                fi
+                sleep 5
+              fi
             done
-            echo "==> preview up; invoking end2end/run.sh"
+            # Small grace period before invoking the script so any
+            # in-flight pod churn has time to settle.
+            sleep 3
+            echo "==> preview stable; invoking end2end/run.sh"
 
             # ── branch 3: run consumer script ──────────────────────────
             SCRIPT_EXIT=0
