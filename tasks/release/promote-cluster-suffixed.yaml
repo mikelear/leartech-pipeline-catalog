@@ -1,0 +1,75 @@
+# Language-agnostic: chart version bump + cluster-suffixed git tag.
+#
+# Runs AFTER the build step produces the container image and BEFORE
+# helm-release / jx-promote, so the chart references the new image tag
+# and the downstream gitops PR carries the correct version.
+#
+# Does:
+#   1. yset chart version + appVersion (only if charts/$REPO_NAME exists)
+#   2. yset values image.repository + image.tag
+#   3. git commit all changes
+#   4. git tag -fa v${VERSION}-${CLUSTER_ID} (suffix empty if single-cluster)
+#   5. jx changelog create
+#
+# Skips chart step cleanly if the repo has no charts/$REPO_NAME (e.g.
+# chart-only or library repos).
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: promote-cluster-suffixed
+spec:
+  pipelineSpec:
+    tasks:
+    - name: promote-cluster-suffixed
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources: {}
+          workingDir: /workspace/source
+        steps:
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: promote-cluster-suffixed
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+            source .jx/variables.sh
+
+            if [ -d "charts/$REPO_NAME" ]; then
+              jx gitops yset -p version    -v "$VERSION" -f "./charts/$REPO_NAME/Chart.yaml"
+              jx gitops yset -p appVersion -v "$VERSION" -f "./charts/$REPO_NAME/Chart.yaml"
+              jx gitops yset -p 'image.repository' -v "$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME" -f "./charts/$REPO_NAME/values.yaml"
+              jx gitops yset -p 'image.tag'        -v "$VERSION" -f "./charts/$REPO_NAME/values.yaml"
+            else
+              echo "no charts/$REPO_NAME directory — skipping chart update"
+            fi
+
+            TAG_SUFFIX=""
+            [ -n "$CLUSTER_ID" ] && TAG_SUFFIX="-$CLUSTER_ID"
+
+            git add * || true
+            git commit -a -m "chore: release $VERSION" --allow-empty
+            git tag -fa "v${VERSION}${TAG_SUFFIX}" -m "Release v${VERSION}${TAG_SUFFIX}"
+            git push --force origin "v${VERSION}${TAG_SUFFIX}"
+
+            jx changelog create --version "v${VERSION}${TAG_SUFFIX}" --output-markdown ../changelog.md
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}

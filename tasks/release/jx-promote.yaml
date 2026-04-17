@@ -1,0 +1,43 @@
+# Language-agnostic: open gitops PR against jx-build-cluster-gsm /
+# equivalent env repo via `jx promote`.
+#
+# `--all` promotes to every environment mentioned in jx-requirements,
+# `--no-poll` returns once the PR is open (auto-merge + boot deployment
+# happen asynchronously), `--add-changelog` pins the markdown rendered
+# by the preceding promote-cluster-suffixed step.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: jx-promote
+spec:
+  pipelineSpec:
+    tasks:
+    - name: jx-promote
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources: {}
+          workingDir: /workspace/source
+        steps:
+        - image: ghcr.io/jenkins-x-plugins/jx-promote:0.6.33
+          name: jx-promote
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+            source .jx/variables.sh
+            jx promote -b --all --timeout 1h --no-poll --add-changelog ../changelog.md
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}

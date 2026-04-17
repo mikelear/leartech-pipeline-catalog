@@ -1,0 +1,65 @@
+# Language-agnostic: compute next semantic version, cluster-suffix aware.
+#
+# Multi-cluster version computation:
+#   --previous-version from-tag alone doesn't progress past the first minor
+#   bump — `v0.1.0-gcp` sorts as a SemVer PRERELEASE of 0.1.0 and
+#   jx-release-version's bump calc sees the plain `v0.0.1` base tag as
+#   "latest clean version" and keeps recomputing 0.1.0 from the same feat:
+#   commit history.
+#
+# Fix: explicitly find the latest tag matching THIS cluster's suffix, strip
+# the suffix, and pass as --previous-version. Then jx-release-version
+# computes next from there based on conventional-commits since that tag.
+#
+# Seeded base (`v0.0.1` with no suffix) is the fallback for the first
+# release ever on a fresh clone.
+#
+# Outputs: VERSION file in working dir.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: next-version
+spec:
+  pipelineSpec:
+    tasks:
+    - name: next-version
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          name: ""
+          resources: {}
+          workingDir: /workspace/source
+        steps:
+        - image: ghcr.io/jenkins-x/jx-release-version:2.8.0
+          name: next-version
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+            apk add --no-cache git sed 2>/dev/null || true
+
+            if [ -n "$CLUSTER_ID" ]; then
+              PREV=$(git tag -l "v*-${CLUSTER_ID}" --sort=-v:refname | head -1 | sed "s|^v||;s|-${CLUSTER_ID}\$||")
+            else
+              PREV=$(git tag -l "v*" --sort=-v:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -1 | sed "s|^v||")
+            fi
+            PREV=${PREV:-0.0.0}
+            echo "computed previous version: $PREV  (cluster: ${CLUSTER_ID:-<none>})"
+
+            jx-release-version --previous-version="$PREV" > VERSION
+            echo "next version: $(cat VERSION)"
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}

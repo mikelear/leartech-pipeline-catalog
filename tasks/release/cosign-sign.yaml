@@ -1,0 +1,59 @@
+# Language-agnostic: cosign-sign the built container image.
+#
+# Signs $DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION using
+# the cluster's cosign-keys secret. Assumes .jx/variables.sh has been
+# sourced (i.e. jx-variables step ran earlier in the pipeline).
+#
+# The credHelpers strip is required because bitnami/cosign doesn't ship
+# the gcloud / az docker credential helpers that Tekton's injected
+# config.json references.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: cosign-sign
+spec:
+  pipelineSpec:
+    tasks:
+    - name: cosign-sign
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          name: ""
+          resources: {}
+          workingDir: /workspace/source
+        steps:
+        - image: bitnami/cosign:latest
+          name: cosign-sign
+          resources: {}
+          securityContext:
+            runAsUser: 0
+          env:
+          - name: COSIGN_KEY
+            valueFrom:
+              secretKeyRef:
+                name: cosign-keys
+                key: cosign.key
+          script: |
+            #!/bin/bash
+            set -e
+            source .jx/variables.sh
+            export COSIGN_PASSWORD=""
+
+            mkdir -p /root/.docker
+            sed 's/"credHelpers":{[^}]*},//' /tekton/creds/.docker/config.json > /root/.docker/config.json
+            export DOCKER_CONFIG=/root/.docker
+
+            echo "$COSIGN_KEY" > /tmp/cosign.key
+            IMAGE="$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+            echo "Signing $IMAGE"
+            cosign sign --key /tmp/cosign.key --yes "$IMAGE"
+            rm -f /tmp/cosign.key
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}

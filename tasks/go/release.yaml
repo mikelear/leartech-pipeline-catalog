@@ -1,3 +1,6 @@
+# Go release orchestrator. Composes language-agnostic release/* steps
+# with the Go build stage. Target: thin — every step is either a `uses:`
+# reference to a reusable task or a single Go-specific script block.
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
@@ -14,23 +17,15 @@ spec:
           env:
           - name: HOME
             value: /tekton/home
-          - name: CLUSTER_ID
-            valueFrom:
-              configMapKeyRef:
-                name: jx-cluster-config
-                key: CLUSTER_ID
-                optional: true
           envFrom:
           - secretRef:
               name: jx-boot-job-env-vars
               optional: true
           name: ""
-          # NB: Kubernetes schedules the pod based on SUM of all step
-          # containers' requests (Tekton runs steps sequentially but all
-          # containers exist up-front). 9 steps × stepTemplate.requests =
-          # total pod request. Keeping per-step requests modest so the pod
-          # fits on a standard AKS/GKE node (~2 CPU / ~7 GiB). Individual
-          # heavy steps (build, kaniko) can override if needed.
+          # Kubernetes schedules the pod on SUM of all step containers'
+          # requests (Tekton runs steps sequentially but all containers
+          # exist up-front). Modest per-step requests keep the pod
+          # fitting on standard AKS/GKE nodes.
           resources:
             requests:
               cpu: 100m
@@ -40,53 +35,21 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-release-version:2.8.0
-          name: next-version
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
+          name: ""
           resources: {}
-          script: |
-            #!/usr/bin/env sh
-            set -e
-
-            # Multi-cluster version computation:
-            #
-            # --previous-version from-tag alone doesn't progress past the
-            # first minor bump — because `v0.1.0-gcp` sorts as a SemVer
-            # PRERELEASE of 0.1.0 and jx-release-version's bump calc sees
-            # the plain `v0.0.1` base tag as "latest clean version" and
-            # keeps recomputing 0.1.0 from the same feat: commit history.
-            #
-            # Fix: explicitly find the latest tag matching THIS cluster's
-            # suffix, strip the suffix, and pass as --previous-version.
-            # Then jx-release-version computes next from there based on
-            # conventional-commits since that tag.
-            #
-            # Seeded base (`v0.0.1` with no suffix) is the fallback for
-            # the first release ever on a fresh clone.
-            apk add --no-cache git sed 2>/dev/null || true
-
-            if [ -n "$CLUSTER_ID" ]; then
-              PREV=$(git tag -l "v*-${CLUSTER_ID}" --sort=-v:refname | head -1 | sed "s|^v||;s|-${CLUSTER_ID}\$||")
-            else
-              PREV=$(git tag -l "v*" --sort=-v:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -1 | sed "s|^v||")
-            fi
-            PREV=${PREV:-0.0.0}
-            echo "computed previous version: $PREV  (cluster: ${CLUSTER_ID:-<none>})"
-
-            jx-release-version --previous-version="$PREV" > VERSION
-            echo "next version: $(cat VERSION)"
         - image: ghcr.io/jenkins-x/jx-boot:3.16.59
           name: jx-variables
           resources: {}
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: golang:1.25-alpine
+        - image: ghcr.io/mikelear/leartech-go-runtime:0.18.0
           name: build-make-build
           resources: {}
           script: |
             #!/bin/sh
             set -e
-            apk add --no-cache git make
             go mod download
             [ -f Makefile ] && grep -q "^swag:" Makefile && make swag || true
             go build -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o bin/server "${BUILD_TARGET:-./cmd/server}"
@@ -101,74 +64,18 @@ spec:
               --context=/workspace/source \
               --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
               --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
-          name: promote-changelog
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/promote-cluster-suffixed.yaml@main
+          name: ""
           resources: {}
-          script: |
-            #!/usr/bin/env sh
-            set -e
-            source .jx/variables.sh
-
-            if [ -d "charts/$REPO_NAME" ]; then
-              jx gitops yset -p version    -v "$VERSION" -f "./charts/$REPO_NAME/Chart.yaml"
-              jx gitops yset -p appVersion -v "$VERSION" -f "./charts/$REPO_NAME/Chart.yaml"
-              jx gitops yset -p 'image.repository' -v "$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME" -f "./charts/$REPO_NAME/values.yaml"
-              jx gitops yset -p 'image.tag'        -v "$VERSION" -f "./charts/$REPO_NAME/values.yaml"
-            else
-              echo "no charts/$REPO_NAME directory — skipping chart update"
-            fi
-
-            TAG_SUFFIX=""
-            [ -n "$CLUSTER_ID" ] && TAG_SUFFIX="-$CLUSTER_ID"
-
-            git add * || true
-            git commit -a -m "chore: release $VERSION" --allow-empty
-            git tag -fa "v${VERSION}${TAG_SUFFIX}" -m "Release v${VERSION}${TAG_SUFFIX}"
-            git push --force origin "v${VERSION}${TAG_SUFFIX}"
-
-            jx changelog create --version "v${VERSION}${TAG_SUFFIX}" --output-markdown ../changelog.md
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
-          name: promote-helm-release
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/helm-release.yaml@main
+          name: ""
           resources: {}
-          script: |
-            #!/usr/bin/env sh
-            set -e
-            source .jx/variables.sh
-            jx gitops helm release
-        - image: bitnami/cosign:latest
-          name: cosign-sign
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/cosign-sign.yaml@main
+          name: ""
           resources: {}
-          securityContext:
-            runAsUser: 0
-          env:
-          - name: COSIGN_KEY
-            valueFrom:
-              secretKeyRef:
-                name: cosign-keys
-                key: cosign.key
-          script: |
-            #!/bin/bash
-            set -e
-            source .jx/variables.sh
-            export COSIGN_PASSWORD=""
-
-            mkdir -p /root/.docker
-            sed 's/"credHelpers":{[^}]*},//' /tekton/creds/.docker/config.json > /root/.docker/config.json
-            export DOCKER_CONFIG=/root/.docker
-
-            echo "$COSIGN_KEY" > /tmp/cosign.key
-            IMAGE="$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
-            echo "Signing $IMAGE"
-            cosign sign --key /tmp/cosign.key --yes "$IMAGE"
-            rm -f /tmp/cosign.key
-        - image: ghcr.io/jenkins-x-plugins/jx-promote:0.6.33
-          name: promote-jx-promote
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/jx-promote.yaml@main
+          name: ""
           resources: {}
-          script: |
-            #!/usr/bin/env sh
-            set -e
-            source .jx/variables.sh
-            jx promote -b --all --timeout 1h --no-poll --add-changelog ../changelog.md
   podTemplate: {}
   serviceAccountName: tekton-bot
   timeout: 12h0m0s

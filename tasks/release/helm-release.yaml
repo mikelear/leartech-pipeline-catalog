@@ -1,0 +1,41 @@
+# Language-agnostic: package + push helm chart to cluster OCI registry.
+#
+# Thin wrapper on `jx gitops helm release`. Separate task so Python /
+# Angular / chart-only templates can compose it into their release
+# pipelines without pulling Go-specific stages.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: helm-release
+spec:
+  pipelineSpec:
+    tasks:
+    - name: helm-release
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources: {}
+          workingDir: /workspace/source
+        steps:
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: helm-release
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+            source .jx/variables.sh
+            jx gitops helm release
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}
