@@ -33,15 +33,20 @@ spec:
         - image: golang:1.25
           name: go-test
           resources: {}
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
           script: |
-            #!/bin/sh
-            set -e
+            #!/bin/bash
+            set -eo pipefail
 
             # Consumer-overridable via env:
             #   COVERAGE_THRESHOLD — minimum acceptable total coverage % (default 60)
             #   COVERAGE_SCOPE     — go test packages for -coverpkg (default ./internal/...)
-            # TODO: migrate these to Tekton task params once the catalog uses:
-            # mechanism is properly wired to pass them through.
             THRESHOLD="${COVERAGE_THRESHOLD:-60.0}"
             SCOPE="${COVERAGE_SCOPE:-./internal/...}"
 
@@ -58,16 +63,77 @@ spec:
             echo "=== coverage summary ==="
             echo "total=${TOTAL}%  threshold=${THRESHOLD}%"
 
+            STATUS="pass"
             if awk -v t="$TOTAL" -v th="$THRESHOLD" 'BEGIN { exit !(t < th) }'; then
+              STATUS="fail"
+            fi
+
+            # Build PR sticky comment. <!-- leartech-coverage --> marker lets
+            # subsequent runs find + replace the previous comment instead of
+            # stacking a new one on every push.
+            if [ -n "${GIT_TOKEN:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends jq curl >/dev/null
+
+              ICON="white_check_mark"
+              VERDICT="PASS"
+              if [ "$STATUS" = "fail" ]; then
+                ICON="x"
+                VERDICT="FAIL"
+              fi
+
+              # Top 5 lowest-covered functions (excluding 100%-covered ones so
+              # the table is useful even on well-tested repos). Skips the
+              # `total:` summary row.
+              LOWEST=$(go tool cover -func=cover.out \
+                | awk 'NR>1 && $1!="total:" && $NF!="100.0%" {printf "| `%s` | `%s` | %s |\n", $1, $2, $NF}' \
+                | sort -t '|' -k4 -g \
+                | head -5)
+              [ -z "$LOWEST" ] && LOWEST="| — | — | all functions ≥ 100% |"
+
+              BODY=$(cat <<EOF
+<!-- leartech-coverage -->
+### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) — ${VERDICT}
+
+Scope: \`${SCOPE}\`
+
+**Lowest-covered functions**
+
+| File | Function | Coverage |
+|---|---|---|
+${LOWEST}
+
+_Posted by \`tasks/go-test/pullrequest.yaml\`._
+EOF
+)
+
+              API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments"
+              AUTH="Authorization: token ${GIT_TOKEN}"
+              ACCEPT="Accept: application/vnd.github+json"
+
+              # Find existing sticky comment
+              EXISTING_ID=$(curl -fsSL -H "$AUTH" -H "$ACCEPT" "$API" \
+                | jq -r '.[] | select(.body | startswith("<!-- leartech-coverage -->")) | .id' \
+                | head -1)
+
+              PAYLOAD=$(jq -cn --arg body "$BODY" '{body: $body}')
+
+              if [ -n "$EXISTING_ID" ]; then
+                echo "==> updating existing coverage comment $EXISTING_ID"
+                curl -fsSL -X PATCH -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" \
+                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${EXISTING_ID}" >/dev/null
+              else
+                echo "==> posting new coverage comment"
+                curl -fsSL -X POST  -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" "$API" >/dev/null
+              fi
+            else
+              echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR coverage comment"
+            fi
+
+            if [ "$STATUS" = "fail" ]; then
               echo "FAIL: coverage ${TOTAL}% is below threshold ${THRESHOLD}%"
               exit 1
             fi
             echo "PASS: coverage ${TOTAL}% meets threshold ${THRESHOLD}%"
-
-            # TODO: post the coverage summary as a PR comment (mirror the pattern
-            # from security-scan/pullrequest.yaml that posts via tekton-bot's
-            # GitHub credentials). Once wired, every go-test run leaves a visible
-            # coverage breakdown on the PR.
   podTemplate: {}
   serviceAccountName: tekton-bot
   timeout: 1h0m0s
