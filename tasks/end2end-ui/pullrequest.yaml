@@ -93,7 +93,10 @@ spec:
 
             source .jx/variables.sh
 
-            export PREVIEW_HOST_BASE="${PREVIEW_HOST_BASE:-pr-${PULL_NUMBER}.${DOMAIN}}"
+            # Previews on both clusters use jx.leartech.com (GCP wildcard DNS).
+            # Preview helmfiles hardcode this domain. TODO: align with $DOMAIN
+            # once preview helmfiles use cluster-specific domains.
+            export PREVIEW_HOST_BASE="${PREVIEW_HOST_BASE:-pr-${PULL_NUMBER}.jx.leartech.com}"
             : "${PREVIEW_URL:=https://${APP_NAME}-${PREVIEW_HOST_BASE}}"
             export PREVIEW_URL
             export PREVIEW_NAMESPACE="${PREVIEW_NAMESPACE:-jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}}"
