@@ -178,9 +178,9 @@ spec:
               --output end2end-ui/test-results \
               2>&1 | tee end2end-ui/playwright.log || true
 
-            # Parse playwright log for pass/fail counts
-            PASSED=$(grep -c "✓\|passed" end2end-ui/playwright.log 2>/dev/null || echo 0)
-            FAILED=$(grep -c "✘\|failed\|Error" end2end-ui/playwright.log 2>/dev/null || echo 0)
+            # Parse playwright summary line: "3 passed (3.3s)" / "1 failed"
+            PASSED=$(grep -oE "[0-9]+ passed" end2end-ui/playwright.log 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo 0)
+            FAILED=$(grep -oE "[0-9]+ failed" end2end-ui/playwright.log 2>/dev/null | head -1 | grep -oE "[0-9]+" || echo 0)
             TOTAL=$((PASSED + FAILED))
             [ "$TOTAL" -eq 0 ] && TOTAL=1 && FAILED=1
 
