@@ -241,25 +241,23 @@ spec:
             if [ "$HAS_GSUTIL" = "true" ] && [ -d "end2end-ui/test-results" ]; then
               echo "==> uploading test artifacts to gs://${BUCKET}/${ARTIFACT_PREFIX}/"
 
-              # Upload screenshots
-              for img in $(find end2end-ui/test-results -name "*.png" 2>/dev/null); do
-                fname=$(basename "$img")
-                gsutil -o "Credentials:gs_service_key_file=${GCS_KEY_FILE}" -q cp "$img" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
-                ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- [${fname}](${ARTIFACT_BASE_URL}/${fname})"
-              done
-
-              # Upload videos
-              for vid in $(find end2end-ui/test-results -name "*.webm" 2>/dev/null); do
-                fname=$(basename "$vid")
-                gsutil -o "Credentials:gs_service_key_file=${GCS_KEY_FILE}" -q cp "$vid" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
-                ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- [${fname}](${ARTIFACT_BASE_URL}/${fname})"
-              done
-
-              # Upload traces
-              for trace in $(find end2end-ui/test-results -name "*.zip" 2>/dev/null); do
-                fname=$(basename "$trace")
-                gsutil -o "Credentials:gs_service_key_file=${GCS_KEY_FILE}" -q cp "$trace" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
-                ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- [${fname}](${ARTIFACT_BASE_URL}/${fname})"
+              # Upload all artifacts preserving test-name prefix for uniqueness.
+              # Directory structure: test-results/<test-name>/{screenshot,video,trace}
+              # Upload as: <test-name>--<filename> so each file is unique + identifiable.
+              for dir in end2end-ui/test-results/*/; do
+                [ -d "$dir" ] || continue
+                testname=$(basename "$dir")
+                for artifact in "$dir"*.png "$dir"*.webm "$dir"*.zip; do
+                  [ -f "$artifact" ] || continue
+                  fname="${testname}--$(basename "$artifact")"
+                  gsutil -o "Credentials:gs_service_key_file=${GCS_KEY_FILE}" -q cp "$artifact" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
+                  # Group by type with emoji for readability
+                  case "$artifact" in
+                    *.png)  ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- :camera: [${testname} screenshot](${ARTIFACT_BASE_URL}/${fname})" ;;
+                    *.webm) ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- :movie_camera: [${testname} video](${ARTIFACT_BASE_URL}/${fname})" ;;
+                    *.zip)  ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- :mag: [${testname} trace](${ARTIFACT_BASE_URL}/${fname})" ;;
+                  esac
+                done
               done
 
               if [ -n "$ARTIFACT_LINKS" ]; then
