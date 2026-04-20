@@ -119,7 +119,7 @@ spec:
 
             source .jx/variables.sh
 
-            export PREVIEW_HOST_BASE="pr-${PULL_NUMBER}.jx.leartech.com"
+            export PREVIEW_HOST_BASE="pr-${PULL_NUMBER}.${DOMAIN}"
             # Ingress prefix defaults to APP_NAME — matches the pattern
             # used by leartech-angular-service-template +
             # leartech-go-service-template. Consumers with shortened

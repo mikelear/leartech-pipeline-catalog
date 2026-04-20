@@ -93,7 +93,7 @@ spec:
 
             source .jx/variables.sh
 
-            export PREVIEW_HOST_BASE="${PREVIEW_HOST_BASE:-pr-${PULL_NUMBER}.jx.leartech.com}"
+            export PREVIEW_HOST_BASE="${PREVIEW_HOST_BASE:-pr-${PULL_NUMBER}.${DOMAIN}}"
             : "${PREVIEW_URL:=https://${APP_NAME}-${PREVIEW_HOST_BASE}}"
             export PREVIEW_URL
             export PREVIEW_NAMESPACE="${PREVIEW_NAMESPACE:-jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}}"
