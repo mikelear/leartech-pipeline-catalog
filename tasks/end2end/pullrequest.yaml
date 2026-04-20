@@ -119,8 +119,9 @@ spec:
 
             source .jx/variables.sh
 
-            # namespaceSubDomain is "-prN." (no hyphen between pr and number)
-            export PREVIEW_HOST_BASE="pr${PULL_NUMBER}.jx.leartech.com"
+            # DOMAIN from .jx/variables.sh — cluster-specific.
+            # namespaceSubDomain is "-prN." (no hyphen — mqube pattern).
+            export PREVIEW_HOST_BASE="pr${PULL_NUMBER}.${DOMAIN}"
             # Ingress prefix defaults to APP_NAME — matches the pattern
             # used by leartech-angular-service-template +
             # leartech-go-service-template. Consumers with shortened

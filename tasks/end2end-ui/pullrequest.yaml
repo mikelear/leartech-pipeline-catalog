@@ -102,12 +102,11 @@ spec:
 
             source .jx/variables.sh
 
-            # Previews on both clusters use jx.leartech.com (GCP wildcard DNS).
-            # Preview helmfiles hardcode this domain. TODO: align with $DOMAIN
-            # once preview helmfiles use cluster-specific domains.
-            # namespaceSubDomain is "-prN." (no hyphen between pr and number)
-            # matching mqube pattern and jxRequirements convention
-            export PREVIEW_HOST_BASE="${PREVIEW_HOST_BASE:-pr${PULL_NUMBER}.jx.leartech.com}"
+            # DOMAIN from .jx/variables.sh is cluster-specific (jx.leartech.com
+            # on GCP, az.leartech.com on Azure). Preview helmfiles use
+            # jxRequirements.ingress.domain which matches.
+            # namespaceSubDomain is "-prN." (no hyphen — mqube pattern).
+            export PREVIEW_HOST_BASE="${PREVIEW_HOST_BASE:-pr${PULL_NUMBER}.${DOMAIN}}"
             : "${PREVIEW_URL:=https://${APP_NAME}-${PREVIEW_HOST_BASE}}"
             export PREVIEW_URL
             export PREVIEW_NAMESPACE="${PREVIEW_NAMESPACE:-jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}}"
