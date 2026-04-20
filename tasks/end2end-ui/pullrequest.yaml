@@ -67,6 +67,11 @@ spec:
               cpu: 200m
               memory: 512Mi
           workingDir: /workspace/source
+        volumes:
+        - name: gcs-key
+          secret:
+            secretName: test-artifacts-gcs-key
+            optional: true
         steps:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
@@ -83,6 +88,10 @@ spec:
             requests:
               cpu: 500m
               memory: 1Gi
+          volumeMounts:
+          - name: gcs-key
+            mountPath: /var/run/secrets/test-artifacts
+            readOnly: true
           script: |
             #!/bin/bash
             set -eo pipefail
