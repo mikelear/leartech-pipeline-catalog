@@ -1,0 +1,285 @@
+# end2end-ui presubmit — headless browser tests against the live preview.
+#
+# ── CONTRACT FOR CONSUMERS ────────────────────────────────────────────
+#
+# Missing: if the consumer repo has no end2end-ui/ directory, this task
+# posts a friendly "not configured" sticky comment and passes.
+# Adoption is opt-in per repo.
+#
+# Present: the task installs Playwright + Chromium, waits for the preview
+# to respond 200 on the health endpoint, then runs
+# `npx playwright test end2end-ui/` against the live preview URL.
+# Results are converted to the same results.json schema as end2end/
+# and posted as a sticky PR comment.
+#
+# ── ENV AVAILABLE TO PLAYWRIGHT SPECS ──────────────────────────────────
+#
+#   PREVIEW_URL         https://<APP_NAME>-pr-<PULL_NUMBER>.jx.leartech.com
+#   PREVIEW_HOST_BASE   pr-<PULL_NUMBER>.jx.leartech.com
+#   PREVIEW_NAMESPACE   jx-<REPO_OWNER>-<APP_NAME>-pr-<PULL_NUMBER>
+#   APP_NAME, PULL_NUMBER, REPO_OWNER, REPO_NAME, CLUSTER_ID, VERSION
+#
+# Specs access the preview URL via process.env.PREVIEW_URL.
+#
+# ── end2end-ui/ DIRECTORY CONVENTION ───────────────────────────────────
+#
+#   end2end-ui/
+#     playwright.config.ts   — Playwright config (baseURL from PREVIEW_URL)
+#     *.spec.ts              — test specs
+#
+# The golden Angular template ships with 01-page-loads.spec.ts as a
+# smoke test. Consumers add app-specific specs.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: end2end-ui
+spec:
+  pipelineSpec:
+    tasks:
+    - name: end2end-ui
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: node:22
+          name: end2end-ui
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+
+            # Tools
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+              ca-certificates curl jq >/dev/null
+
+            source .jx/variables.sh
+
+            export PREVIEW_HOST_BASE="${PREVIEW_HOST_BASE:-pr-${PULL_NUMBER}.jx.leartech.com}"
+            : "${PREVIEW_URL:=https://${APP_NAME}-${PREVIEW_HOST_BASE}}"
+            export PREVIEW_URL
+            export PREVIEW_NAMESPACE="${PREVIEW_NAMESPACE:-jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}}"
+
+            CLUSTER_TAG="${CLUSTER_ID:-unknown}"
+            MARKER="<!-- leartech-end2end-ui-${CLUSTER_TAG} -->"
+
+            echo "==> consumer env:"
+            echo "    PREVIEW_URL=$PREVIEW_URL"
+            echo "    PREVIEW_NAMESPACE=$PREVIEW_NAMESPACE"
+            echo "    APP_NAME=$APP_NAME  PULL_NUMBER=$PULL_NUMBER  CLUSTER_ID=${CLUSTER_ID:-}"
+
+            # ── Helper: post/update sticky PR comment ───────────────────
+            post_sticky() {
+              local body="$1"
+              if [ -z "$GIT_TOKEN" ] || [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ] || [ -z "$PULL_NUMBER" ]; then
+                echo "(skipping PR comment — missing env)"
+                return
+              fi
+              local api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments"
+              local existing
+              existing=$(curl -sS -H "Authorization: token ${GIT_TOKEN}" "$api" \
+                | jq -r ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -1)
+              if [ -n "$existing" ]; then
+                curl -sS -X PATCH -H "Authorization: token ${GIT_TOKEN}" \
+                  -H "Content-Type: application/json" \
+                  -d "$(jq -n --arg b "$body" '{body: $b}')" \
+                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${existing}" >/dev/null
+                echo "==> updating existing end2end-ui [$CLUSTER_TAG] comment $existing"
+              else
+                curl -sS -X POST -H "Authorization: token ${GIT_TOKEN}" \
+                  -H "Content-Type: application/json" \
+                  -d "$(jq -n --arg b "$body" '{body: $b}')" "$api" >/dev/null
+                echo "==> posting new end2end-ui [$CLUSTER_TAG] comment"
+              fi
+            }
+
+            # ── Check if end2end-ui/ exists ─────────────────────────────
+            if [ ! -d "end2end-ui" ] || [ -z "$(ls end2end-ui/*.spec.ts 2>/dev/null)" ]; then
+              echo "==> no end2end-ui/ specs found — skipping"
+              post_sticky "$(printf '%s\n' "$MARKER" ":grey_question: **End-to-end UI: not configured** \`[$CLUSTER_TAG]\`" "" "No \`end2end-ui/*.spec.ts\` files found. Add Playwright specs to enable browser testing." "" "_Posted by \`tasks/end2end-ui/pullrequest.yaml\`._")"
+              echo "PASS: end2end-ui not configured (opt-in)"
+              exit 0
+            fi
+
+            # ── Wait for preview ────────────────────────────────────────
+            HEALTH_PATH="${END2END_HEALTH_PATH:-/health/live}"
+            MAX_WAIT="${END2END_HEALTH_TIMEOUT:-600}"
+            echo "==> waiting up to $((MAX_WAIT / 60)) min for ${PREVIEW_URL}${HEALTH_PATH}"
+            DEADLINE=$(( $(date +%s) + MAX_WAIT ))
+            STREAK=0
+            REQUIRED=3
+            while [ "$STREAK" -lt "$REQUIRED" ]; do
+              if curl -sSf -o /dev/null -m 5 "${PREVIEW_URL}${HEALTH_PATH}" 2>/dev/null; then
+                STREAK=$((STREAK + 1))
+                echo "   probe $STREAK/$REQUIRED ok"
+              else
+                STREAK=0
+              fi
+              if [ "$STREAK" -lt "$REQUIRED" ]; then
+                if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+                  post_sticky "$(printf '%s\n' "$MARKER" ":x: **End-to-end UI: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" "" "\`${PREVIEW_URL}${HEALTH_PATH}\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." "" "_Posted by \`tasks/end2end-ui/pullrequest.yaml\`._")"
+                  echo "FAIL: preview never reached stable ready state"
+                  exit 1
+                fi
+                sleep 5
+              fi
+            done
+
+            # ── Install Playwright ──────────────────────────────────────
+            echo "==> installing Playwright + Chromium"
+            npm install playwright@latest --no-save 2>/dev/null
+            npx playwright install chromium --with-deps 2>/dev/null
+
+            # ── Run specs ───────────────────────────────────────────────
+            echo "==> running Playwright specs from end2end-ui/"
+            RESULTS_JSON="end2end-ui/results.json"
+
+            npx playwright test \
+              --config end2end-ui/playwright.config.ts \
+              --reporter=list \
+              --output end2end-ui/test-results \
+              2>&1 | tee end2end-ui/playwright.log || true
+
+            # Parse playwright log for pass/fail counts
+            PASSED=$(grep -c "✓\|passed" end2end-ui/playwright.log 2>/dev/null || echo 0)
+            FAILED=$(grep -c "✘\|failed\|Error" end2end-ui/playwright.log 2>/dev/null || echo 0)
+            TOTAL=$((PASSED + FAILED))
+            [ "$TOTAL" -eq 0 ] && TOTAL=1 && FAILED=1
+
+            if [ "$FAILED" -eq 0 ]; then
+              SUCCESS=true
+              ICON="white_check_mark"
+              VERDICT="PASS"
+            else
+              SUCCESS=false
+              ICON="x"
+              VERDICT="FAIL"
+            fi
+            SUMMARY="${PASSED}/${TOTAL} browser tests passed"
+
+            # ── Upload artifacts to GCS ─────────────────────────────────
+            BUCKET="${TEST_ARTIFACTS_BUCKET:-test-artifacts-product-first}"
+            ARTIFACT_PREFIX="${REPO_NAME}/pr-${PULL_NUMBER}/${CLUSTER_TAG}/$(date +%s)"
+            ARTIFACT_BASE_URL="https://storage.googleapis.com/${BUCKET}/${ARTIFACT_PREFIX}"
+            ARTIFACT_LINKS=""
+
+            # Install gsutil if available (GCP cluster has it; Azure uses SA key)
+            if command -v gsutil >/dev/null 2>&1 || command -v gcloud >/dev/null 2>&1; then
+              HAS_GSUTIL=true
+            else
+              # Try installing via pip for Azure
+              pip3 install gsutil 2>/dev/null && HAS_GSUTIL=true || HAS_GSUTIL=false
+            fi
+
+            if [ "$HAS_GSUTIL" = "true" ] && [ -d "end2end-ui/test-results" ]; then
+              echo "==> uploading test artifacts to gs://${BUCKET}/${ARTIFACT_PREFIX}/"
+
+              # Upload screenshots
+              for img in $(find end2end-ui/test-results -name "*.png" 2>/dev/null); do
+                fname=$(basename "$img")
+                gsutil -q cp "$img" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
+                ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- [${fname}](${ARTIFACT_BASE_URL}/${fname})"
+              done
+
+              # Upload videos
+              for vid in $(find end2end-ui/test-results -name "*.webm" 2>/dev/null); do
+                fname=$(basename "$vid")
+                gsutil -q cp "$vid" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
+                ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- [${fname}](${ARTIFACT_BASE_URL}/${fname})"
+              done
+
+              # Upload traces
+              for trace in $(find end2end-ui/test-results -name "*.zip" 2>/dev/null); do
+                fname=$(basename "$trace")
+                gsutil -q cp "$trace" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
+                ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- [${fname}](${ARTIFACT_BASE_URL}/${fname})"
+              done
+
+              if [ -n "$ARTIFACT_LINKS" ]; then
+                echo "==> artifacts uploaded"
+              else
+                echo "==> no artifacts to upload"
+              fi
+            else
+              echo "==> gsutil not available, skipping artifact upload"
+            fi
+
+            # Build results.json
+            jq -n \
+              --argjson success "$SUCCESS" \
+              --arg summary "$SUMMARY" \
+              --arg preview_url "$PREVIEW_URL" \
+              --arg version "${VERSION:-}" \
+              --arg artifacts_url "${ARTIFACT_BASE_URL}" \
+              '{
+                success: $success,
+                summary: $summary,
+                tests: [],
+                metadata: { preview_url: $preview_url, version: $version, artifacts_url: $artifacts_url }
+              }' > "$RESULTS_JSON"
+
+            echo "==> $RESULTS_JSON:"
+            cat "$RESULTS_JSON"
+
+            # ── Post sticky comment ─────────────────────────────────────
+            LOG_TAIL=$(tail -20 end2end-ui/playwright.log 2>/dev/null | head -15)
+
+            ARTIFACTS_SECTION=""
+            if [ -n "$ARTIFACT_LINKS" ]; then
+              ARTIFACTS_SECTION=$(printf '\n**Artifacts** (screenshots, videos, traces):\n%b\n' "$ARTIFACT_LINKS")
+            fi
+
+            post_sticky "$(printf '%s\n' \
+              "$MARKER" \
+              ":${ICON}: **End-to-end UI: ${VERDICT}** \`[$CLUSTER_TAG]\` — ${SUMMARY}" \
+              "" \
+              "Preview: ${PREVIEW_URL}" \
+              "${ARTIFACTS_SECTION}" \
+              '```' \
+              "$LOG_TAIL" \
+              '```' \
+              "" \
+              "_Posted by \`tasks/end2end-ui/pullrequest.yaml\`._")"
+
+            if [ "$SUCCESS" = "true" ]; then
+              echo "PASS: end2end-ui complete"
+            else
+              echo "FAIL: end2end-ui results.success != true"
+              exit 1
+            fi
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}
