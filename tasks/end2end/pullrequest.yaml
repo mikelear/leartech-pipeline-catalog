@@ -119,8 +119,8 @@ spec:
 
             source .jx/variables.sh
 
-            # Previews on both clusters use jx.leartech.com (GCP wildcard DNS).
-            export PREVIEW_HOST_BASE="pr-${PULL_NUMBER}.jx.leartech.com"
+            # namespaceSubDomain is "-prN." (no hyphen between pr and number)
+            export PREVIEW_HOST_BASE="pr${PULL_NUMBER}.jx.leartech.com"
             # Ingress prefix defaults to APP_NAME — matches the pattern
             # used by leartech-angular-service-template +
             # leartech-go-service-template. Consumers with shortened
