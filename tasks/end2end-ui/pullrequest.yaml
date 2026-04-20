@@ -176,6 +176,18 @@ spec:
               fi
             done
 
+            # ── Seed test data (if end2end/ scripts exist) ───────────────
+            # Run seed scripts so the preview has OAuth client + test user.
+            # Same scripts as the bash end2end task — both tasks should be
+            # independently able to seed, since they run in parallel.
+            if [ -d "end2end" ]; then
+              for seed in end2end/0[0-9]-*.sh; do
+                [ -f "$seed" ] || continue
+                echo "==> seeding: $(basename "$seed")"
+                bash "$seed" 2>&1 | tail -3 || echo "   (seed script exited non-zero — continuing)"
+              done
+            fi
+
             # ── Install Playwright ──────────────────────────────────────
             echo "==> installing Playwright + Chromium"
             npm install playwright@latest --no-save 2>/dev/null
