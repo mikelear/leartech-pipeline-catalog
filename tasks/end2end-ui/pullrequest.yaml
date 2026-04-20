@@ -71,6 +71,12 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
         - image: node:22
           name: end2end-ui
           resources:
