@@ -201,13 +201,28 @@ spec:
             ARTIFACT_BASE_URL="https://storage.googleapis.com/${BUCKET}/${ARTIFACT_PREFIX}"
             ARTIFACT_LINKS=""
 
-            # Install gsutil if available (GCP cluster has it; Azure uses SA key)
-            if command -v gsutil >/dev/null 2>&1 || command -v gcloud >/dev/null 2>&1; then
+            # Install gcloud CLI for gsutil
+            HAS_GSUTIL=false
+            if command -v gsutil >/dev/null 2>&1; then
               HAS_GSUTIL=true
             else
-              # Try installing via pip for Azure
-              pip3 install gsutil 2>/dev/null && HAS_GSUTIL=true || HAS_GSUTIL=false
+              echo "==> installing gcloud CLI for artifact upload"
+              apt-get install -y -qq --no-install-recommends python3-pip >/dev/null 2>&1
+              pip3 install --quiet --break-system-packages gsutil 2>/dev/null && HAS_GSUTIL=true || true
             fi
+
+            # Auth with SA key from K8s secret (mounted by ExternalSecret)
+            GCS_KEY_FILE="/tmp/gcs-key.json"
+            if [ -f "/var/run/secrets/test-artifacts/key.json" ]; then
+              cp /var/run/secrets/test-artifacts/key.json "$GCS_KEY_FILE"
+              gsutil -o "Credentials:gs_service_key_file=${GCS_KEY_FILE}" ls gs://${BUCKET}/ >/dev/null 2>&1 && echo "==> GCS auth OK" || echo "==> GCS auth failed"
+            elif kubectl get secret test-artifacts-gcs-key -n jx -o jsonpath='{.data.key\.json}' 2>/dev/null | base64 -d > "$GCS_KEY_FILE" 2>/dev/null && [ -s "$GCS_KEY_FILE" ]; then
+              echo "==> GCS key from kubectl secret"
+            else
+              echo "==> no GCS key available, skipping artifact upload"
+              HAS_GSUTIL=false
+            fi
+            export BOTO_CONFIG=/dev/null
 
             if [ "$HAS_GSUTIL" = "true" ] && [ -d "end2end-ui/test-results" ]; then
               echo "==> uploading test artifacts to gs://${BUCKET}/${ARTIFACT_PREFIX}/"
@@ -215,21 +230,21 @@ spec:
               # Upload screenshots
               for img in $(find end2end-ui/test-results -name "*.png" 2>/dev/null); do
                 fname=$(basename "$img")
-                gsutil -q cp "$img" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
+                gsutil -o "Credentials:gs_service_key_file=${GCS_KEY_FILE}" -q cp "$img" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
                 ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- [${fname}](${ARTIFACT_BASE_URL}/${fname})"
               done
 
               # Upload videos
               for vid in $(find end2end-ui/test-results -name "*.webm" 2>/dev/null); do
                 fname=$(basename "$vid")
-                gsutil -q cp "$vid" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
+                gsutil -o "Credentials:gs_service_key_file=${GCS_KEY_FILE}" -q cp "$vid" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
                 ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- [${fname}](${ARTIFACT_BASE_URL}/${fname})"
               done
 
               # Upload traces
               for trace in $(find end2end-ui/test-results -name "*.zip" 2>/dev/null); do
                 fname=$(basename "$trace")
-                gsutil -q cp "$trace" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
+                gsutil -o "Credentials:gs_service_key_file=${GCS_KEY_FILE}" -q cp "$trace" "gs://${BUCKET}/${ARTIFACT_PREFIX}/${fname}" 2>/dev/null || true
                 ARTIFACT_LINKS="${ARTIFACT_LINKS}\n- [${fname}](${ARTIFACT_BASE_URL}/${fname})"
               done
 
