@@ -99,17 +99,36 @@ spec:
             done
             echo "Namespace exists"
 
-            echo "Waiting for preview pods..."
-            WAIT=0
-            while [ "$(kubectl get pods -n ${PREVIEW_NS} --no-headers 2>/dev/null | grep -c Running)" -eq 0 ]; do
-              if [ $WAIT -ge 300 ]; then
-                echo "WARNING: No running pods after 300s, proceeding anyway"
-                break
-              fi
-              sleep 10
-              WAIT=$((WAIT + 10))
-            done
-            echo "Preview pods ready"
+            # Prefer preview-gate if deployed (checks all pods, stability, version)
+            GATE_URL="http://preview-gate.${PREVIEW_NS}.svc.cluster.local:8090/cgi-bin/gate"
+            echo "Checking for preview-gate at $GATE_URL"
+            if curl -sSf -o /dev/null -m 3 "$GATE_URL" 2>/dev/null || \
+               curl -sS -o /dev/null -w '%{http_code}' -m 3 "$GATE_URL" 2>/dev/null | grep -q "503"; then
+              echo "preview-gate detected — waiting for gate to report ready"
+              WAIT=0
+              while ! curl -sSf -o /dev/null -m 5 "$GATE_URL" 2>/dev/null; do
+                if [ $WAIT -ge 600 ]; then
+                  echo "WARNING: Gate not ready after 600s, proceeding anyway"
+                  curl -sS -m 5 "$GATE_URL" 2>/dev/null || true
+                  break
+                fi
+                sleep 5
+                WAIT=$((WAIT + 5))
+              done
+              echo "Preview gate ready"
+            else
+              echo "preview-gate not deployed — falling back to pod readiness check"
+              WAIT=0
+              while [ "$(kubectl get pods -n ${PREVIEW_NS} --no-headers 2>/dev/null | grep -c Running)" -eq 0 ]; do
+                if [ $WAIT -ge 300 ]; then
+                  echo "WARNING: No running pods after 300s, proceeding anyway"
+                  break
+                fi
+                sleep 10
+                WAIT=$((WAIT + 10))
+              done
+              echo "Preview pods ready"
+            fi
 
             # ===================================================
             # PHASE 1: External scan (from jx namespace, through ingress)
