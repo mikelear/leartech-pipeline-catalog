@@ -203,15 +203,23 @@ spec:
             # Try preview-gate first (deployed as part of preview helmfile).
             # The gate checks ALL deployments, pod stability, version match,
             # and custom health probes. A single 200 = everything ready.
+            # Retry detection for up to 60s — gate pod may still be starting
+            # (end2end often starts before the pr build deploys the preview).
             GATE_URL="http://preview-gate.${PREVIEW_NAMESPACE}.svc.cluster.local:8090/cgi-bin/gate"
             USE_GATE=false
-            echo "==> checking for preview-gate at $GATE_URL"
-            if curl -sSf -o /dev/null -m 3 "$GATE_URL" 2>/dev/null || \
-               curl -sS -o /dev/null -w '%{http_code}' -m 3 "$GATE_URL" 2>/dev/null | grep -q "503"; then
-              USE_GATE=true
-              echo "==> preview-gate detected — using gate for readiness"
-            else
-              echo "==> preview-gate not deployed — falling back to direct health probe"
+            GATE_DETECT_DEADLINE=$(( $(date +%s) + 60 ))
+            echo "==> looking for preview-gate at $GATE_URL (up to 60s)"
+            while [ "$(date +%s)" -lt "$GATE_DETECT_DEADLINE" ]; do
+              if curl -sSf -o /dev/null -m 3 "$GATE_URL" 2>/dev/null || \
+                 curl -sS -o /dev/null -w '%{http_code}' -m 3 "$GATE_URL" 2>/dev/null | grep -q "503"; then
+                USE_GATE=true
+                echo "==> preview-gate detected — using gate for readiness"
+                break
+              fi
+              sleep 5
+            done
+            if [ "$USE_GATE" = "false" ]; then
+              echo "==> preview-gate not found after 60s — falling back to direct health probe"
             fi
 
             if [ "$USE_GATE" = "true" ]; then

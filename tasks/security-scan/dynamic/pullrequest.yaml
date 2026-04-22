@@ -99,11 +99,21 @@ spec:
             done
             echo "Namespace exists"
 
-            # Prefer preview-gate if deployed (checks all pods, stability, version)
+            # Prefer preview-gate if deployed (checks all pods, stability, version).
+            # Retry detection for up to 60s — gate may still be starting.
             GATE_URL="http://preview-gate.${PREVIEW_NS}.svc.cluster.local:8090/cgi-bin/gate"
-            echo "Checking for preview-gate at $GATE_URL"
-            if curl -sSf -o /dev/null -m 3 "$GATE_URL" 2>/dev/null || \
-               curl -sS -o /dev/null -w '%{http_code}' -m 3 "$GATE_URL" 2>/dev/null | grep -q "503"; then
+            USE_GATE=false
+            echo "Looking for preview-gate at $GATE_URL (up to 60s)"
+            GATE_DETECT_END=$(( $(date +%s) + 60 ))
+            while [ "$(date +%s)" -lt "$GATE_DETECT_END" ]; do
+              if curl -sSf -o /dev/null -m 3 "$GATE_URL" 2>/dev/null || \
+                 curl -sS -o /dev/null -w '%{http_code}' -m 3 "$GATE_URL" 2>/dev/null | grep -q "503"; then
+                USE_GATE=true
+                break
+              fi
+              sleep 5
+            done
+            if [ "$USE_GATE" = "true" ]; then
               echo "preview-gate detected — waiting for gate to report ready"
               WAIT=0
               while ! curl -sSf -o /dev/null -m 5 "$GATE_URL" 2>/dev/null; do
