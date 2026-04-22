@@ -35,8 +35,8 @@ spec:
           name: ""
           resources:
             requests:
-              cpu: 800m
-              memory: 2Gi
+              cpu: 200m
+              memory: 256Mi
           workingDir: /workspace/source
         steps:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
@@ -50,7 +50,10 @@ spec:
         # task in this repo.
         - image: node:22-alpine
           name: ng-test
-          resources: {}
+          resources:
+            requests:
+              cpu: 400m
+              memory: 1Gi
           env:
             - name: GIT_TOKEN
               valueFrom:

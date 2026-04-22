@@ -26,8 +26,8 @@ spec:
           name: ""
           resources:
             requests:
-              cpu: 400m
-              memory: 1Gi
+              cpu: 200m
+              memory: 256Mi
           workingDir: /workspace/source
         steps:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
@@ -35,7 +35,10 @@ spec:
           resources: {}
         - image: node:22-alpine
           name: ng-lint
-          resources: {}
+          resources:
+            requests:
+              cpu: 400m
+              memory: 1Gi
           script: |
             #!/bin/sh
             set -e

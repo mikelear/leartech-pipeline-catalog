@@ -21,8 +21,8 @@ spec:
           name: ""
           resources:
             requests:
-              cpu: 400m
-              memory: 512Mi
+              cpu: 200m
+              memory: 256Mi
           workingDir: /workspace/source
         steps:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
@@ -30,7 +30,10 @@ spec:
           resources: {}
         - image: golang:1.25-alpine
           name: govulncheck
-          resources: {}
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
           script: |
             #!/bin/sh
             set -e
