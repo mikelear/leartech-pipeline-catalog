@@ -59,7 +59,12 @@ spec:
             fi
             echo "==> npm audit --audit-level=$AUDIT_LEVEL"
             npm audit --audit-level="$AUDIT_LEVEL"
-  podTemplate: {}
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
   serviceAccountName: tekton-bot
   timeout: 15m0s
 status: {}

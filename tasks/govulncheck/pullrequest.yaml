@@ -47,7 +47,12 @@ spec:
             GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION:-v1.1.4}"
             go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
             govulncheck ./...
-  podTemplate: {}
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
   serviceAccountName: tekton-bot
   timeout: 30m0s
 status: {}

@@ -53,7 +53,12 @@ spec:
             echo "Signing $IMAGE"
             cosign sign --key /tmp/cosign.key --yes "$IMAGE"
             rm -f /tmp/cosign.key
-  podTemplate: {}
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
   serviceAccountName: tekton-bot
   timeout: 12h0m0s
 status: {}

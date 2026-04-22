@@ -75,7 +75,12 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/jx-promote.yaml@main
           name: ""
           resources: {}
-  podTemplate: {}
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
   serviceAccountName: tekton-bot
   timeout: 12h0m0s
 status: {}

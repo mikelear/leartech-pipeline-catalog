@@ -154,7 +154,12 @@ spec:
               exit 1
             fi
             echo "PASS: coverage ${TOTAL}% meets threshold ${THRESHOLD}%"
-  podTemplate: {}
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
   serviceAccountName: tekton-bot
   timeout: 1h0m0s
 status: {}

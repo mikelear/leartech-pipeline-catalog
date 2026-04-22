@@ -77,7 +77,12 @@ spec:
             # DOCKER_REGISTRY_ORG is read from .jx/variables.sh directly.
             # jx-preview v0.7.3+ dropped the --docker-register-org flag.
             jx preview create
-  podTemplate: {}
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
   serviceAccountName: tekton-bot
   timeout: 2h0m0s
 status: {}

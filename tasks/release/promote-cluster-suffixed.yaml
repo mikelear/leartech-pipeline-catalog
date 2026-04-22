@@ -69,7 +69,12 @@ spec:
             git push --force origin "v${VERSION}${TAG_SUFFIX}"
 
             jx changelog create --version "v${VERSION}${TAG_SUFFIX}" --output-markdown ../changelog.md
-  podTemplate: {}
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
   serviceAccountName: tekton-bot
   timeout: 12h0m0s
 status: {}

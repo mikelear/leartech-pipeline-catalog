@@ -197,7 +197,12 @@ spec:
               exit 1
             fi
             python3 -c "import json,sys; r=json.load(open('/tmp/aggregate-result.json')); print(f\"Final: {r['overall_score']}/100 {r['overall_verdict']}\"); sys.exit(1 if r['overall_verdict'] in ('FAIL','ERROR') else 0)"
-  podTemplate: {}
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
   serviceAccountName: tekton-bot
   timeout: 30m0s
 status: {}
