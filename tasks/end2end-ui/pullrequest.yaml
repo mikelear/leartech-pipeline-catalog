@@ -155,26 +155,58 @@ spec:
             # ── Wait for preview ────────────────────────────────────────
             HEALTH_PATH="${END2END_HEALTH_PATH:-/health/live}"
             MAX_WAIT="${END2END_HEALTH_TIMEOUT:-600}"
-            echo "==> waiting up to $((MAX_WAIT / 60)) min for ${PREVIEW_URL}${HEALTH_PATH}"
             DEADLINE=$(( $(date +%s) + MAX_WAIT ))
-            STREAK=0
-            REQUIRED=3
-            while [ "$STREAK" -lt "$REQUIRED" ]; do
-              if curl -sSf -o /dev/null -m 5 "${PREVIEW_URL}${HEALTH_PATH}" 2>/dev/null; then
-                STREAK=$((STREAK + 1))
-                echo "   probe $STREAK/$REQUIRED ok"
-              else
-                STREAK=0
-              fi
-              if [ "$STREAK" -lt "$REQUIRED" ]; then
+
+            # Prefer preview-gate if deployed (checks all pods, stability, version)
+            GATE_URL="http://preview-gate.${PREVIEW_NAMESPACE}.svc.cluster.local:8090/cgi-bin/gate"
+            USE_GATE=false
+            echo "==> checking for preview-gate at $GATE_URL"
+            if curl -sSf -o /dev/null -m 3 "$GATE_URL" 2>/dev/null || \
+               curl -sS -o /dev/null -w '%{http_code}' -m 3 "$GATE_URL" 2>/dev/null | grep -q "503"; then
+              USE_GATE=true
+              echo "==> preview-gate detected — using gate for readiness"
+            else
+              echo "==> preview-gate not deployed — falling back to direct health probe"
+            fi
+
+            if [ "$USE_GATE" = "true" ]; then
+              echo "==> waiting up to $((MAX_WAIT / 60)) min for gate to report ready"
+              while true; do
+                if curl -sSf -o /dev/null -m 5 "$GATE_URL" 2>/dev/null; then
+                  echo "==> gate reports READY"
+                  curl -sS -m 5 "$GATE_URL" 2>/dev/null | jq . || true
+                  break
+                fi
                 if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-                  post_sticky "$(printf '%s\n' "$MARKER" ":x: **End-to-end UI: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" "" "\`${PREVIEW_URL}${HEALTH_PATH}\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." "" "_Posted by \`tasks/end2end-ui/pullrequest.yaml\`._")"
-                  echo "FAIL: preview never reached stable ready state"
+                  echo "==> gate detail at timeout:"
+                  curl -sS -m 5 "$GATE_URL" 2>/dev/null || true
+                  post_sticky "$(printf '%s\n' "$MARKER" ":x: **End-to-end UI: FAIL (preview gate timeout)** \`[$CLUSTER_TAG]\`" "" "preview-gate never reported ready within $((MAX_WAIT / 60)) min." "" "_Posted by \`tasks/end2end-ui/pullrequest.yaml\`._")"
+                  echo "FAIL: preview gate timeout"
                   exit 1
                 fi
                 sleep 5
-              fi
-            done
+              done
+            else
+              echo "==> waiting up to $((MAX_WAIT / 60)) min for ${PREVIEW_URL}${HEALTH_PATH} (3 consecutive 200s)"
+              STREAK=0
+              REQUIRED=3
+              while [ "$STREAK" -lt "$REQUIRED" ]; do
+                if curl -sSf -o /dev/null -m 5 "${PREVIEW_URL}${HEALTH_PATH}" 2>/dev/null; then
+                  STREAK=$((STREAK + 1))
+                  echo "   probe $STREAK/$REQUIRED ok"
+                else
+                  STREAK=0
+                fi
+                if [ "$STREAK" -lt "$REQUIRED" ]; then
+                  if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+                    post_sticky "$(printf '%s\n' "$MARKER" ":x: **End-to-end UI: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" "" "\`${PREVIEW_URL}${HEALTH_PATH}\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." "" "_Posted by \`tasks/end2end-ui/pullrequest.yaml\`._")"
+                    echo "FAIL: preview never reached stable ready state"
+                    exit 1
+                  fi
+                  sleep 5
+                fi
+              done
+            fi
 
             # ── Seed test data (if end2end/ scripts exist) ───────────────
             # Run seed scripts so the preview has OAuth client + test user.

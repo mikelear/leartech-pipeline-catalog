@@ -196,45 +196,80 @@ spec:
             fi
 
             # ── branch 2: wait for preview ─────────────────────────────
-            # Require 3 consecutive successful probes with a small gap
-            # between them so we don't catch the rolling-deploy window
-            # where one pod serves /health/live right before being
-            # terminated. Each probe: GET with 5s timeout.
             MAX_WAIT="${END2END_HEALTH_TIMEOUT:-600}"
-            # Health probe path default: /health/live (Go services).
-            # SPAs on leartech-nginx expose /health (no /live). Consumers
-            # override via stepTemplate.env.END2END_HEALTH_PATH.
             HEALTH_PATH="${END2END_HEALTH_PATH:-/health/live}"
-            echo "==> waiting up to $((MAX_WAIT / 60)) min for $PREVIEW_URL$HEALTH_PATH (3 consecutive 200s)"
             DEADLINE=$(( $(date +%s) + MAX_WAIT ))
-            STREAK=0
-            REQUIRED=3
-            while [ "$STREAK" -lt "$REQUIRED" ]; do
-              if curl -sSf -o /dev/null -m 5 "$PREVIEW_URL$HEALTH_PATH" 2>/dev/null; then
-                STREAK=$((STREAK + 1))
-                echo "   probe $STREAK/$REQUIRED ok"
-              else
-                STREAK=0
-              fi
-              if [ "$STREAK" -lt "$REQUIRED" ]; then
+
+            # Try preview-gate first (deployed as part of preview helmfile).
+            # The gate checks ALL deployments, pod stability, version match,
+            # and custom health probes. A single 200 = everything ready.
+            GATE_URL="http://preview-gate.${PREVIEW_NAMESPACE}.svc.cluster.local:8090/cgi-bin/gate"
+            USE_GATE=false
+            echo "==> checking for preview-gate at $GATE_URL"
+            if curl -sSf -o /dev/null -m 3 "$GATE_URL" 2>/dev/null || \
+               curl -sS -o /dev/null -w '%{http_code}' -m 3 "$GATE_URL" 2>/dev/null | grep -q "503"; then
+              USE_GATE=true
+              echo "==> preview-gate detected — using gate for readiness"
+            else
+              echo "==> preview-gate not deployed — falling back to direct health probe"
+            fi
+
+            if [ "$USE_GATE" = "true" ]; then
+              echo "==> waiting up to $((MAX_WAIT / 60)) min for gate to report ready"
+              while true; do
+                if curl -sSf -o /dev/null -m 5 "$GATE_URL" 2>/dev/null; then
+                  echo "==> gate reports READY"
+                  # Show gate detail for the PR comment
+                  curl -sS -m 5 "$GATE_URL" 2>/dev/null | jq . || true
+                  break
+                fi
                 if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+                  echo "==> gate detail at timeout:"
+                  curl -sS -m 5 "$GATE_URL" 2>/dev/null || true
                   body=$(printf '%s\n' \
                     "$MARKER" \
-                    ":x: **End-to-end: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" \
+                    ":x: **End-to-end: FAIL (preview gate timeout)** \`[$CLUSTER_TAG]\`" \
                     "" \
-                    "\`$PREVIEW_URL$HEALTH_PATH\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min. The PR's \`pr\` check (kaniko + jx-preview) may have failed or the preview pod may still be pulling images." \
+                    "preview-gate never reported ready within $((MAX_WAIT / 60)) min." \
+                    "Gate detail: \`$(curl -sS -m 5 "$GATE_URL" 2>/dev/null || echo 'unreachable')\`" \
                     "" \
                     "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
                   post_sticky "$body"
-                  echo "FAIL: preview never reached stable ready state"
+                  echo "FAIL: preview gate timeout"
                   exit 1
                 fi
                 sleep 5
-              fi
-            done
-            # Small grace period before invoking the script so any
-            # in-flight pod churn has time to settle.
-            sleep 3
+              done
+            else
+              # Fallback: direct health probe (3 consecutive 200s)
+              echo "==> waiting up to $((MAX_WAIT / 60)) min for $PREVIEW_URL$HEALTH_PATH (3 consecutive 200s)"
+              STREAK=0
+              REQUIRED=3
+              while [ "$STREAK" -lt "$REQUIRED" ]; do
+                if curl -sSf -o /dev/null -m 5 "$PREVIEW_URL$HEALTH_PATH" 2>/dev/null; then
+                  STREAK=$((STREAK + 1))
+                  echo "   probe $STREAK/$REQUIRED ok"
+                else
+                  STREAK=0
+                fi
+                if [ "$STREAK" -lt "$REQUIRED" ]; then
+                  if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+                    body=$(printf '%s\n' \
+                      "$MARKER" \
+                      ":x: **End-to-end: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" \
+                      "" \
+                      "\`$PREVIEW_URL$HEALTH_PATH\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." \
+                      "" \
+                      "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
+                    post_sticky "$body"
+                    echo "FAIL: preview never reached stable ready state"
+                    exit 1
+                  fi
+                  sleep 5
+                fi
+              done
+              sleep 3
+            fi
             echo "==> preview stable; invoking end2end/run.sh"
 
             # ── branch 3: run consumer script ──────────────────────────
