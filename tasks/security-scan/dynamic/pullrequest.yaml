@@ -55,7 +55,11 @@ spec:
               *)   DOMAIN="jx.leartech.com" ;;
             esac
 
-            PREVIEW_URL="https://preview-${APP_NAME}-${PREVIEW_NS}.${DOMAIN}"
+            # Preview URL uses the ingress hostname pattern (APP_NAME-prN.DOMAIN),
+            # not the namespace-style URL. Consumers can override via
+            # PREVIEW_HOST_PREFIX env var (e.g. auth-ui uses "auth-ui").
+            : "${PREVIEW_HOST_PREFIX:=${APP_NAME}}"
+            PREVIEW_URL="https://${PREVIEW_HOST_PREFIX}-pr${PULL_NUMBER}.${DOMAIN}"
             SVC_NAME="preview-${APP_NAME}"
 
             echo "=========================================="
