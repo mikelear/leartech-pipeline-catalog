@@ -1,0 +1,98 @@
+# OpenAPI client SDK generation for PR builds.
+#
+# Reads the consumer service's swagger.json, runs openapi-generator-cli
+# per language listed in $OutputLanguages, publishes preview-tagged
+# clients (Angular/TS/Javascript via npm `--tag preview`, Go/Rust/Python
+# via mono-repo PR with preview-version branches).
+#
+# CONSUMER CONTRACT (set in service repo's .lighthouse/jenkins-x/release.yaml):
+#
+#   env:
+#   - name: SwaggerServiceName
+#     value: AuthService           # service name in PascalCase, used in
+#                                  # generated package names + class prefixes
+#   - name: SpecPath
+#     value: ./docs/swagger.json   # path to OpenAPI spec inside the repo
+#   - name: OutputLanguages
+#     value: angular typescript    # PR builds: keep this set small (avg
+#                                  # 30-60s per lang). Recommended PR set:
+#                                  # angular + typescript (frontend-facing).
+#                                  # Go/Rust/Python only on release.
+#
+# CLUSTER PREREQUISITE:
+#   Secret `openapi-pkg-gen` in the `jx` namespace with:
+#     auth-token  GitHub PAT with `packages:write,repo` scope
+#                 (publishes to npm/nuget GitHub Packages, pushes to
+#                 the {go,py,rust}-packages mono-repos)
+#     user        the GitHub username the PAT belongs to
+#
+# Generator image is published from leartech-openapi-generation;
+# pinned in the step image tag below.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: openapi-generation
+spec:
+  pipelineSpec:
+    tasks:
+    - name: openapi-generation
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: openapi-pkg-gen
+                key: auth-token
+          - name: GIT_USER
+            valueFrom:
+              secretKeyRef:
+                name: openapi-pkg-gen
+                key: user
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        - image: ghcr.io/mikelear/leartech-openapi-generation:latest
+          name: package-generation
+          resources: {}
+          script: |
+            #!/bin/bash
+            set -e
+            source /workspace/source/.jx/variables.sh
+
+            git config --global --add safe.directory /workspace/source
+            git config --global user.name "${GIT_USER}"
+            git config --global user.email "${GIT_USER}@users.noreply.github.com"
+
+            leartech-openapi-generation generate pkg ${OutputLanguages}
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 1h0m0s
+status: {}
