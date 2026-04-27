@@ -88,14 +88,20 @@ spec:
             git config --global user.name "${GIT_USER}"
             git config --global user.email "${GIT_USER}@users.noreply.github.com"
 
-            # VERSION isn't in .jx/variables.sh because next-version (which
-            # writes it) ran in the from-build-pack pod's workspace, not
-            # this pod's. Derive it from the cluster-suffixed tag that
-            # from-build-pack just pushed to origin.
+            # VERSION isn't in .jx/variables.sh — next-version writes it
+            # in the from-build-pack pod's workspace, not this pod's.
+            # The from-build-pack pod pushes the cluster-suffixed tag but
+            # NOT the "chore: release X.Y.Z" commit it points at, so
+            # `git describe` from main never finds the tag in HEAD's
+            # ancestry. Sort tags by version directly instead.
             git fetch --tags --force origin
-            RAW=$(git describe --tags --abbrev=0 --match "v*-${CLUSTER_ID}")
-            VERSION=${RAW#v}                # v0.1.16-az -> 0.1.16-az
-            VERSION=${VERSION%-${CLUSTER_ID}}  # 0.1.16-az -> 0.1.16
+            RAW=$(git tag -l "v*-${CLUSTER_ID}" --sort=-version:refname | head -1)
+            if [ -z "$RAW" ]; then
+              echo "==> no v*-${CLUSTER_ID} tags found; cannot derive VERSION"
+              exit 1
+            fi
+            VERSION=${RAW#v}                   # v0.1.17-az -> 0.1.17-az
+            VERSION=${VERSION%-${CLUSTER_ID}}  # 0.1.17-az -> 0.1.17
             export VERSION
             echo "==> derived VERSION=${VERSION} from tag ${RAW}"
 
