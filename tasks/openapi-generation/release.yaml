@@ -37,6 +37,16 @@ spec:
               secretKeyRef:
                 name: openapi-pkg-gen
                 key: user
+          # CLUSTER_ID drives both the single-publisher gate (only az
+          # publishes) and the tag-matching pattern. Source is the
+          # jx-cluster-config ConfigMap, same pattern as
+          # tasks/release/promote-cluster-suffixed.yaml.
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           envFrom:
           - secretRef:
               name: jx-boot-job-env-vars
