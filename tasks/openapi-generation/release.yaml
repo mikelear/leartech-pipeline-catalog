@@ -65,9 +65,29 @@ spec:
             set -e
             source /workspace/source/.jx/variables.sh
 
+            # Single-publisher gate: this task runs on every cluster's
+            # release pipeline, but only one of them should actually
+            # publish (otherwise both race to push the same package
+            # version → 409 / duplicate mono-repo PRs). AZ wins.
+            if [ "${CLUSTER_ID:-az}" != "az" ]; then
+              echo "==> CLUSTER_ID=${CLUSTER_ID} is not the codegen publisher (az); skipping"
+              exit 0
+            fi
+
             git config --global --add safe.directory /workspace/source
             git config --global user.name "${GIT_USER}"
             git config --global user.email "${GIT_USER}@users.noreply.github.com"
+
+            # VERSION isn't in .jx/variables.sh because next-version (which
+            # writes it) ran in the from-build-pack pod's workspace, not
+            # this pod's. Derive it from the cluster-suffixed tag that
+            # from-build-pack just pushed to origin.
+            git fetch --tags --force origin
+            RAW=$(git describe --tags --abbrev=0 --match "v*-${CLUSTER_ID}")
+            VERSION=${RAW#v}                # v0.1.16-az -> 0.1.16-az
+            VERSION=${VERSION%-${CLUSTER_ID}}  # 0.1.16-az -> 0.1.16
+            export VERSION
+            echo "==> derived VERSION=${VERSION} from tag ${RAW}"
 
             leartech-openapi-generation generate pkg ${OutputLanguages}
   podTemplate:
