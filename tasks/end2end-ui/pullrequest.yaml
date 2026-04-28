@@ -233,6 +233,33 @@ spec:
             npm install playwright@latest --no-save 2>/dev/null
             npx playwright install chromium --with-deps 2>/dev/null
 
+            # ── Re-seed RIGHT BEFORE Playwright runs ────────────────────
+            # Hydra in previews uses emptyDir-backed sqlite. If anything
+            # rolled the deployment between the first seed (above) and
+            # now (helmfile re-apply, image bump, hpa scale, anything),
+            # the new pod has fresh-empty sqlite and the OAuth2 client
+            # registration is lost — Playwright then fails with
+            # `invalid_client`. The seeds are idempotent (HTTP 409 = OK),
+            # so running again here costs ~1s and closes the window.
+            #
+            # Only re-runs scripts named 0[1-9]-*.sh that look like Hydra
+            # registration / user setup — skips long-running flow tests
+            # the bash end2end task does.
+            if [ -d "end2end" ]; then
+              echo "==> re-seeding hydra/test-user before Playwright (idempotent)"
+              for seed in end2end/0[1-9]-*.sh; do
+                [ -f "$seed" ] || continue
+                name=$(basename "$seed")
+                # Skip flow-tests; only re-run the registrations/setups.
+                case "$name" in
+                  *register*|*seed*|*setup*) ;;
+                  *) continue ;;
+                esac
+                echo "==> re-seed: $name"
+                bash "$seed" 2>&1 | tail -3 || echo "   (re-seed exited non-zero — continuing)"
+              done
+            fi
+
             # ── Run specs ───────────────────────────────────────────────
             echo "==> running Playwright specs from end2end-ui/"
             RESULTS_JSON="end2end-ui/results.json"
