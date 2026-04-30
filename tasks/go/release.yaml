@@ -60,7 +60,16 @@ spec:
             #!/busybox/sh
             source .jx/variables.sh
             cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            # Layer cache: --cache=true reuses identical layers across builds,
+            # stored in $PUSH_CONTAINER_REGISTRY/.../kaniko-cache. Major speedup
+            # (~50% on incremental builds) since base-image + apk/apt + COPY of
+            # vendored deps stay cached between PRs. --cache-ttl=168h (7d) so
+            # layers eventually re-validate. See ~/leartech/hub/shared-rules/build-speed.md.
             /kaniko/executor $KANIKO_FLAGS \
+              --cache=true \
+              --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
+              --cache-ttl=168h \
+              --cache-copy-layers=true \
               --context=/workspace/source \
               --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
               --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"

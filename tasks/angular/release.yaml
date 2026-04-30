@@ -59,7 +59,15 @@ spec:
             #!/busybox/sh
             source .jx/variables.sh
             cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            # Layer cache — see go/release.yaml for rationale. Angular's
+            # multi-stage Dockerfile (npm-install → ng-build → nginx) benefits
+            # particularly: the heavy npm-install + node_modules layers cache
+            # cleanly between builds when package-lock.json is unchanged.
             /kaniko/executor $KANIKO_FLAGS \
+              --cache=true \
+              --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
+              --cache-ttl=168h \
+              --cache-copy-layers=true \
               --context=/workspace/source \
               --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
               --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
