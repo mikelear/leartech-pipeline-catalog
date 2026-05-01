@@ -213,8 +213,22 @@ spec:
                       port: 53
             POLICY
 
-            # Deploy internal scan pod into preview namespace
-            kubectl delete pod internal-scan-${PULL_NUMBER} -n ${PREVIEW_NS} --ignore-not-found=true 2>/dev/null
+            # Deploy internal scan pod into preview namespace.
+            # Force-delete + wait — handles three failure modes the previous
+            # `--ignore-not-found=true` alone didn't cover:
+            #   1. Pod in Completed/Failed state from a previous PR rerun
+            #      (--ignore-not-found only handles 404, not terminal-state
+            #      pods that still exist until K8s GC)
+            #   2. Race with a terminating pod — the API briefly returns
+            #      AlreadyExists while the previous pod's deletion finalises
+            #   3. Stuck pod with non-empty grace period (--force --grace-period=0
+            #      bypasses graceful shutdown so deletion is immediate)
+            # `kubectl wait --for=delete` then blocks until the pod object is
+            # truly gone from etcd before we apply the new one.
+            kubectl delete pod internal-scan-${PULL_NUMBER} -n ${PREVIEW_NS} \
+              --ignore-not-found=true --force --grace-period=0 2>/dev/null || true
+            kubectl wait --for=delete pod/internal-scan-${PULL_NUMBER} -n ${PREVIEW_NS} \
+              --timeout=60s 2>/dev/null || true
 
             cat <<SCANPOD | kubectl apply -f -
             apiVersion: v1
