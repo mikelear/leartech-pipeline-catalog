@@ -82,7 +82,12 @@ spec:
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: node:22
+        # Pre-baked Playwright + Chromium + Firefox + WebKit + gcloud SDK +
+        # bcrypt baked in via leartech-dockerfiles/playwright-runner. Used to
+        # be node:22 with 2-5 min of inline tool install per pipeline run;
+        # this image drops that to ~10s of consumer-side npm ci.
+        # See ~/leartech/hub/shared-rules/build-speed.md.
+        - image: ghcr.io/mikelear/playwright-runner:0.22.0
           name: end2end-ui
           resources:
             requests:
@@ -96,9 +101,9 @@ spec:
             #!/bin/bash
             set -eo pipefail
 
-            # Tools
-            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-              ca-certificates curl jq >/dev/null
+            # Tools (ca-certificates, curl, jq, python3, bcrypt, gcloud SDK)
+            # are pre-installed in the playwright-runner image. No apt-get
+            # needed at runtime.
 
             source .jx/variables.sh
 
@@ -228,10 +233,11 @@ spec:
               done
             fi
 
-            # ── Install Playwright ──────────────────────────────────────
-            echo "==> installing Playwright + Chromium"
-            npm install playwright@latest --no-save 2>/dev/null
-            npx playwright install chromium --with-deps 2>/dev/null
+            # ── Playwright + Chromium ───────────────────────────────────
+            # Pre-installed in the playwright-runner image. Consumer's own
+            # npx playwright test invocation below resolves @playwright/test
+            # via the image's global node_modules. Browsers cached at
+            # /ms-playwright (Microsoft's standard location).
 
             # ── Re-seed RIGHT BEFORE Playwright runs ────────────────────
             # Hydra in previews uses emptyDir-backed sqlite. If anything
@@ -293,14 +299,15 @@ spec:
             ARTIFACT_BASE_URL="https://storage.googleapis.com/${BUCKET}/${ARTIFACT_PREFIX}"
             ARTIFACT_LINKS=""
 
-            # Install gcloud CLI for gsutil
+            # gsutil is pre-installed in the playwright-runner image via the
+            # gcloud SDK. The check below is kept for forward-compat —
+            # consumers can override the image and the install fallback
+            # gracefully degrades.
             HAS_GSUTIL=false
             if command -v gsutil >/dev/null 2>&1; then
               HAS_GSUTIL=true
             else
-              echo "==> installing gcloud CLI for artifact upload"
-              apt-get install -y -qq --no-install-recommends python3-pip >/dev/null 2>&1
-              pip3 install --quiet --break-system-packages gsutil 2>/dev/null && HAS_GSUTIL=true || true
+              echo "==> gsutil not found in image, skipping artifact upload"
             fi
 
             # Auth with SA key from K8s secret (mounted by ExternalSecret)
