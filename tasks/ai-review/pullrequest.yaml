@@ -54,6 +54,8 @@ spec:
                   name: tekton-git
                   key: password
                   optional: true
+            - name: CLASSIFIER_ENDPOINT
+              value: "http://leartech-ai-classifier.jx-staging.svc.cluster.local:8080"
             - name: OLLAMA_ENDPOINT
               value: "http://ollama.ai-inference.svc.cluster.local:11434"
             - name: CHROMADB_ENDPOINT
@@ -92,6 +94,40 @@ spec:
               echo "No reviewable changes in diff (empty or all filtered)"
               exit 0
             fi
+
+            # Classifier pre-check (advisory only — does not gate the pipeline)
+            # Calls leartech-ai-classifier for a fast PASS/FAIL prediction.
+            # Result is included in the PR comment for observability.
+            # TODO: gate on classifier when eval accuracy >= 80% on production data.
+            CLASSIFIER_RESULT=""
+            if python3 -c "import urllib.request; urllib.request.urlopen('$CLASSIFIER_ENDPOINT/health', timeout=3)" 2>/dev/null; then
+              echo "Classifier: reachable at $CLASSIFIER_ENDPOINT"
+              DIFF_JSON=$(python3 -c "import json,sys; print(json.dumps({'diff': open('/tmp/diff.txt').read()}))")
+              CLASSIFIER_RESULT=$(python3 -c "
+import urllib.request, json, sys
+req = urllib.request.Request(
+    '$CLASSIFIER_ENDPOINT/predict',
+    data=json.dumps(json.loads(sys.argv[1])).encode(),
+    headers={'Content-Type': 'application/json'},
+    method='POST',
+)
+try:
+    resp = urllib.request.urlopen(req, timeout=10)
+    r = json.loads(resp.read())
+    print(json.dumps(r))
+    verdict = r.get('verdict', '?')
+    conf = r.get('confidence', 0)
+    prob = r.get('probability', 0)
+    print(f'Classifier: {verdict} (confidence={conf:.2f}, probability={prob:.3f})', file=sys.stderr)
+except Exception as e:
+    print('{}')
+    print(f'Classifier: error ({e})', file=sys.stderr)
+" "$DIFF_JSON" 2>&1 | head -1) || true
+              echo "Classifier result: $CLASSIFIER_RESULT" | head -c 200
+            else
+              echo "Classifier: not reachable (skipping)"
+            fi
+            export CLASSIFIER_RESULT
 
             # Query ChromaDB for similar past reviews (RAG)
             python3 /app/rag_query.py \
@@ -165,6 +201,22 @@ spec:
               --threshold "$REVIEW_COUNT" \
               --diff /tmp/diff.txt \
               --output /tmp/aggregate-result.json
+
+            # Inject classifier result into aggregate (advisory only)
+            if [ -n "$CLASSIFIER_RESULT" ] && [ "$CLASSIFIER_RESULT" != "{}" ]; then
+              python3 -c "
+import json, sys
+agg = json.load(open('/tmp/aggregate-result.json'))
+clf = json.loads(sys.argv[1])
+agg['classifier'] = {
+    'verdict': clf.get('verdict', 'N/A'),
+    'confidence': clf.get('confidence', 0),
+    'probability': clf.get('probability', 0),
+    'advisory': True,
+}
+json.dump(agg, open('/tmp/aggregate-result.json', 'w'), indent=2)
+" "$CLASSIFIER_RESULT" || true
+            fi
 
             # Post to PR
             python3 /app/post_review.py \
