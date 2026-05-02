@@ -203,12 +203,21 @@ spec:
             # Try preview-gate first (deployed as part of preview helmfile).
             # The gate checks ALL deployments, pod stability, version match,
             # and custom health probes. A single 200 = everything ready.
-            # Retry detection for up to 60s — gate pod may still be starting
-            # (end2end often starts before the pr build deploys the preview).
+            #
+            # Detection window: how long we wait for the preview-gate Service
+            # to become reachable before giving up and using the weaker
+            # direct-health-probe fallback. A brand-new preview namespace
+            # needs Helm install + chart deps + Deployment + Pod schedule +
+            # image pull (if not cached) + container start + Service
+            # endpoint population — easily 90-180s under cluster load.
+            # 180s default covers most cold starts without burning pipeline
+            # time when the gate is genuinely absent. Override via env
+            # GATE_DETECT_TIMEOUT (in seconds) per consumer if needed.
+            GATE_DETECT_TIMEOUT="${GATE_DETECT_TIMEOUT:-180}"
             GATE_URL="http://preview-gate.${PREVIEW_NAMESPACE}.svc.cluster.local:8090/cgi-bin/gate"
             USE_GATE=false
-            GATE_DETECT_DEADLINE=$(( $(date +%s) + 60 ))
-            echo "==> looking for preview-gate at $GATE_URL (up to 60s)"
+            GATE_DETECT_DEADLINE=$(( $(date +%s) + GATE_DETECT_TIMEOUT ))
+            echo "==> looking for preview-gate at $GATE_URL (up to ${GATE_DETECT_TIMEOUT}s)"
             while [ "$(date +%s)" -lt "$GATE_DETECT_DEADLINE" ]; do
               if curl -sSf -o /dev/null -m 3 "$GATE_URL" 2>/dev/null || \
                  curl -sS -o /dev/null -w '%{http_code}' -m 3 "$GATE_URL" 2>/dev/null | grep -q "503"; then
@@ -219,7 +228,7 @@ spec:
               sleep 5
             done
             if [ "$USE_GATE" = "false" ]; then
-              echo "==> preview-gate not found after 60s — falling back to direct health probe"
+              echo "==> preview-gate not found after ${GATE_DETECT_TIMEOUT}s — falling back to direct health probe"
             fi
 
             if [ "$USE_GATE" = "true" ]; then

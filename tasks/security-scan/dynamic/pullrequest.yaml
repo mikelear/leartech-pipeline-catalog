@@ -104,11 +104,20 @@ spec:
             echo "Namespace exists"
 
             # Prefer preview-gate if deployed (checks all pods, stability, version).
-            # Retry detection for up to 60s — gate may still be starting.
+            #
+            # Detection window: how long we wait for the preview-gate Service
+            # to become reachable before falling back to plain pod-readiness.
+            # A brand-new preview namespace needs Helm install + Deployment +
+            # Pod schedule + image pull + container start + Service endpoint
+            # population — easily 90-180s under cluster load. 180s default
+            # covers most cold starts without burning pipeline time when
+            # the gate is genuinely absent. Override via env
+            # GATE_DETECT_TIMEOUT (in seconds) per consumer if needed.
+            GATE_DETECT_TIMEOUT="${GATE_DETECT_TIMEOUT:-180}"
             GATE_URL="http://preview-gate.${PREVIEW_NS}.svc.cluster.local:8090/cgi-bin/gate"
             USE_GATE=false
-            echo "Looking for preview-gate at $GATE_URL (up to 60s)"
-            GATE_DETECT_END=$(( $(date +%s) + 60 ))
+            echo "Looking for preview-gate at $GATE_URL (up to ${GATE_DETECT_TIMEOUT}s)"
+            GATE_DETECT_END=$(( $(date +%s) + GATE_DETECT_TIMEOUT ))
             while [ "$(date +%s)" -lt "$GATE_DETECT_END" ]; do
               if curl -sSf -o /dev/null -m 3 "$GATE_URL" 2>/dev/null || \
                  curl -sS -o /dev/null -w '%{http_code}' -m 3 "$GATE_URL" 2>/dev/null | grep -q "503"; then
