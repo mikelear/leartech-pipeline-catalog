@@ -99,34 +99,18 @@ spec:
             # Calls leartech-ai-classifier for a fast PASS/FAIL prediction.
             # Result is included in the PR comment for observability.
             # TODO: gate on classifier when eval accuracy >= 80% on production data.
-            CLASSIFIER_RESULT=""
-            if python3 -c "import urllib.request; urllib.request.urlopen('$CLASSIFIER_ENDPOINT/health', timeout=3)" 2>/dev/null; then
-              echo "Classifier: reachable at $CLASSIFIER_ENDPOINT"
-              DIFF_JSON=$(python3 -c "import json,sys; print(json.dumps({'diff': open('/tmp/diff.txt').read()}))")
-              CLASSIFIER_RESULT=$(python3 -c "
-import urllib.request, json, sys
-req = urllib.request.Request(
-    '$CLASSIFIER_ENDPOINT/predict',
-    data=json.dumps(json.loads(sys.argv[1])).encode(),
-    headers={'Content-Type': 'application/json'},
-    method='POST',
-)
-try:
-    resp = urllib.request.urlopen(req, timeout=10)
-    r = json.loads(resp.read())
-    print(json.dumps(r))
-    verdict = r.get('verdict', '?')
-    conf = r.get('confidence', 0)
-    prob = r.get('probability', 0)
-    print(f'Classifier: {verdict} (confidence={conf:.2f}, probability={prob:.3f})', file=sys.stderr)
-except Exception as e:
-    print('{}')
-    print(f'Classifier: error ({e})', file=sys.stderr)
-" "$DIFF_JSON" 2>&1 | head -1) || true
-              echo "Classifier result: $CLASSIFIER_RESULT" | head -c 200
-            else
-              echo "Classifier: not reachable (skipping)"
-            fi
+            #
+            # Note: previously this was inline Python at column 0 inside this YAML
+            # script block, which caused a YAML literal-scalar parse error and the
+            # whole pipeline silently stopped rendering. Extracted to /app/classifier_call.py
+            # following the same pattern as filter_diff.py / fetch_diff.py — see
+            # leartech-dockerfiles/ai-review-worker/app/classifier_call.py.
+            # The script writes status to stderr (visible in pod logs) and
+            # the JSON prediction to stdout. On any error it exits 0 with `{}`
+            # on stdout, so this whole step is non-blocking.
+            CLASSIFIER_RESULT=$(python3 /app/classifier_call.py \
+              --diff /tmp/diff.txt \
+              --classifier-url "$CLASSIFIER_ENDPOINT" || echo '{}')
             export CLASSIFIER_RESULT
 
             # Query ChromaDB for similar past reviews (RAG)
@@ -202,21 +186,12 @@ except Exception as e:
               --diff /tmp/diff.txt \
               --output /tmp/aggregate-result.json
 
-            # Inject classifier result into aggregate (advisory only)
-            if [ -n "$CLASSIFIER_RESULT" ] && [ "$CLASSIFIER_RESULT" != "{}" ]; then
-              python3 -c "
-import json, sys
-agg = json.load(open('/tmp/aggregate-result.json'))
-clf = json.loads(sys.argv[1])
-agg['classifier'] = {
-    'verdict': clf.get('verdict', 'N/A'),
-    'confidence': clf.get('confidence', 0),
-    'probability': clf.get('probability', 0),
-    'advisory': True,
-}
-json.dump(agg, open('/tmp/aggregate-result.json', 'w'), indent=2)
-" "$CLASSIFIER_RESULT" || true
-            fi
+            # Inject classifier result into aggregate (advisory only).
+            # See classifier_merge.py — extracted from inline Python to avoid
+            # the same YAML literal-block-scalar parse trap as classifier_call.py.
+            python3 /app/classifier_merge.py \
+              --aggregate /tmp/aggregate-result.json \
+              --result "$CLASSIFIER_RESULT" || true
 
             # Post to PR
             python3 /app/post_review.py \
