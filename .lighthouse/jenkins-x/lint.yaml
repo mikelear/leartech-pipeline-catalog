@@ -1,0 +1,103 @@
+# YAML quality gate for the pipeline-catalog itself.
+#
+# Two checks, two separate steps so any red step names the offending file:
+#   yq-parse  — yq eval . on every task YAML; catches structural parse errors
+#               (this is the critical check; would have caught f4d9038's
+#                inline-Python-heredoc-at-column-0 trap on the day it was added)
+#   yamllint  — stricter style/structural checks with leartech-friendly rules
+#
+# Backstory: pipeline-catalog f4d9038 (2026-05-01) introduced two inline
+# Python heredocs at column 0 inside a `script: |` literal block. YAML
+# literal-block-scalars require every line to have at least the block's
+# indentation, so the parser failed at the column-0 lines. Lighthouse
+# silently couldn't render the ai-code-review PipelineRun → no AI reviews
+# on any leartech repo's PRs for ~3 days. Caught + fixed 2026-05-04.
+# This presubmit is the structural fix to prevent recurrence.
+#
+# Same pattern as `~/leartech/preview-shift-left/.lighthouse/jenkins-x/lint.yaml`.
+# When a second consumer wants the same checks, extract into
+# `tasks/yaml-lint/pullrequest.yaml` in this repo.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: lint
+spec:
+  pipelineSpec:
+    tasks:
+    - name: lint
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: mikefarah/yq:4
+          name: yq-parse
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            # Scope: every YAML under tasks/ — the actual catalog content.
+            # Also the .lighthouse/ files themselves so this lint can't
+            # break itself silently.
+            files=$(find tasks .lighthouse -name '*.yaml' -type f 2>/dev/null)
+            if [ -z "$files" ]; then
+              echo "no YAML files found — nothing to parse"
+              exit 0
+            fi
+            failed=0
+            for f in $files; do
+              if yq eval '.' "$f" >/dev/null 2>&1; then
+                printf '  ok    %s\n' "$f"
+              else
+                printf '  FAIL  %s\n' "$f"
+                # Print the actual error for the failing file so the PR
+                # check output names the bad file + line:
+                yq eval '.' "$f" 2>&1 | head -3 | sed 's/^/      /'
+                failed=1
+              fi
+            done
+            if [ "$failed" = "1" ]; then
+              echo "yq-parse: at least one file failed to parse"
+              exit 1
+            fi
+            echo "yq-parse: ok"
+        - image: cytopia/yamllint:latest
+          name: yamllint
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            # Permissive config — matches leartech/k8s/helm YAML conventions
+            # that yamllint's default profile would flag:
+            #   indent-sequences: whatever — allow list items aligned with
+            #                     or indented under their parent key (k8s norm)
+            #   line-length: disable — long URLs, resource descriptions etc.
+            #   document-start: disable — no leading `---` required
+            #   truthy: disable — we accept `yes`/`no` in comments & strings
+            #   comments-indentation: disable — Tekton script blocks have
+            #                     comments at varied indents inside heredocs
+            yamllint \
+              -d "{extends: default, rules: {indentation: {indent-sequences: whatever}, line-length: disable, document-start: disable, truthy: disable, comments: {min-spaces-from-content: 1}, comments-indentation: disable, empty-lines: disable, trailing-spaces: disable}}" \
+              tasks/ .lighthouse/
+            echo "yamllint: ok"
+  podTemplate: {}
+  serviceAccountName: tekton-bot
+  timeout: 15m
+status: {}
