@@ -46,7 +46,11 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/mikelear/leartech-gate:latest
+        # leartech-gate image is auto-built by JX release pipeline to Google
+        # Artifact Registry. Phase 1 hardening: switch to a versioned tag
+        # via Renovate-pinned reference; for the spike, pin to the spike's
+        # initial release so the task is reproducible.
+        - image: us-central1-docker.pkg.dev/product-first/oci/leartech-gate:0.0.1
           name: qa-gate
           resources: {}
           env:
@@ -58,23 +62,23 @@ spec:
             value: test-artifacts-product-first
           - name: RESULT_STORE_PREFIX
             value: results/v1
+          # gate-cli reads CLUSTER_TAG; mirror CLUSTER_ID from the cluster ConfigMap.
+          - name: CLUSTER_TAG
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           - name: GITHUB_TOKEN
             valueFrom:
               secretKeyRef:
                 name: tekton-git
                 key: password
                 optional: true
-          script: |
-            #!/bin/sh
-            set -e
-            CLUSTER_TAG="${CLUSTER_ID:-unknown}"
-            echo "==> leartech-gate cluster=$CLUSTER_TAG repo=$REPO_OWNER/$REPO_NAME pr=$PULL_NUMBER"
-            /app/gate-cli \
-              --helmfile "$HELMFILE_PATH" \
-              --qa-management "$QA_MANAGEMENT_RAW" \
-              --bucket "$RESULT_STORE_BUCKET" \
-              --prefix "$RESULT_STORE_PREFIX" \
-              --cluster "$CLUSTER_TAG"
+          # distroless/static:nonroot has no shell — use `command:` not `script:`.
+          # Binary is at /gate-cli per the gate's Dockerfile. All config flows
+          # through env vars (gate-cli's flags fall back to env via envOr).
+          command: ["/gate-cli"]
   podTemplate:
     tolerations:
     - key: sku
