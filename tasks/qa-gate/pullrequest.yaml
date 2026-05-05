@@ -1,0 +1,86 @@
+# leartech-gate Tekton task — runs as a presubmit on GitOps repos that
+# carry promotion PRs. Reads the PR's helmfile, fetches required-tests
+# from leartech-qa-management, queries GCS for per-test result JSONs,
+# and posts a sticky PR comment + sets the check status.
+#
+# Spike scope (Session 0 — 2026-05-05): single quill (shift-left-tests),
+# single image tag :latest, no risk-driven override stiffening, no
+# multi-cluster fan-out at task-level (each cluster posts its own check
+# via the standard gcp/ az/ prefixing convention).
+#
+# Phase 1 hardening: pin image to a versioned tag, add data-driven multi-quill
+# config in qa-management, multi-cluster aware result-store reads.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: qa-gate
+spec:
+  pipelineSpec:
+    tasks:
+    - name: qa-gate
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/mikelear/leartech-gate:latest
+          name: qa-gate
+          resources: {}
+          env:
+          - name: HELMFILE_PATH
+            value: helmfiles/staging/helmfile.yaml
+          - name: QA_MANAGEMENT_RAW
+            value: https://raw.githubusercontent.com/mikelear/leartech-qa-management/main
+          - name: RESULT_STORE_BUCKET
+            value: test-artifacts-product-first
+          - name: RESULT_STORE_PREFIX
+            value: results/v1
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          script: |
+            #!/bin/sh
+            set -e
+            CLUSTER_TAG="${CLUSTER_ID:-unknown}"
+            echo "==> leartech-gate cluster=$CLUSTER_TAG repo=$REPO_OWNER/$REPO_NAME pr=$PULL_NUMBER"
+            /app/gate-cli \
+              --helmfile "$HELMFILE_PATH" \
+              --qa-management "$QA_MANAGEMENT_RAW" \
+              --bucket "$RESULT_STORE_BUCKET" \
+              --prefix "$RESULT_STORE_PREFIX" \
+              --cluster "$CLUSTER_TAG"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 5m0s
+status: {}
