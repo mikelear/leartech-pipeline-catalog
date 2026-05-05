@@ -86,6 +86,11 @@ spec:
               cpu: 200m
               memory: 256Mi
           workingDir: /workspace/source
+        volumes:
+        - name: gcs-key
+          secret:
+            secretName: test-artifacts-gcs-key
+            optional: true
         steps:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
@@ -106,6 +111,10 @@ spec:
                   name: tekton-git
                   key: password
                   optional: true
+          volumeMounts:
+          - name: gcs-key
+            mountPath: /var/run/secrets/test-artifacts
+            readOnly: true
           script: |
             #!/bin/bash
             set -eo pipefail
@@ -351,6 +360,84 @@ spec:
               "" \
               "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
             post_sticky "$body"
+
+            # ── leartech-gate result-store upload (Phase 1 spike) ───────
+            # Per ~/leartech/qa-architecture/qa-management-repo.md, the gate
+            # reads per-test result JSONs from a SHA-keyed GCS path. Fan out
+            # results.json's tests[] into individual files; gate's
+            # shift-left-tests quill looks up by (repo, sha, cluster, pack, name).
+            #
+            # Best-effort: if gsutil unavailable or auth fails, log and continue
+            # (don't fail end2end on result-store-upload errors during spike).
+            BUCKET="${TEST_ARTIFACTS_BUCKET:-test-artifacts-product-first}"
+            SHA="${PULL_PULL_SHA:-${PULL_BASE_SHA:-unknown}}"
+            RESULTS_PREFIX="results/v1/${REPO_NAME}/${SHA}/${CLUSTER_TAG}/end2end"
+            STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+            HAS_GSUTIL=false
+            if command -v gsutil >/dev/null 2>&1; then
+              HAS_GSUTIL=true
+            else
+              # debian:12-slim doesn't have gsutil. Install via pip (lightweight
+              # vs full gcloud SDK). Same fallback pattern as end2end-ui task.
+              apt-get install -y -qq --no-install-recommends python3-pip >/dev/null 2>&1 || true
+              pip3 install --quiet --break-system-packages gsutil 2>/dev/null && HAS_GSUTIL=true || true
+            fi
+
+            GCS_KEY_FILE=""
+            if [ -f "/var/run/secrets/test-artifacts/key.json" ]; then
+              GCS_KEY_FILE="/var/run/secrets/test-artifacts/key.json"
+            elif kubectl get secret test-artifacts-gcs-key -n jx -o jsonpath='{.data.key\.json}' 2>/dev/null | base64 -d > /tmp/gcs-key.json 2>/dev/null && [ -s /tmp/gcs-key.json ]; then
+              GCS_KEY_FILE="/tmp/gcs-key.json"
+            fi
+            export BOTO_CONFIG=/dev/null
+
+            if [ "$HAS_GSUTIL" = "true" ] && [ -n "$GCS_KEY_FILE" ]; then
+              echo "==> uploading per-test results to gs://${BUCKET}/${RESULTS_PREFIX}/"
+              # Iterate tests[]; emit one JSON per test, upload, log
+              jq -c '.tests[]?' end2end/results.json | while read -r test; do
+                test_name=$(echo "$test" | jq -r '.name')
+                test_status=$(echo "$test" | jq -r '.status')
+                test_duration=$(echo "$test" | jq -r '.duration_ms // 0')
+                test_message=$(echo "$test" | jq -r '.message // ""')
+                # Map "pass" -> "Success", "fail" -> "Failure" (matches gate's expected enum)
+                case "$test_status" in
+                  pass) result_status="Success" ;;
+                  fail) result_status="Failure" ;;
+                  *)    result_status="$test_status" ;;
+                esac
+                tmpfile="/tmp/result-${test_name}.json"
+                jq -n \
+                  --arg sha "$SHA" \
+                  --arg repo "$REPO_NAME" \
+                  --arg cluster "$CLUSTER_TAG" \
+                  --arg test_name "$test_name" \
+                  --arg status "$result_status" \
+                  --argjson duration "$test_duration" \
+                  --arg message "$test_message" \
+                  --arg started_at "$STARTED_AT" \
+                  --arg preview_url "$PREVIEW_URL" \
+                  '{
+                    schema_version: "v1",
+                    sha: $sha,
+                    repo: $repo,
+                    cluster: $cluster,
+                    test_name: $test_name,
+                    test_pack: "end2end",
+                    status: $status,
+                    duration_ms: $duration,
+                    message: $message,
+                    started_at: $started_at,
+                    metadata: { preview_url: $preview_url }
+                  }' > "$tmpfile"
+                gsutil -o "Credentials:gs_service_key_file=${GCS_KEY_FILE}" -q cp "$tmpfile" "gs://${BUCKET}/${RESULTS_PREFIX}/${test_name}.json" 2>/dev/null \
+                  && echo "    ok    ${test_name}.json" \
+                  || echo "    FAIL  ${test_name}.json (upload error — see gsutil output)"
+                rm -f "$tmpfile"
+              done
+            else
+              echo "==> result-store upload skipped (gsutil=${HAS_GSUTIL}, key=${GCS_KEY_FILE:+present}${GCS_KEY_FILE:-absent})"
+            fi
 
             if [ "$SUCCESS" != "true" ]; then
               echo "FAIL: end2end results.success != true"
