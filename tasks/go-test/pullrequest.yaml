@@ -36,7 +36,7 @@ spec:
           resources: {}
         # Non-alpine golang image: -race needs cgo + gcc which alpine lacks
         # by default. Slightly bigger image, but no apk add build-base.
-        - image: golang:1.25
+        - image: golang:1.26
           name: go-test
           resources:
             requests:
