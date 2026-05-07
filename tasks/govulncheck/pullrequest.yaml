@@ -28,7 +28,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: golang:1.25-alpine
+        - image: golang:1.26-alpine
           name: govulncheck
           resources:
             requests:
