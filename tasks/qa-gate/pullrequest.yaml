@@ -43,9 +43,26 @@ spec:
               memory: 128Mi
           workingDir: /workspace/source
         steps:
-        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
-          name: ""
+        # Clone PR HEAD only — no merge with main. We need to do the
+        # equivalent of `git fetch refs/pull/N/head` and read the helmfile
+        # at PR HEAD, NOT a tentative merge result. The standard
+        # `git-clone-pr` task does clone+merge, which fails on stale PRs
+        # whose JX-regenerated `config-root/.../jx-verify/*-job.yaml` files
+        # have been renamed multiple times in main (PR #260 hit this).
+        # The gate doesn't care about config-root — it reads helmfile.yaml
+        # which doesn't conflict — so HEAD-only is safe + correct.
+        - image: alpine/git:2.40.1
+          name: git-clone-pr-head
           resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            cd /workspace/source
+            echo "==> cloning PR ${REPO_OWNER}/${REPO_NAME}#${PULL_NUMBER} HEAD only"
+            git clone --depth=1 "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" .
+            git fetch --depth=1 origin "pull/${PULL_NUMBER}/head:pr-head"
+            git checkout pr-head
+            echo "==> at $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
         # leartech-gate image is auto-built by JX release pipeline to Google
         # Artifact Registry. Phase 1 hardening: switch to a versioned tag
         # via Renovate-pinned reference; for the spike, pin to the spike's

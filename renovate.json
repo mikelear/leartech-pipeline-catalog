@@ -20,12 +20,36 @@
     {
       "matchManagers": ["dockerfile"],
       "groupName": "docker base image updates"
+    },
+    {
+      "description": "Auto-merge leartech-gate image bumps as soon as they land. The catalog's qa-gate task is the consumer; bumping it makes new gate behaviour roll out across both gsm + akv clusters within minutes. 'at any time' overrides the default Monday-only schedule because gate fixes (e.g. multi-doc YAML parser, post-deploy quill) need to flow through fast.",
+      "matchPackageNames": ["us-central1-docker.pkg.dev/product-first/oci/leartech-gate"],
+      "groupName": "leartech-gate",
+      "schedule": ["at any time"],
+      "automerge": true,
+      "automergeStrategy": "squash"
+    },
+    {
+      "description": "Auto-merge playwright-runner image bumps as soon as they land. arrivals-observer's dispatched Jobs use this image; bumping it picks up new browser/SDK versions used by post-deploy tests.",
+      "matchPackageNames": ["us-central1-docker.pkg.dev/product-first/oci/playwright-runner"],
+      "groupName": "playwright-runner",
+      "schedule": ["at any time"],
+      "automerge": true,
+      "automergeStrategy": "squash"
     }
   ],
   "customManagers": [
     {
+      "description": "Catch image: refs in .lighthouse triggers.",
       "customType": "regex",
-      "fileMatch": ["\.lighthouse/.+\.yaml$"],
+      "fileMatch": ["\\.lighthouse/.+\\.yaml$"],
+      "matchStrings": ["image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Catch image: refs in tasks/*/pullrequest.yaml + release.yaml (catalog tasks consumed via uses:). Includes the leartech-gate image pin in tasks/qa-gate/.",
+      "customType": "regex",
+      "fileMatch": ["^tasks/.+\\.yaml$"],
       "matchStrings": ["image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"],
       "datasourceTemplate": "docker"
     }
