@@ -54,8 +54,16 @@ spec:
           name: qa-gate
           resources: {}
           env:
+          # Default path is the JX3 build-cluster shape (gsm + akv production
+          # case). Sandbox-style consumers (e.g. leartech-qa-sandbox-gitops)
+          # use `helmfiles/staging/helmfile.yaml` and override this env in
+          # their own .lighthouse/jenkins-x/qa-gate.yaml — see that repo's
+          # `script:` block style for one approach. Note: stepTemplate-level
+          # env DOES NOT override step-level env in `uses:` expansion, so a
+          # consumer that needs a different path must use `script:` to add
+          # an explicit step that runs gate-cli with the path it wants.
           - name: HELMFILE_PATH
-            value: helmfiles/staging/helmfile.yaml
+            value: helmfiles/jx-staging/helmfile.yaml
           - name: QA_MANAGEMENT_RAW
             value: https://raw.githubusercontent.com/mikelear/leartech-qa-management/main
           - name: RESULT_STORE_BUCKET
