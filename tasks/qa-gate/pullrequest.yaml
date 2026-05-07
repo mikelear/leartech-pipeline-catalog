@@ -50,7 +50,7 @@ spec:
         # Artifact Registry. Phase 1 hardening: switch to a versioned tag
         # via Renovate-pinned reference; for the spike, pin to the spike's
         # initial release so the task is reproducible.
-        - image: us-central1-docker.pkg.dev/product-first/oci/leartech-gate:0.0.2
+        - image: us-central1-docker.pkg.dev/product-first/oci/leartech-gate:0.0.4
           name: qa-gate
           resources: {}
           env:
@@ -62,6 +62,13 @@ spec:
             value: test-artifacts-product-first
           - name: RESULT_STORE_PREFIX
             value: results/v1
+          # Post-deploy quill (gate-cli ≥0.0.4): reads Arrival CRs from
+          # the build cluster's jx-staging namespace via in-cluster K8s
+          # API. tekton-bot SA already has cluster-admin, so no extra RBAC.
+          - name: WATCH_NAMESPACE
+            value: jx-staging
+          - name: ENABLE_POST_DEPLOY_QUILL
+            value: "true"
           # gate-cli reads CLUSTER_TAG; mirror CLUSTER_ID from the cluster ConfigMap.
           - name: CLUSTER_TAG
             valueFrom:
