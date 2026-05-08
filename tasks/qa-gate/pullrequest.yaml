@@ -58,10 +58,14 @@ spec:
             #!/bin/sh
             set -e
             cd /workspace/source
-            # Tekton workspace is owned by tekton's UID; the alpine/git
-            # image runs as a different UID. Without the safe.directory
-            # exception, `git clone` aborts with "dubious ownership".
-            git config --global --add safe.directory /workspace/source
+            # Tekton workspace is owned by tekton's UID; alpine/git runs
+            # as a different UID, hitting "dubious ownership" on every
+            # git invocation. `git config --global` is unreliable in
+            # containers without a writable HOME. Use the `-c` flag and
+            # GIT_CONFIG_* env vars to set safe.directory authoritatively.
+            export GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0=safe.directory
+            export GIT_CONFIG_VALUE_0=/workspace/source
             echo "==> cloning PR ${REPO_OWNER}/${REPO_NAME}#${PULL_NUMBER} HEAD only"
             git clone --depth=1 "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" .
             git fetch --depth=1 origin "pull/${PULL_NUMBER}/head:pr-head"
