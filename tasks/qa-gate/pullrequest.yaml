@@ -58,6 +58,10 @@ spec:
             #!/bin/sh
             set -e
             cd /workspace/source
+            # Tekton workspace is owned by tekton's UID; the alpine/git
+            # image runs as a different UID. Without the safe.directory
+            # exception, `git clone` aborts with "dubious ownership".
+            git config --global --add safe.directory /workspace/source
             echo "==> cloning PR ${REPO_OWNER}/${REPO_NAME}#${PULL_NUMBER} HEAD only"
             git clone --depth=1 "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" .
             git fetch --depth=1 origin "pull/${PULL_NUMBER}/head:pr-head"
