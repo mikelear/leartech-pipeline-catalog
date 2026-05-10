@@ -34,6 +34,16 @@ spec:
             requests:
               cpu: 200m
               memory: 512Mi
+          env:
+          # Honour the `toolchain` directive in go.mod (e.g. toolchain go1.26.3)
+          # by auto-downloading the requested version. AZ + GCP builders
+          # cache `golang:1.26-alpine` independently and one may be at an
+          # older patch — without GOTOOLCHAIN=auto, `go install` uses the
+          # baked-in version regardless of go.mod's toolchain line, which
+          # caused AZ govulncheck to flag std-lib CVEs already patched by
+          # toolchain go1.26.3 (e.g. GO-2026-4918 in net/http).
+          - name: GOTOOLCHAIN
+            value: auto
           script: |
             #!/bin/sh
             set -e

@@ -102,6 +102,20 @@ spec:
             value: jx-staging
           - name: ENABLE_POST_DEPLOY_QUILL
             value: "true"
+          # Post-deploy artifact path template — CONTRACT with arrivals-
+          # observer's chart paths.postDeployTemplate (writer side).
+          # Renderer: Cluster/Namespace/Service/Version/Pack. Override
+          # only when the writer's template diverges per cluster.
+          - name: PATHS_POST_DEPLOY_TEMPLATE
+            value: "results/v1/post-deploy/{{.Cluster}}/{{.Namespace}}/{{.Service}}/{{.Version}}/{{.Pack}}"
+          # Auto-issue creation on service repos when their quill fails
+          # (gate-cli ≥0.0.7). Default OFF until validated; flip to "true"
+          # in the consumer's `.lighthouse/jenkins-x/qa-gate.yaml` once
+          # the team is ready for the per-PR notifications.
+          - name: ENABLE_ISSUE_CREATION
+            value: "false"
+          - name: ISSUE_REPO_OWNER
+            value: mikelear
           # gate-cli reads CLUSTER_TAG; mirror CLUSTER_ID from the cluster ConfigMap.
           - name: CLUSTER_TAG
             valueFrom:
