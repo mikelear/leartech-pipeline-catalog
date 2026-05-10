@@ -1,0 +1,162 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: dotnet-test
+spec:
+  pipelineSpec:
+    tasks:
+    - name: dotnet-test
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: mcr.microsoft.com/dotnet/sdk:9.0
+          name: dotnet-test
+          resources:
+            requests:
+              cpu: 400m
+              memory: 1Gi
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+
+            # Consumer-overridable via env:
+            #   COVERAGE_THRESHOLD — minimum acceptable line coverage % (default 60)
+            THRESHOLD="${COVERAGE_THRESHOLD:-60.0}"
+            SOLUTION="${BUILD_TARGET:-./*.sln}"
+
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+              git make ca-certificates jq curl libxml2-utils >/dev/null
+
+            echo "==> dotnet restore $SOLUTION"
+            dotnet restore $SOLUTION --locked-mode
+
+            # `XPlat Code Coverage` is the standard data collector for coverlet
+            # which we ship via Directory.Packages.props on every test project.
+            # Output goes to TestResults/<guid>/coverage.cobertura.xml.
+            echo "=== dotnet test --collect XPlat Code Coverage (threshold=$THRESHOLD%) ==="
+            dotnet test $SOLUTION \
+              --no-restore \
+              --configuration Debug \
+              --logger "trx;LogFileName=test-results.trx" \
+              --collect:"XPlat Code Coverage" \
+              --results-directory ./TestResults \
+              -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+
+            # Find the cobertura XML — coverlet creates it under TestResults/<guid>/
+            COVER=$(find TestResults -name 'coverage.cobertura.xml' | head -1)
+            if [ -z "$COVER" ]; then
+              echo "FAIL: no coverage.cobertura.xml produced"
+              exit 1
+            fi
+
+            # Cobertura's <coverage> root element has line-rate attribute (0..1).
+            LINE_RATE=$(xmllint --xpath 'string(/coverage/@line-rate)' "$COVER")
+            TOTAL=$(awk -v r="$LINE_RATE" 'BEGIN { printf "%.1f", r * 100 }')
+            echo "total=${TOTAL}%  threshold=${THRESHOLD}%"
+
+            STATUS="pass"
+            if awk -v t="$TOTAL" -v th="$THRESHOLD" 'BEGIN { exit !(t < th) }'; then
+              STATUS="fail"
+            fi
+
+            # Sticky PR comment with per-cluster marker (mirrors go-test, rust-test).
+            if [ -n "${GIT_TOKEN:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
+              CLUSTER_TAG="${CLUSTER_ID:-unknown}"
+              MARKER="<!-- leartech-coverage-${CLUSTER_TAG} -->"
+
+              ICON="white_check_mark"
+              VERDICT="PASS"
+              if [ "$STATUS" = "fail" ]; then
+                ICON="x"
+                VERDICT="FAIL"
+              fi
+
+              # Top 5 lowest-covered classes via cobertura. xmllint XPath gives
+              # us per-class line-rate; sort + head for the bottom slice.
+              LOWEST=$(xmllint --xpath '//class[@line-rate < 1.0]' "$COVER" 2>/dev/null \
+                | grep -oE 'name="[^"]+"\s+filename="[^"]+"\s+[^>]*line-rate="[^"]+"' \
+                | sed -E 's/name="([^"]+)".*line-rate="([0-9.]+)".*/\1|\2/' \
+                | sort -t '|' -k 2 -g \
+                | head -5 \
+                | awk -F '|' '{printf "| `%s` | %.1f%% |\n", $1, $2*100}')
+              [ -z "$LOWEST" ] && LOWEST="| — | all classes ≥ 100% |"
+
+              BODY=$(printf '%s\n' \
+                "$MARKER" \
+                "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) \`[${CLUSTER_TAG}]\` — ${VERDICT}" \
+                "" \
+                "**Lowest-covered classes**" \
+                "" \
+                "| Class | Line coverage |" \
+                "|---|---|" \
+                "${LOWEST}" \
+                "" \
+                "_Posted by \`tasks/dotnet-test/pullrequest.yaml\`._")
+
+              API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments?per_page=100"
+              AUTH="Authorization: token ${GIT_TOKEN}"
+              ACCEPT="Accept: application/vnd.github+json"
+
+              EXISTING_ID=$(curl -fsSL -H "$AUTH" -H "$ACCEPT" "$API" \
+                | jq -r --arg marker "$MARKER" '.[] | select(.body | startswith($marker)) | .id' \
+                | head -1)
+              PAYLOAD=$(jq -cn --arg body "$BODY" '{body: $body}')
+
+              if [ -n "$EXISTING_ID" ]; then
+                echo "==> updating existing coverage [$CLUSTER_TAG] comment $EXISTING_ID"
+                curl -fsSL -X PATCH -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" \
+                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${EXISTING_ID}" >/dev/null
+              else
+                echo "==> posting new coverage [$CLUSTER_TAG] comment"
+                curl -fsSL -X POST -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" "$API" >/dev/null
+              fi
+            else
+              echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR coverage comment"
+            fi
+
+            if [ "$STATUS" = "fail" ]; then
+              echo "FAIL: coverage ${TOTAL}% is below threshold ${THRESHOLD}%"
+              exit 1
+            fi
+            echo "PASS: coverage ${TOTAL}% meets threshold ${THRESHOLD}%"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 1h0m0s
+status: {}

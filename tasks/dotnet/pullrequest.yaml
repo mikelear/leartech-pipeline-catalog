@@ -1,0 +1,97 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: pullrequest
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          # Pod-level scheduling = sum of step container requests; keep modest.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        # mcr.microsoft.com/dotnet/sdk:9.0 — switch to leartech-dotnet-runtime
+        # once that image is published (PR mikelear/leartech-dockerfiles#16).
+        - image: mcr.microsoft.com/dotnet/sdk:9.0
+          name: build-dotnet-build
+          resources:
+            requests:
+              cpu: 400m
+              memory: 1Gi
+          script: |
+            #!/bin/bash
+            set -e
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+              git make ca-certificates >/dev/null
+
+            # Restore deps separately so subsequent `--no-restore` in test/lint
+            # tasks can reuse the same artifacts (when running in the same pod).
+            # BUILD_TARGET lets monorepos point at a non-default solution file.
+            SOLUTION="${BUILD_TARGET:-./*.sln}"
+            echo "==> dotnet restore $SOLUTION"
+            dotnet restore $SOLUTION --locked-mode
+
+            # Debug build for PR (release optimisations live in release.yaml).
+            # EnforceCodeStyleInBuild + TreatWarningsAsErrors in Directory.Build.props
+            # mean style + nullable + analyzer issues fail the build here, not
+            # only in the lint task.
+            echo "==> dotnet build $SOLUTION (Debug)"
+            dotnet build $SOLUTION --no-restore --configuration Debug
+        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+          name: build-container-build
+          resources: {}
+          script: |
+            #!/busybox/sh
+            source .jx/variables.sh
+            cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            # Layer cache shared with release builds — PR snapshots warm the
+            # cache for the eventual release build of the merged commit.
+            /kaniko/executor $KANIKO_FLAGS \
+              --cache=true \
+              --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
+              --cache-ttl=168h \
+              --context=/workspace/source \
+              --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
+              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: promote-jx-preview
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+            source .jx/variables.sh
+            jx preview create
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 2h0m0s
+status: {}

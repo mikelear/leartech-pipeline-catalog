@@ -1,0 +1,192 @@
+# Stryker.NET — mutation testing for .NET services.
+#
+# Direct evidence the test suite catches bugs: mutates source code (replaces
+# returns with default, flips bools, etc.) and re-runs tests. Surviving
+# mutations point at gaps in test coverage that line/branch coverage can't see.
+#
+# Cost: SLOW — 20-90 min per service. **Don't wire as a per-PR gate**;
+# consumers either:
+#   1. Cron-trigger nightly via Tekton CronJob (recommended)
+#   2. Manual `/mutants` PR comment trigger via Lighthouse trigger config
+#   3. CI weekly schedule
+#
+# Env knobs:
+#   STRYKER_BREAK_AT=60       fail if mutation score below this (default 60)
+#   STRYKER_THRESHOLD_HIGH=80 colour-code threshold (informational)
+#   STRYKER_TIMEOUT=30000     per-mutation timeout in ms (default 30s)
+#   STRYKER_PROJECT=...       restrict to a specific project (default: solution)
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: dotnet-mutants
+spec:
+  pipelineSpec:
+    tasks:
+    - name: dotnet-mutants
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: mcr.microsoft.com/dotnet/sdk:9.0
+          name: dotnet-mutants
+          resources:
+            requests:
+              cpu: 800m
+              memory: 2Gi
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+              git make ca-certificates jq curl >/dev/null
+
+            SOLUTION="${BUILD_TARGET:-./*.sln}"
+            BREAK_AT="${STRYKER_BREAK_AT:-60}"
+            THRESHOLD_HIGH="${STRYKER_THRESHOLD_HIGH:-80}"
+            TIMEOUT_MS="${STRYKER_TIMEOUT:-30000}"
+
+            echo "==> installing dotnet-stryker"
+            dotnet tool install --global dotnet-stryker
+            export PATH="$PATH:/root/.dotnet/tools"
+
+            echo "==> dotnet restore $SOLUTION"
+            dotnet restore $SOLUTION --locked-mode
+
+            # --reporter json emits StrykerOutput/<run>/reports/mutation-report.json
+            # --break-at fails the run if mutation score is below the threshold
+            # (default 60; tighten via STRYKER_BREAK_AT).
+            echo "==> dotnet stryker (timeout=${TIMEOUT_MS}ms break-at=${BREAK_AT})"
+            STRYKER_ARGS=(
+              "--reporter" "json"
+              "--reporter" "html"
+              "--break-at" "$BREAK_AT"
+              "--threshold-high" "$THRESHOLD_HIGH"
+              "--timeout" "$TIMEOUT_MS"
+            )
+            if [ -n "${STRYKER_PROJECT:-}" ]; then
+              STRYKER_ARGS+=("--project" "$STRYKER_PROJECT")
+            fi
+            dotnet stryker "${STRYKER_ARGS[@]}" || MUTANTS_EXIT=$?
+
+            REPORT=$(find StrykerOutput -name 'mutation-report.json' | head -1)
+            if [ -z "$REPORT" ]; then
+              echo "FAIL: stryker produced no report"
+              exit 1
+            fi
+
+            # Stryker JSON shape:
+            #   .files[<path>].mutants[].status (Killed/Survived/NoCoverage/Timeout/CompileError)
+            #   The headline mutation score = killed / (killed + survived + timeout + nocoverage)
+            KILLED=$(jq -r '[.files | to_entries[].value.mutants[] | select(.status == "Killed")] | length' "$REPORT")
+            SURVIVED=$(jq -r '[.files | to_entries[].value.mutants[] | select(.status == "Survived")] | length' "$REPORT")
+            NOCOVERAGE=$(jq -r '[.files | to_entries[].value.mutants[] | select(.status == "NoCoverage")] | length' "$REPORT")
+            TIMEOUTS=$(jq -r '[.files | to_entries[].value.mutants[] | select(.status == "Timeout")] | length' "$REPORT")
+            DENOM=$((KILLED + SURVIVED + NOCOVERAGE + TIMEOUTS))
+            SCORE="0.0"
+            if [ "$DENOM" -gt 0 ]; then
+              SCORE=$(awk -v k="$KILLED" -v d="$DENOM" 'BEGIN { printf "%.1f", (k/d)*100 }')
+            fi
+
+            echo
+            echo "=== mutation testing summary ==="
+            echo "killed=${KILLED} survived=${SURVIVED} nocoverage=${NOCOVERAGE} timeouts=${TIMEOUTS} score=${SCORE}%"
+
+            # Sticky PR comment with per-cluster marker.
+            if [ -n "${GIT_TOKEN:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
+              CLUSTER_TAG="${CLUSTER_ID:-unknown}"
+              MARKER="<!-- leartech-mutants-${CLUSTER_TAG} -->"
+
+              ICON="white_check_mark"
+              VERDICT="${SCORE}% (≥ ${BREAK_AT}% threshold)"
+              if awk -v s="$SCORE" -v t="$BREAK_AT" 'BEGIN { exit !(s < t) }'; then
+                ICON="x"
+                VERDICT="${SCORE}% — below ${BREAK_AT}% threshold"
+              elif [ "$SURVIVED" -gt 0 ]; then
+                ICON="warning"
+                VERDICT="${SCORE}% — ${SURVIVED} mutation(s) survived"
+              fi
+
+              # Top 5 surviving mutations (file + mutator + line).
+              SURVIVORS=$(jq -r '
+                [.files | to_entries[] as $entry | $entry.value.mutants[] | select(.status == "Survived") | {file: $entry.key, mutator: .mutatorName, line: .location.start.line}]
+                | .[:5]
+                | .[]
+                | "| `\(.file)` | `\(.line)` | \(.mutator) |"
+              ' "$REPORT")
+              [ -z "$SURVIVORS" ] && SURVIVORS="| — | — | no survivors |"
+
+              BODY=$(printf '%s\n' \
+                "$MARKER" \
+                "### :${ICON}: Stryker.NET \`[${CLUSTER_TAG}]\` — ${VERDICT}" \
+                "" \
+                "**Outcomes**: killed=\`${KILLED}\` survived=\`${SURVIVED}\` no-coverage=\`${NOCOVERAGE}\` timeout=\`${TIMEOUTS}\` (score ${SCORE}%)" \
+                "" \
+                "**Top surviving mutations** (gaps in test coverage):" \
+                "" \
+                "| File | Line | Mutator |" \
+                "|---|---|---|" \
+                "${SURVIVORS}" \
+                "" \
+                "_Posted by \`tasks/dotnet-mutants/pullrequest.yaml\`. Wire as nightly cron / \`optional: true\` / comment trigger; not for per-PR gating._")
+
+              API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments?per_page=100"
+              AUTH="Authorization: token ${GIT_TOKEN}"
+              ACCEPT="Accept: application/vnd.github+json"
+
+              EXISTING_ID=$(curl -fsSL -H "$AUTH" -H "$ACCEPT" "$API" \
+                | jq -r --arg marker "$MARKER" '.[] | select(.body | startswith($marker)) | .id' \
+                | head -1)
+              PAYLOAD=$(jq -cn --arg body "$BODY" '{body: $body}')
+
+              if [ -n "$EXISTING_ID" ]; then
+                echo "==> updating existing mutants [$CLUSTER_TAG] comment $EXISTING_ID"
+                curl -fsSL -X PATCH -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" \
+                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${EXISTING_ID}" >/dev/null
+              else
+                echo "==> posting new mutants [$CLUSTER_TAG] comment"
+                curl -fsSL -X POST -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" "$API" >/dev/null
+              fi
+            fi
+
+            # Honour Stryker's --break-at exit code (0 = pass, 1 = below threshold).
+            exit "${MUTANTS_EXIT:-0}"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 2h0m0s
+status: {}
