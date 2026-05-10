@@ -67,11 +67,12 @@ spec:
             go mod download
 
             echo "==> golangci-lint run -v"
-            # --timeout 10m covers the package-loader phase. Azure builder
-            # nodes were hitting the default (1m) on cold-cache builds and
-            # erroring with "context deadline exceeded". Tekton pod-level
-            # timeout is still 30m so this only widens the internal limit.
-            golangci-lint run -v --timeout 10m --config /tmp/golangci.merged.yml ./...
+            # --timeout 15m covers the package-loader phase. Azure builder
+            # nodes were hitting 10m on cold-cache builds (10m exact:
+            # arrivals-observer PR #2 saw 8m36s package-load + 2m49s
+            # linters = 10m + change). 15m gives margin without bloating
+            # the Tekton pod-level timeout (still 30m below).
+            golangci-lint run -v --timeout 15m --config /tmp/golangci.merged.yml ./...
             echo "==> lint complete"
   podTemplate:
     tolerations:
