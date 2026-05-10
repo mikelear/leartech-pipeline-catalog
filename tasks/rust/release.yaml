@@ -1,0 +1,96 @@
+# Rust release orchestrator. Composes language-agnostic release/* steps
+# with the Rust build stage. Target: thin — every step is either a `uses:`
+# reference to a reusable task or a single Rust-specific script block.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: release
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          # Pod scheduling = sum of step container requests; keep modest.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        # rust:1.88-slim-bookworm — switch to leartech-rust-runtime:<semver>
+        # once that image is published (PR mikelear/leartech-dockerfiles#15).
+        - image: rust:1.88-slim-bookworm
+          name: build-cargo-build
+          resources:
+            requests:
+              cpu: 400m
+              memory: 1Gi
+          script: |
+            #!/bin/bash
+            set -e
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+              git make pkg-config libssl-dev libpq-dev build-essential >/dev/null
+            # Release-mode optimised build. BUILD_TARGET lets monorepos point
+            # cargo at a non-default crate.
+            cargo build --release --locked ${BUILD_TARGET:+--package $BUILD_TARGET}
+        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+          name: build-container-build
+          resources: {}
+          script: |
+            #!/busybox/sh
+            source .jx/variables.sh
+            cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            # Layer cache shared with PR builds — see go/release.yaml comment
+            # for full rationale.
+            /kaniko/executor $KANIKO_FLAGS \
+              --cache=true \
+              --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
+              --cache-ttl=168h \
+              --context=/workspace/source \
+              --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
+              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/promote-cluster-suffixed.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/helm-release.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/cosign-sign.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/jx-promote.yaml@main
+          name: ""
+          resources: {}
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}

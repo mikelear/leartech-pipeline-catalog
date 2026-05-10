@@ -1,0 +1,80 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: rust-audit
+spec:
+  pipelineSpec:
+    tasks:
+    - name: rust-audit
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: rust:1.88-slim-bookworm
+          name: rust-audit
+          resources:
+            requests:
+              cpu: 400m
+              memory: 1Gi
+          script: |
+            #!/bin/bash
+            set -e
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+              git pkg-config libssl-dev libpq-dev build-essential >/dev/null
+
+            # cargo-deny covers vulnerabilities + license policy + duplicate
+            # dependency detection; cargo-audit is RustSec advisory database
+            # checks specifically. cargo-deny includes audit functionality but
+            # we run both for explicit cross-check.
+            #
+            # Cold install ~3 min combined. TODO: pre-bake into a
+            # leartech-rust-tools image to drop install time to seconds.
+            echo "==> installing cargo-deny + cargo-audit"
+            cargo install --locked cargo-deny
+            cargo install --locked cargo-audit
+
+            # cargo-deny needs a `deny.toml` in the consumer repo. If the repo
+            # doesn't ship one, fetch the leartech base policy from this catalog
+            # repo. Repo-local override (deny.toml) wins over base-only.
+            if [ -f deny.toml ]; then
+              echo "==> using repo-local deny.toml"
+            else
+              echo "==> fetching leartech base deny.toml from catalog"
+              curl -fsSL -o deny.toml \
+                https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/rust/deny.base.toml
+            fi
+
+            echo "==> cargo deny check (advisories, licenses, bans, sources)"
+            cargo deny check
+
+            echo "==> cargo audit"
+            cargo audit
+
+            echo "==> audit complete"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}
