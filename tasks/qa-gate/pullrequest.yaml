@@ -1,15 +1,7 @@
 # leartech-gate Tekton task — runs as a presubmit on GitOps repos that
-# carry promotion PRs. Reads the PR's helmfile, fetches required-tests
-# from leartech-qa-management, queries GCS for per-test result JSONs,
-# and posts a sticky PR comment + sets the check status.
-#
-# Spike scope (Session 0 — 2026-05-05): single quill (shift-left-tests),
-# single image tag :latest, no risk-driven override stiffening, no
-# multi-cluster fan-out at task-level (each cluster posts its own check
-# via the standard gcp/ az/ prefixing convention).
-#
-# Phase 1 hardening: pin image to a versioned tag, add data-driven multi-quill
-# config in qa-management, multi-cluster aware result-store reads.
+# carry promotion PRs. Reads the PR's helmfile, evaluates the post-deploy
+# quill against Arrival CRs in the build cluster, and posts a sticky PR
+# comment + sets the check status.
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
@@ -89,8 +81,6 @@ spec:
           # an explicit step that runs gate-cli with the path it wants.
           - name: HELMFILE_PATH
             value: helmfiles/jx-staging/helmfile.yaml
-          - name: QA_MANAGEMENT_RAW
-            value: https://raw.githubusercontent.com/mikelear/leartech-qa-management/main
           - name: RESULT_STORE_BUCKET
             value: test-artifacts-product-first
           - name: RESULT_STORE_PREFIX
