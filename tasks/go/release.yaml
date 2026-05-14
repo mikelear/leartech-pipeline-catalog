@@ -56,10 +56,35 @@ spec:
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
           resources: {}
+          env:
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
           script: |
             #!/busybox/sh
+            set -e
             source .jx/variables.sh
-            cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            # Dual-push: every leartech service image lands on BOTH the
+            # primary registry (GCP AR — private, gated) and ghcr.io
+            # (public-read, pullable from any cluster — Azure, future
+            # clusters, devs running locally). Mirrors the pattern set
+            # by leartech-dockerfiles/.lighthouse/jenkins-x/security-tools.
+            #
+            # GHCR_AUTH is a GitHub PAT (or the pipeline jx-bot token)
+            # base64-encoded as `username:token` per OCI auth spec.
+            # The credHelpers block from the jx-bundled docker config is
+            # stripped because it points at gcloud-helper which isn't on
+            # the kaniko image; explicit auths for ghcr.io are spliced in.
+            sed 's/"credHelpers":{[^}]*},//' /tekton/creds/.docker/config.json > /workspace/docker-config.json
+            if [ -n "$GIT_TOKEN" ]; then
+              GHCR_AUTH=$(printf "mikelear:%s" "$GIT_TOKEN" | base64 | tr -d '\n')
+              cat /workspace/docker-config.json | sed "s/\"auths\":{/\"auths\":{\"ghcr.io\":{\"auth\":\"${GHCR_AUTH}\"},/" > /kaniko/.docker/config.json
+            else
+              cp /workspace/docker-config.json /kaniko/.docker/config.json
+            fi
             # Layer cache: --cache=true reuses identical layers across builds,
             # stored in $PUSH_CONTAINER_REGISTRY/.../kaniko-cache. Major speedup
             # (~50% on incremental builds) since base-image + apk/apt + COPY of
@@ -71,7 +96,9 @@ spec:
               --cache-ttl=168h \
               --context=/workspace/source \
               --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
-              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION" \
+              --destination="ghcr.io/mikelear/$APP_NAME:$VERSION" \
+              --destination="ghcr.io/mikelear/$APP_NAME:latest"
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/promote-cluster-suffixed.yaml@main
           name: ""
           resources: {}
