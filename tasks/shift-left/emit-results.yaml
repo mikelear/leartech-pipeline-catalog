@@ -25,6 +25,15 @@
 #   SHIFT_LEFT_TEST_PACK    — default "end2end"
 #   RESULT_STORE_BUCKET     — default "test-artifacts-product-first"
 #   RESULT_STORE_PREFIX     — default "results/v1"
+#   SHIFT_LEFT_STUB_STATUS  — optional "pass" or "fail"; when set, the
+#                             task synthesizes results.json with a single
+#                             stub test instead of reading an existing
+#                             file. Test-bed mode for the shift-left
+#                             quill validation cycle on leartech-qa-canary.
+#                             Real consumers leave this unset and produce
+#                             results.json via their own test execution.
+#   SHIFT_LEFT_STUB_NAME    — name of the synthesized stub test (default
+#                             "canary-healthy"). Only used in stub mode.
 #
 # OUTPUT (GCS): one JSON file per test at
 #   gs://$RESULT_STORE_BUCKET/$RESULT_STORE_PREFIX/$APP_NAME/$VERSION/
@@ -124,6 +133,19 @@ spec:
             secretName: test-artifacts-gcs-key
             optional: true
         steps:
+        # Catalog tasks run in fresh pods — no inherited workspace from
+        # from-build-pack. Clone + populate .jx/variables.sh ourselves
+        # before the emit step (same prefix as tasks/openapi-generation/
+        # release.yaml at lines 61-69).
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
         - image: google/cloud-sdk:slim
           name: shift-left-emit-results
           resources: {}
@@ -160,9 +182,38 @@ spec:
             # Commit SHA — release-postsubmit case has it from git
             SHA="${PULL_BASE_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 
+            # Stub mode: synthesize results.json instead of reading from
+            # disk. Validation-cycle support for the shift-left quill
+            # (see qa-architecture/test-pack-shift-left.md). Real consumers
+            # leave SHIFT_LEFT_STUB_STATUS unset and the task reads the
+            # results.json their test pack produced.
+            if [ -n "${SHIFT_LEFT_STUB_STATUS:-}" ]; then
+              STUB_NAME="${SHIFT_LEFT_STUB_NAME:-canary-healthy}"
+              echo "==> stub mode: synthesizing $SHIFT_LEFT_RESULTS_PATH with $STUB_NAME=$SHIFT_LEFT_STUB_STATUS"
+              mkdir -p "$(dirname "$SHIFT_LEFT_RESULTS_PATH")"
+              cat > "$SHIFT_LEFT_RESULTS_PATH" <<EOF
+            {
+              "success": $([ "$SHIFT_LEFT_STUB_STATUS" = "pass" ] && echo true || echo false),
+              "summary": "1/1 $STUB_NAME stub ($SHIFT_LEFT_STUB_STATUS)",
+              "tests": [
+                {
+                  "name": "$STUB_NAME",
+                  "status": "$SHIFT_LEFT_STUB_STATUS",
+                  "duration_ms": 50,
+                  "message": "synthesized stub for shift-left quill validation"
+                }
+              ],
+              "metadata": {
+                "version": "$VERSION",
+                "source": "shift-left catalog task stub mode"
+              }
+            }
+            EOF
+            fi
+
             if [ ! -f "$SHIFT_LEFT_RESULTS_PATH" ]; then
               echo "::WARN no results.json at $SHIFT_LEFT_RESULTS_PATH — skipping shift-left emission"
-              echo "       (consumer must produce this file before this task; see end2end/run.sh contract)"
+              echo "       (consumer must produce this file before this task, OR set SHIFT_LEFT_STUB_STATUS)"
               exit 0
             fi
 
