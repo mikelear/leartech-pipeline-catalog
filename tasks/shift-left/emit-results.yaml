@@ -131,15 +131,34 @@ spec:
             #!/bin/bash
             set -eo pipefail
 
-            # Variables set by jx-variables earlier in the pipeline
-            [ -f .jx/variables.sh ] && source .jx/variables.sh
+            # APP_NAME comes from REPO_NAME (Lighthouse stepTemplate env).
+            # The repo IS the service for our convention — same as how
+            # tasks/release/promote-cluster-suffixed.yaml uses $REPO_NAME.
+            APP_NAME="${REPO_NAME:?REPO_NAME unset (Lighthouse env missing?)}"
 
-            # Resolve commit SHA — prefer PULL_PULL_SHA from Tekton if set,
-            # fall back to git for the release-postsubmit case.
-            SHA="${PULL_PULL_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
+            # Derive VERSION from the cluster-suffixed git tag that
+            # promote-cluster-suffixed pushed in the from-build-pack pod.
+            # Can't read .jx/variables.sh because that's in a different
+            # pod's workspace — same constraint openapi-generation/release
+            # works around (see its derivation logic at line 91-107).
+            if [ -n "${CLUSTER_ID:-}" ]; then
+              RAW=$(git tag -l "v*-${CLUSTER_ID}" --sort=-v:refname | head -1)
+              if [ -z "$RAW" ]; then
+                echo "::WARN no v*-${CLUSTER_ID} tags found; cannot derive VERSION — skipping"
+                exit 0
+              fi
+              VERSION=${RAW#v}                   # v0.1.17-az → 0.1.17-az
+              VERSION=${VERSION%-${CLUSTER_ID}}  # 0.1.17-az → 0.1.17
+            else
+              # Single-cluster mode: use the latest tag matching v*
+              RAW=$(git tag -l "v*" --sort=-v:refname | head -1)
+              [ -z "$RAW" ] && { echo "::WARN no v* tags; skipping"; exit 0; }
+              VERSION=${RAW#v}
+            fi
+            echo "==> derived VERSION=${VERSION} from tag ${RAW}"
 
-            : "${APP_NAME:?APP_NAME unset — is jx-variables step before this one?}"
-            : "${VERSION:?VERSION unset — is promote-cluster-suffixed step before this one?}"
+            # Commit SHA — release-postsubmit case has it from git
+            SHA="${PULL_BASE_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 
             if [ ! -f "$SHIFT_LEFT_RESULTS_PATH" ]; then
               echo "::WARN no results.json at $SHIFT_LEFT_RESULTS_PATH — skipping shift-left emission"
