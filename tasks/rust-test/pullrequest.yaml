@@ -62,9 +62,13 @@ spec:
             # TODO: pre-bake into a `leartech-rust-tools` image to drop install
             # time to seconds. cargo-binstall would also help but the curl-pipe
             # install path doesn't pass the leartech security gate.
-            echo "==> installing cargo-nextest + cargo-llvm-cov (cold cache, ~3 min)"
-            cargo install --locked cargo-nextest
-            cargo install --locked cargo-llvm-cov
+            #
+            # Versions pinned to the last release that supports rustc 1.88
+            # (our current MSRV). cargo-nextest 0.9.133+ requires 1.91; bump
+            # this pin when the toolchain bumps.
+            echo "==> installing cargo-nextest@0.9.114 + cargo-llvm-cov@0.6.13 (cold cache, ~3 min)"
+            cargo install --locked cargo-nextest@0.9.114
+            cargo install --locked cargo-llvm-cov@0.6.13
             rustup component add llvm-tools-preview
 
             echo "=== cargo llvm-cov nextest --json (threshold=$THRESHOLD%) ==="
