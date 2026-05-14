@@ -67,7 +67,7 @@ spec:
         # Artifact Registry. Phase 1 hardening: switch to a versioned tag
         # via Renovate-pinned reference; for the spike, pin to the spike's
         # initial release so the task is reproducible.
-        - image: us-central1-docker.pkg.dev/product-first/oci/leartech-gate:0.0.11
+        - image: us-central1-docker.pkg.dev/product-first/oci/leartech-gate:0.0.16
           name: qa-gate
           resources: {}
           env:
