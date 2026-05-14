@@ -1,0 +1,231 @@
+# shift-left/emit-results — release-time emission of per-test results
+# for leartech-gate's shift-left quill to consume at promotion time.
+#
+# ── WHEN TO USE ───────────────────────────────────────────────────────
+#
+# Add this task to your release.yaml AFTER promote-cluster-suffixed
+# (which sets VERSION) and AFTER any test execution that produces an
+# end2end-style results.json. The task transforms that results.json
+# into the per-test JSON files leartech-gate's shift-left quill expects
+# and uploads them to GCS at the version-keyed path.
+#
+# ── CONTRACT ──────────────────────────────────────────────────────────
+#
+# INPUT (from working dir):
+#   results.json at $SHIFT_LEFT_RESULTS_PATH (default end2end/results.json)
+#   matching the end2end task schema:
+#     { "tests": [ { "name": "...", "status": "pass|fail", "duration_ms": N,
+#                    "message": "..." } ] }
+#
+# INPUT (env):
+#   APP_NAME, VERSION       — from .jx/variables.sh (sourced by script)
+#   PULL_PULL_SHA           — release-postsubmit SHA; falls back to git rev-parse HEAD
+#   CLUSTER_ID              — from jx-cluster-config ConfigMap (optional)
+#   SHIFT_LEFT_RESULTS_PATH — default "end2end/results.json"
+#   SHIFT_LEFT_TEST_PACK    — default "end2end"
+#   RESULT_STORE_BUCKET     — default "test-artifacts-product-first"
+#   RESULT_STORE_PREFIX     — default "results/v1"
+#
+# OUTPUT (GCS): one JSON file per test at
+#   gs://$RESULT_STORE_BUCKET/$RESULT_STORE_PREFIX/$APP_NAME/$VERSION/
+#     $CLUSTER_ID/$SHIFT_LEFT_TEST_PACK/<test_name>.json
+#
+# matching leartech-gate's expected schema (cmd/gate-cli/main.go:78-88):
+#   {
+#     "schema_version": "v1",
+#     "sha":            "<commit sha>",
+#     "repo":           "<APP_NAME>",
+#     "cluster":        "<CLUSTER_ID>",
+#     "test_name":      "<test.name>",
+#     "test_pack":      "<SHIFT_LEFT_TEST_PACK>",
+#     "status":         "Success|Failure",
+#     "duration_ms":    <int>,
+#     "message":        "<short context>"
+#   }
+#
+# pass → Success, fail → Failure, anything else → passed through verbatim
+# (lets future status values come through without code change here).
+#
+# ── BAIL-OUT CONDITIONS (degrade gracefully, don't fail release) ──────
+#
+#   No results.json at $SHIFT_LEFT_RESULTS_PATH  → log + exit 0
+#   No CLUSTER_ID                                 → log + exit 0
+#   gcs-key secret missing                        → log + exit 0
+#
+# Rationale: shift-left emission failing must NEVER fail an otherwise-
+# valid release. The downstream gate-cli treats missing result JSONs
+# as MissingTests — that's the right signal for "release shipped but
+# shift-left emission broke", visible at promotion time.
+#
+# ── DESIGN DECISIONS ──────────────────────────────────────────────────
+#
+# Why release-time (not PR-time): leartech-gate's shift-left quill
+# reads the result JSON at the VERSION-keyed path. VERSION is only
+# known after next-version + promote-cluster-suffixed run during the
+# release postsubmit. PR-time emission would need SHA-keyed paths +
+# version→SHA fallback in gate-cli — added complexity for no benefit
+# beyond what standard PR checks already provide. See
+# qa-architecture/test-pack-shift-left.md "why not PR-time" anchor.
+#
+# Why a separate task (not inline in release.yaml): keeps the per-test
+# transform + GCS upload reusable across consumers (qa-canary,
+# auth-service, future services). Single source of truth for the
+# shift-left schema mapping.
+#
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: shift-left-emit-results
+spec:
+  pipelineSpec:
+    tasks:
+    - name: shift-left-emit-results
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: SHIFT_LEFT_RESULTS_PATH
+            value: end2end/results.json
+          - name: SHIFT_LEFT_TEST_PACK
+            value: end2end
+          - name: RESULT_STORE_BUCKET
+            value: test-artifacts-product-first
+          - name: RESULT_STORE_PREFIX
+            value: results/v1
+          - name: GOOGLE_APPLICATION_CREDENTIALS
+            value: /var/run/secrets/test-artifacts/key.json
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          workingDir: /workspace/source
+          volumeMounts:
+          - name: gcs-key
+            mountPath: /var/run/secrets/test-artifacts
+            readOnly: true
+        volumes:
+        - name: gcs-key
+          secret:
+            secretName: test-artifacts-gcs-key
+            optional: true
+        steps:
+        - image: google/cloud-sdk:slim
+          name: shift-left-emit-results
+          resources: {}
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+
+            # Variables set by jx-variables earlier in the pipeline
+            [ -f .jx/variables.sh ] && source .jx/variables.sh
+
+            # Resolve commit SHA — prefer PULL_PULL_SHA from Tekton if set,
+            # fall back to git for the release-postsubmit case.
+            SHA="${PULL_PULL_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
+
+            : "${APP_NAME:?APP_NAME unset — is jx-variables step before this one?}"
+            : "${VERSION:?VERSION unset — is promote-cluster-suffixed step before this one?}"
+
+            if [ ! -f "$SHIFT_LEFT_RESULTS_PATH" ]; then
+              echo "::WARN no results.json at $SHIFT_LEFT_RESULTS_PATH — skipping shift-left emission"
+              echo "       (consumer must produce this file before this task; see end2end/run.sh contract)"
+              exit 0
+            fi
+
+            if [ -z "${CLUSTER_ID:-}" ]; then
+              echo "::WARN CLUSTER_ID unset (single-cluster mode?) — skipping shift-left emission"
+              exit 0
+            fi
+
+            if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+              echo "::WARN gcs-key secret not mounted at $GOOGLE_APPLICATION_CREDENTIALS — skipping"
+              exit 0
+            fi
+
+            # Authenticate gsutil. Best-effort; if it fails, log and exit
+            # without failing the release.
+            if ! gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS" 2>/dev/null; then
+              echo "::WARN gcloud auth failed — skipping shift-left emission"
+              exit 0
+            fi
+
+            echo "==> shift-left emission for $APP_NAME@$VERSION on $CLUSTER_ID"
+            echo "    reading $SHIFT_LEFT_RESULTS_PATH"
+
+            DEST_PREFIX="gs://$RESULT_STORE_BUCKET/$RESULT_STORE_PREFIX/$APP_NAME/$VERSION/$CLUSTER_ID/$SHIFT_LEFT_TEST_PACK"
+            COUNT=$(jq '.tests | length' "$SHIFT_LEFT_RESULTS_PATH")
+            echo "    $COUNT test(s) to emit"
+
+            EMITTED=0
+            for i in $(seq 0 $((COUNT - 1))); do
+              NAME=$(jq -r ".tests[$i].name" "$SHIFT_LEFT_RESULTS_PATH")
+              STATUS_RAW=$(jq -r ".tests[$i].status" "$SHIFT_LEFT_RESULTS_PATH")
+              DURATION=$(jq ".tests[$i].duration_ms // 0" "$SHIFT_LEFT_RESULTS_PATH")
+              MESSAGE=$(jq -r ".tests[$i].message // \"\"" "$SHIFT_LEFT_RESULTS_PATH")
+
+              # Map end2end task status enum → gate-cli's Success/Failure
+              # (cmd/gate-cli/main.go:78-88 schema). Unknown values pass
+              # through verbatim so future enum additions don't silently
+              # break here.
+              case "$STATUS_RAW" in
+                pass) GATE_STATUS=Success ;;
+                fail) GATE_STATUS=Failure ;;
+                *)    GATE_STATUS="$STATUS_RAW" ;;
+              esac
+
+              # Construct per-test JSON
+              jq -n \
+                --arg sha "$SHA" \
+                --arg repo "$APP_NAME" \
+                --arg cluster "$CLUSTER_ID" \
+                --arg name "$NAME" \
+                --arg pack "$SHIFT_LEFT_TEST_PACK" \
+                --arg status "$GATE_STATUS" \
+                --argjson dur "$DURATION" \
+                --arg msg "$MESSAGE" \
+                '{
+                  schema_version: "v1",
+                  sha:            $sha,
+                  repo:           $repo,
+                  cluster:        $cluster,
+                  test_name:      $name,
+                  test_pack:      $pack,
+                  status:         $status,
+                  duration_ms:    $dur,
+                  message:        $msg
+                }' > "/tmp/$NAME.json"
+
+              DEST="$DEST_PREFIX/$NAME.json"
+              if gsutil cp "/tmp/$NAME.json" "$DEST" >/dev/null 2>&1; then
+                echo "  ✓ $NAME → $DEST ($GATE_STATUS)"
+                EMITTED=$((EMITTED + 1))
+              else
+                echo "  ✗ $NAME upload failed → $DEST (will appear as MissingTests in gate verdict)"
+              fi
+            done
+
+            echo "==> shift-left emission complete: $EMITTED/$COUNT uploaded"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}
