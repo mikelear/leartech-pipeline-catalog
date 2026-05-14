@@ -54,6 +54,16 @@ spec:
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
           resources: {}
+          env:
+            # GIT_TOKEN gets passed as a kaniko build-arg so the Dockerfile
+            # can configure git credentials inside the builder stage to
+            # fetch private cargo deps (e.g. leartech-common via git+tag).
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
           script: |
             #!/busybox/sh
             source .jx/variables.sh
@@ -64,6 +74,7 @@ spec:
               --cache=true \
               --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
               --cache-ttl=168h \
+              --build-arg "GIT_TOKEN=${GIT_TOKEN}" \
               --context=/workspace/source \
               --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
               --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
