@@ -110,7 +110,12 @@ spec:
             # raised coverage from 44.9% → 57.7%, but the gate reported
             # base=57.7% pr=57.7% delta=0.00% because base test inherited
             # the PR's untracked test file.
-            BASE_CLONE_DIR=$(mktemp -d -t go-test-base-XXXXXX)
+            # Portable mktemp: `mktemp -d -t prefix-XXX` is valid on
+            # BSD/macOS but GNU coreutils (Linux) rejects it with
+            # "too many templates". Catalog container is Linux
+            # (golang:1.26) so use the explicit-path form which works
+            # identically on both systems.
+            BASE_CLONE_DIR=$(mktemp -d /tmp/go-test-base-XXXXXX)
             REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
             if git clone --depth=1 --branch="${BASE_REF}" --quiet "$REPO_URL" "$BASE_CLONE_DIR" 2>/dev/null; then
               # Run tests in the fresh clone — pristine base content with
