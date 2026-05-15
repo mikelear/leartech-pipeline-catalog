@@ -95,6 +95,24 @@ spec:
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
           resources: {}
+          env:
+            # Pass GitHub Packages credentials into the build context so the
+            # Dockerfile's `ARG GITHUB_USER` / `ARG GITHUB_TOKEN` resolve to
+            # real values when restoring private NuGet packages (e.g. peer
+            # SDK PackageReferences). `optional: true` keeps services with
+            # only public nuget.org deps building unchanged.
+            - name: GITHUB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: username
+                  optional: true
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
           script: |
             #!/busybox/sh
             source .jx/variables.sh
@@ -103,6 +121,8 @@ spec:
               --cache=true \
               --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
               --cache-ttl=168h \
+              --build-arg "GITHUB_USER=${GITHUB_USER}" \
+              --build-arg "GITHUB_TOKEN=${GITHUB_TOKEN}" \
               --context=/workspace/source \
               --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
               --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
