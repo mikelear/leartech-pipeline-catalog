@@ -47,6 +47,23 @@ spec:
                   name: tekton-git
                   key: password
                   optional: true
+            # GitHub Packages NuGet feed credentials — nuget.config references
+            # these as %GITHUB_USER% / %GITHUB_TOKEN%. Without them `dotnet
+            # restore` 401s on any Leartech.* / Mqube.* PackageReference.
+            # Duplicate of GIT_TOKEN intentionally — keeps the comment-posting
+            # script's GIT_TOKEN reference and NuGet's expected name both clear.
+            - name: GITHUB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: username
+                  optional: true
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
           script: |
             #!/bin/bash
             set -eo pipefail
