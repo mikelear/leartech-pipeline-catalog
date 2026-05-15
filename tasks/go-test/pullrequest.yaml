@@ -98,28 +98,28 @@ spec:
             BASE_DELTA=""
             BASE_STATUS=""
 
-            # Save PR HEAD ref so we can return to it (defensive — workspace
-            # is ephemeral but keeps logs sensible).
-            PR_SHA=$(git rev-parse HEAD)
-
             echo
             echo "=== delta-coverage check vs origin/${BASE_REF} ==="
-            if git fetch --depth=1 origin "${BASE_REF}" 2>/dev/null; then
-              # Check out base branch, re-run tests against it. We keep
-              # cover.out (PR's profile) and write base profile to a
-              # separate file so the sticky-comment table below can use the
-              # PR profile (most useful for engineers debugging).
-              if git checkout --quiet "origin/${BASE_REF}" -- . 2>/dev/null; then
-                # Some PRs add new packages — go test will fail on missing
-                # tests for nonexistent files. Suppress, treat unparseable
-                # base output as "no baseline" rather than failing the gate.
-                if go test ./... -count=1 -coverpkg="$SCOPE" -coverprofile=cover-base.out >/tmp/base-test.log 2>&1; then
-                  BASE_TOTAL=$(go tool cover -func=cover-base.out 2>/dev/null | awk '/^total:/ {print $3}' | sed 's/%//')
-                fi
-                # Always restore PR working tree before continuing, even on
-                # base test failure. PR_SHA was captured before the checkout.
-                git checkout --quiet "${PR_SHA}" -- . 2>/dev/null || true
+            # Use a SEPARATE clone of base for the baseline test run.
+            # The earlier approach (git checkout origin/BASE_REF -- . in
+            # the same workspace) doesn't remove UNTRACKED files added by
+            # the PR — so newly-added _test.go files stayed in the working
+            # tree during the "base" go test, inflating base coverage to
+            # match PR coverage and producing a misleading 0.00% delta.
+            # Verified 2026-05-15 on canary PR#25: PR added tests that
+            # raised coverage from 44.9% → 57.7%, but the gate reported
+            # base=57.7% pr=57.7% delta=0.00% because base test inherited
+            # the PR's untracked test file.
+            BASE_CLONE_DIR=$(mktemp -d -t go-test-base-XXXXXX)
+            REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
+            if git clone --depth=1 --branch="${BASE_REF}" --quiet "$REPO_URL" "$BASE_CLONE_DIR" 2>/dev/null; then
+              # Run tests in the fresh clone — pristine base content with
+              # no PR-added untracked files. Suppress output (failures are
+              # treated as "no baseline" rather than blocking the gate).
+              if (cd "$BASE_CLONE_DIR" && go test ./... -count=1 -coverpkg="$SCOPE" -coverprofile=cover-base.out) >/tmp/base-test.log 2>&1; then
+                BASE_TOTAL=$(go tool cover -func="${BASE_CLONE_DIR}/cover-base.out" 2>/dev/null | awk '/^total:/ {print $3}' | sed 's/%//')
               fi
+              rm -rf "$BASE_CLONE_DIR"
             fi
 
             if [ -n "$BASE_TOTAL" ]; then
