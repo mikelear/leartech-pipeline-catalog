@@ -54,6 +54,12 @@ spec:
             set -e
             apt-get update -qq && apt-get install -y -qq --no-install-recommends \
               git make pkg-config libssl-dev libpq-dev build-essential >/dev/null
+            # Optional Makefile hook (mirrors go task's `make swag`):
+            # services that ship a `gen-openapi` binary expose an
+            # `openapi:` target to regenerate docs/openapi.json. Runs
+            # alongside the build so the spec lands in the same pod
+            # before the openapi-generation task reads it.
+            [ -f Makefile ] && grep -q "^openapi:" Makefile && make openapi || true
             # Release-mode optimised build. BUILD_TARGET lets monorepos point
             # cargo at a non-default crate.
             cargo build --release --locked ${BUILD_TARGET:+--package $BUILD_TARGET}
