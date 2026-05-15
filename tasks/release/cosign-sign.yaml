@@ -4,6 +4,12 @@
 # the cluster's cosign-keys secret. Assumes .jx/variables.sh has been
 # sourced (i.e. jx-variables step ran earlier in the pipeline).
 #
+# Idempotent: if the image already has a valid signature with our key,
+# the sign step is skipped. This makes retries safe — without the
+# guard, Rekor returns HTTP 409 ("an equivalent entry already exists
+# in the transparency log") and fails the pipeline even though the
+# image is correctly signed.
+#
 # The credHelpers strip is required because bitnami/cosign doesn't ship
 # the gcloud / az docker credential helpers that Tekton's injected
 # config.json references.
@@ -50,8 +56,18 @@ spec:
 
             echo "$COSIGN_KEY" > /tmp/cosign.key
             IMAGE="$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
-            echo "Signing $IMAGE"
-            cosign sign --key /tmp/cosign.key --yes "$IMAGE"
+
+            # Skip-if-already-signed: cosign verify hits the OCI registry's
+            # signature tag (no Rekor lookup with --insecure-ignore-tlog),
+            # so this is a registry-only idempotency check. If the
+            # signature is present and verifies with our pubkey, the sign
+            # step is unnecessary and would 409 against Rekor anyway.
+            if cosign verify --key /tmp/cosign.key --insecure-ignore-tlog=true "$IMAGE" >/dev/null 2>&1; then
+              echo "$IMAGE already signed — skipping (retry-safe)"
+            else
+              echo "Signing $IMAGE"
+              cosign sign --key /tmp/cosign.key --yes "$IMAGE"
+            fi
             rm -f /tmp/cosign.key
   podTemplate:
     tolerations:
