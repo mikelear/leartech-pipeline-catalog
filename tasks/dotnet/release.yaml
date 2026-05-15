@@ -48,6 +48,23 @@ spec:
             requests:
               cpu: 400m
               memory: 1Gi
+          env:
+            # GitHub Packages NuGet feed credentials — nuget.config references
+            # these as %GITHUB_USER% / %GITHUB_TOKEN%. Without them `dotnet
+            # restore` 401s on any Leartech.* / Mqube.* PackageReference.
+            # `optional: true` keeps services with only nuget.org deps working.
+            - name: GITHUB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: username
+                  optional: true
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
           script: |
             #!/bin/bash
             set -e
