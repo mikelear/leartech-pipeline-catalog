@@ -54,10 +54,15 @@ spec:
             set -eo pipefail
 
             # Consumer-overridable via env:
-            #   COVERAGE_THRESHOLD — minimum acceptable total coverage % (default 60)
-            #   COVERAGE_SCOPE     — go test packages for -coverpkg (default ./internal/...)
+            #   COVERAGE_THRESHOLD     — minimum acceptable total coverage % (default 60)
+            #   COVERAGE_SCOPE         — go test packages for -coverpkg (default ./internal/...)
+            #   COVERAGE_DELTA_TOLERANCE — allow PR coverage to be at most this much
+            #                             below base-branch coverage (default 0.5%, absorbs
+            #                             measurement noise). Setting to a large value
+            #                             effectively disables the delta check.
             THRESHOLD="${COVERAGE_THRESHOLD:-60.0}"
             SCOPE="${COVERAGE_SCOPE:-./internal/...}"
+            DELTA_TOL="${COVERAGE_DELTA_TOLERANCE:-0.5}"
 
             echo "=== go test -race -coverprofile (scope=$SCOPE, threshold=$THRESHOLD%) ==="
             go test ./... -v -count=1 -race -coverpkg="$SCOPE" -coverprofile=cover.out
@@ -73,8 +78,64 @@ spec:
             echo "total=${TOTAL}%  threshold=${THRESHOLD}%"
 
             STATUS="pass"
+            STATUS_REASON=""
             if awk -v t="$TOTAL" -v th="$THRESHOLD" 'BEGIN { exit !(t < th) }'; then
               STATUS="fail"
+              STATUS_REASON="below floor ${THRESHOLD}%"
+            fi
+
+            # ── delta-coverage check: PR coverage must not drop vs base branch ──
+            # Without this, the floor check is satisfied as long as overall
+            # coverage stays above THRESHOLD — so a PR can add 100 lines of
+            # untested code (dragging coverage down) and still pass while the
+            # tested code keeps the average up. The delta check enforces
+            # "new code ships with tests" at the gate.
+            #
+            # PULL_BASE_REF is the base branch the PR targets (Tekton injects
+            # via Lighthouse env vars). Default 'main' for safety.
+            BASE_REF="${PULL_BASE_REF:-main}"
+            BASE_TOTAL=""
+            BASE_DELTA=""
+            BASE_STATUS=""
+
+            # Save PR HEAD ref so we can return to it (defensive — workspace
+            # is ephemeral but keeps logs sensible).
+            PR_SHA=$(git rev-parse HEAD)
+
+            echo
+            echo "=== delta-coverage check vs origin/${BASE_REF} ==="
+            if git fetch --depth=1 origin "${BASE_REF}" 2>/dev/null; then
+              # Check out base branch, re-run tests against it. We keep
+              # cover.out (PR's profile) and write base profile to a
+              # separate file so the sticky-comment table below can use the
+              # PR profile (most useful for engineers debugging).
+              if git checkout --quiet "origin/${BASE_REF}" -- . 2>/dev/null; then
+                # Some PRs add new packages — go test will fail on missing
+                # tests for nonexistent files. Suppress, treat unparseable
+                # base output as "no baseline" rather than failing the gate.
+                if go test ./... -count=1 -coverpkg="$SCOPE" -coverprofile=cover-base.out >/tmp/base-test.log 2>&1; then
+                  BASE_TOTAL=$(go tool cover -func=cover-base.out 2>/dev/null | awk '/^total:/ {print $3}' | sed 's/%//')
+                fi
+                # Always restore PR working tree before continuing, even on
+                # base test failure. PR_SHA was captured before the checkout.
+                git checkout --quiet "${PR_SHA}" -- . 2>/dev/null || true
+              fi
+            fi
+
+            if [ -n "$BASE_TOTAL" ]; then
+              BASE_DELTA=$(awk -v pr="$TOTAL" -v base="$BASE_TOTAL" 'BEGIN {printf "%.2f", pr - base}')
+              echo "base=${BASE_TOTAL}%  pr=${TOTAL}%  delta=${BASE_DELTA}%  tolerance=-${DELTA_TOL}%"
+              # Fail iff delta < -tolerance (i.e. coverage dropped beyond noise).
+              if awk -v d="$BASE_DELTA" -v tol="$DELTA_TOL" 'BEGIN { exit !(d < -tol) }'; then
+                STATUS="fail"
+                STATUS_REASON="${STATUS_REASON:+$STATUS_REASON; }coverage dropped ${BASE_DELTA}% vs origin/${BASE_REF} (tolerance -${DELTA_TOL}%)"
+                BASE_STATUS="REGRESSED"
+              else
+                BASE_STATUS="OK"
+              fi
+            else
+              echo "base-branch coverage unavailable (new repo, base test failure, or fetch denied); skipping delta check"
+              BASE_STATUS="UNAVAILABLE"
             fi
 
             # Build PR sticky comment. Per-cluster marker
@@ -109,9 +170,22 @@ spec:
               # silently truncates the script at the catalog-parse layer
               # (Lighthouse then skips creating the LighthouseJob — seen
               # 2026-04-17 on PR #4 where the `test` trigger never fired).
+              # Build a per-cluster delta line so the engineer can see
+              # base/PR/delta at a glance. "UNAVAILABLE" when base branch
+              # tests couldn't be run (new repo, etc.).
+              if [ "$BASE_STATUS" = "UNAVAILABLE" ]; then
+                DELTA_LINE="_Delta vs \`${BASE_REF}\`: unavailable (couldn't fetch/run baseline)_"
+              elif [ "$BASE_STATUS" = "REGRESSED" ]; then
+                DELTA_LINE=":warning: **Delta vs \`${BASE_REF}\`**: ${BASE_TOTAL}% → ${TOTAL}% (\`${BASE_DELTA}%\` — exceeds tolerance \`-${DELTA_TOL}%\`)"
+              else
+                DELTA_LINE=":information_source: Delta vs \`${BASE_REF}\`: ${BASE_TOTAL}% → ${TOTAL}% (\`${BASE_DELTA}%\`)"
+              fi
+
               BODY=$(printf '%s\n' \
                 "$MARKER" \
                 "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) \`[${CLUSTER_TAG}]\` — ${VERDICT}" \
+                "" \
+                "${DELTA_LINE}" \
                 "" \
                 "Scope: \`${SCOPE}\`" \
                 "" \
@@ -150,10 +224,10 @@ spec:
             fi
 
             if [ "$STATUS" = "fail" ]; then
-              echo "FAIL: coverage ${TOTAL}% is below threshold ${THRESHOLD}%"
+              echo "FAIL: ${STATUS_REASON}"
               exit 1
             fi
-            echo "PASS: coverage ${TOTAL}% meets threshold ${THRESHOLD}%"
+            echo "PASS: coverage ${TOTAL}% meets threshold ${THRESHOLD}% (delta=${BASE_DELTA:-n/a}% vs ${BASE_REF})"
   podTemplate:
     tolerations:
     - key: sku
