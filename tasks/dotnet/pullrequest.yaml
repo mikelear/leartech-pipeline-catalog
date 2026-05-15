@@ -62,6 +62,14 @@ spec:
             # only in the lint task.
             echo "==> dotnet build $SOLUTION (Debug)"
             dotnet build $SOLUTION --no-restore --configuration Debug
+
+            # Optional Makefile hook (mirrors go's `make swag` + rust's
+            # `make openapi`): services exposing an HTTP API ship an
+            # `openapi:` target that regenerates docs/<Assembly>.json via
+            # `dotnet build -p:OpenApiGenerateDocumentsOnBuild=true` with
+            # stub auth env vars. Runs alongside the build so the spec
+            # lands in the same pod before openapi-generation reads it.
+            [ -f Makefile ] && grep -q "^openapi:" Makefile && make openapi || true
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
           resources: {}

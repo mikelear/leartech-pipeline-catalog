@@ -68,6 +68,13 @@ spec:
               --configuration Release \
               /p:Version=$VERSION \
               -o ./publish
+
+            # Optional Makefile hook (mirrors go's `make swag` + rust's
+            # `make openapi`): regenerates docs/<Assembly>.json via the
+            # service's `openapi:` target so the spec lands in the same
+            # pod for openapi-generation to read after this task.
+            # Non-fatal: skip silently if no Makefile or no target.
+            [ -f Makefile ] && grep -q "^openapi:" Makefile && make openapi || true
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
           resources: {}
