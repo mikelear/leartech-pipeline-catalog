@@ -39,6 +39,17 @@ spec:
             requests:
               cpu: 400m
               memory: 1Gi
+          env:
+            # .npmrc in consumer repos uses ${GIT_TOKEN} to authenticate
+            # against npm.pkg.github.com for @mikelear/* private packages.
+            # Without this, `npm ci` fails with 401 before lint even runs.
+            # Same pattern as ng-test.
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
           script: |
             #!/bin/sh
             set -e
