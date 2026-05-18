@@ -43,7 +43,7 @@ spec:
         # have been renamed multiple times in main (PR #260 hit this).
         # The gate doesn't care about config-root — it reads helmfile.yaml
         # which doesn't conflict — so HEAD-only is safe + correct.
-        - image: alpine/git:2.40.1
+        - image: alpine/git:v2.52.0
           name: git-clone-pr-head
           resources: {}
           script: |
