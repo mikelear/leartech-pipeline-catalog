@@ -35,7 +35,7 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.5
           name: jx-variables
           resources: {}
           script: |
@@ -52,7 +52,7 @@ spec:
             # `ng build` is invoked inside the Dockerfile (runs in kaniko),
             # so this step just proves deps resolve + exits. Keeps the
             # fail-fast benefit without duplicating the build work.
-        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources: {}
           script: |

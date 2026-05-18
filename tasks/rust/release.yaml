@@ -35,7 +35,7 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.5
           name: jx-variables
           resources: {}
           script: |
@@ -43,7 +43,7 @@ spec:
             jx gitops variables
         # rust:1.88-slim-bookworm — switch to leartech-rust-runtime:<semver>
         # once that image is published (PR mikelear/leartech-dockerfiles#15).
-        - image: rust:1.88-slim-bookworm
+        - image: rust:1.95-slim-bookworm
           name: build-cargo-build
           resources:
             requests:
@@ -63,7 +63,7 @@ spec:
             # Release-mode optimised build. BUILD_TARGET lets monorepos point
             # cargo at a non-default crate.
             cargo build --release --locked ${BUILD_TARGET:+--package $BUILD_TARGET}
-        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources: {}
           env:
