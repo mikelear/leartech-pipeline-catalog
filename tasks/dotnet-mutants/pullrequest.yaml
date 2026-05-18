@@ -51,7 +51,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: mcr.microsoft.com/dotnet/sdk:9.0
+        - image: mcr.microsoft.com/dotnet/sdk:10.0
           name: dotnet-mutants
           resources:
             requests:
