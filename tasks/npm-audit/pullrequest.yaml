@@ -37,7 +37,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: node:22-alpine
+        - image: node:24-alpine
           name: npm-audit
           resources:
             requests:
