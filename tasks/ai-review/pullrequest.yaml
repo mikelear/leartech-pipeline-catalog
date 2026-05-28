@@ -176,6 +176,22 @@ spec:
               echo "No DEEPSEEK_API_KEY, skipping"
             fi
 
+            # Azure OpenAI (4th reviewer — leartech-dockerfiles PR #27)
+            # Endpoint argument is ignored by review.py for azure_openai (read from AZURE_OPENAI_ENDPOINT env);
+            # we pass a placeholder to satisfy --endpoint required arg.
+            if [ -n "$AZURE_OPENAI_API_KEY" ] && [ -n "$AZURE_OPENAI_ENDPOINT" ]; then
+              python3 /app/review.py \
+                --provider azure_openai \
+                --endpoint "$AZURE_OPENAI_ENDPOINT" \
+                --model "gpt-4o" \
+                --diff /tmp/diff.txt \
+                --rag-context /tmp/rag-context.txt \
+                --standards-dir /tmp/standards \
+                --output /tmp/review-azure-openai.json || echo "Azure OpenAI review failed"
+            else
+              echo "No AZURE_OPENAI_API_KEY/ENDPOINT, skipping"
+            fi
+
             # Collect only successfully created review files
             REVIEWS=""
             for f in /tmp/review-ollama.json /tmp/review-claude.json /tmp/review-deepseek.json; do
