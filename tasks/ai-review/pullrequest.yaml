@@ -36,6 +36,18 @@ spec:
                   name: ai-review-api-keys
                   key: DEEPSEEK_API_KEY
                   optional: true
+            - name: AZURE_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-review-api-keys
+                  key: AZURE_OPENAI_API_KEY
+                  optional: true
+            - name: AZURE_OPENAI_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: ai-review-api-keys
+                  key: AZURE_OPENAI_ENDPOINT
+                  optional: true
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
