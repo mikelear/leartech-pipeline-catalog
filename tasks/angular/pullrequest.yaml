@@ -40,7 +40,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: node:22-alpine
+        - image: node:24-alpine
           name: build-npm-install
           resources: {}
           script: |
