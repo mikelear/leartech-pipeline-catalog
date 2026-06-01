@@ -37,7 +37,7 @@ spec:
             jx gitops variables
         # mcr.microsoft.com/dotnet/sdk:9.0 — switch to leartech-dotnet-runtime
         # once that image is published (PR mikelear/leartech-dockerfiles#16).
-        - image: mcr.microsoft.com/dotnet/sdk:9.0
+        - image: mcr.microsoft.com/dotnet/sdk:10.0
           name: build-dotnet-build
           resources:
             requests:
