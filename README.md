@@ -11,6 +11,7 @@ Shared Tekton pipeline tasks for JX3 clusters. App repos reference these tasks v
 | `tasks/security-scan/pullrequest.yaml` | PR | Gitleaks (secrets) + Semgrep (SAST) |
 | `tasks/security-scan/image-scan.yaml` | PR | Grype dependency vulnerability scan |
 | `tasks/security-scan/dynamic/pullrequest.yaml` | PR | External scan (Nikto + Nuclei through ingress) + Internal scan (Nmap + egress isolation inside namespace) |
+| `tasks/python-build-only/pullrequest.yaml` | PR | Python PR build (ruff + pytest + kaniko) **without** `jx preview create` — for services with cluster-scoped Helm resources or no end-user-facing reason for previews. See [tasks/python-build-only/README.md](tasks/python-build-only/README.md). |
 | `tasks/helm/release.yaml` | Merge to main | Helm release with cosign image signing |
 | `tasks/tools/preview-copy-secrets.yaml` | PR | Copy secrets to preview namespaces |
 
