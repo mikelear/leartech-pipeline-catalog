@@ -31,7 +31,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.6
           name: jx-variables
           resources: {}
           script: |
@@ -56,7 +56,7 @@ spec:
             # BUILD_TARGET lets monorepos point at a non-default entrypoint.
             # Default matches the golden-standard layout (cmd/server/main.go).
             go build -trimpath -ldflags="-s -w" -o bin/server "${BUILD_TARGET:-./cmd/server}"
-        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources: {}
           script: |
@@ -73,7 +73,7 @@ spec:
               --context=/workspace/source \
               --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
               --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.6
           name: promote-jx-preview
           resources: {}
           script: |
