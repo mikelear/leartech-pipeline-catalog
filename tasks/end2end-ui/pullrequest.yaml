@@ -76,7 +76,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.6
           name: jx-variables
           resources: {}
           script: |
@@ -87,7 +87,7 @@ spec:
         # be node:22 with 2-5 min of inline tool install per pipeline run;
         # this image drops that to ~10s of consumer-side npm ci.
         # See ~/leartech/hub/shared-rules/build-speed.md.
-        - image: ghcr.io/mikelear/playwright-runner:0.25.3
+        - image: ghcr.io/mikelear/playwright-runner:0.40.3
           name: end2end-ui
           resources:
             requests:

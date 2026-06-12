@@ -41,7 +41,7 @@ spec:
           resources: {}
           workingDir: /workspace/source
         steps:
-        - image: ghcr.io/jenkins-x/jx-release-version:2.8.0
+        - image: ghcr.io/jenkins-x/jx-release-version:2.9.3
           name: next-version
           resources: {}
           script: |

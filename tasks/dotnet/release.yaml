@@ -34,7 +34,7 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.6
           name: jx-variables
           resources: {}
           script: |
@@ -92,7 +92,7 @@ spec:
             # pod for openapi-generation to read after this task.
             # Non-fatal: skip silently if no Makefile or no target.
             [ -f Makefile ] && grep -q "^openapi:" Makefile && make openapi || true
-        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources: {}
           env:

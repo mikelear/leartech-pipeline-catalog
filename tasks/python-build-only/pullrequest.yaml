@@ -92,13 +92,13 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.6
           name: jx-variables
           resources: {}
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: python:3.13-slim
+        - image: python:3.14-slim
           name: build-python-test
           resources: {}
           # `set -e` is mandatory — without it, a non-zero exit from
@@ -121,7 +121,7 @@ spec:
             # propagates via `set -e`.
             uv run coverage run -m pytest -v
             uv run coverage report
-        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources: {}
           # PR-CI kaniko pattern: no ghcr.io auth. The consumer Dockerfile
