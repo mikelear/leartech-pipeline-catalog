@@ -5,14 +5,25 @@
 # and the downstream gitops PR carries the correct version.
 #
 # Does:
-#   1. yset chart version + appVersion (only if charts/$REPO_NAME exists)
-#   2. yset values image.repository + image.tag
+#   1. yset chart version + appVersion on EVERY chart under charts/*/
+#      (multi-chart repos: services that ship both a deployable chart
+#       and a CRD-resource chart get both bumped; downstream
+#       `jx gitops helm release` iterates and requires every chart's
+#       Chart.yaml to match the release version)
+#   2. yset values image.repository + image.tag — ONLY on charts that
+#      actually have an `image:` block in values.yaml. CRD-resource
+#      charts don't deploy a container, so they don't carry an image
+#      ref; skipping them is correct, not an omission.
 #   3. git commit all changes
 #   4. git tag -fa v${VERSION}-${CLUSTER_ID} (suffix empty if single-cluster)
 #   5. jx changelog create
 #
-# Skips chart step cleanly if the repo has no charts/$REPO_NAME (e.g.
-# chart-only or library repos).
+# Skips chart step cleanly if the repo has no charts/ directory or no
+# Chart.yaml under any subdir (chart-only or library repos).
+#
+# cosign-sign + jx-promote remain single-image / single-app — they're
+# correctly per-image and per-app. Multi-image / multi-promote support
+# is a future extension when a real consumer needs it.
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
@@ -49,21 +60,68 @@ spec:
           script: |
             #!/usr/bin/env sh
             set -e
-            source .jx/variables.sh
+            # shellcheck disable=SC1091
+            . .jx/variables.sh
 
-            if [ -d "charts/$REPO_NAME" ]; then
-              jx gitops yset -p version    -v "$VERSION" -f "./charts/$REPO_NAME/Chart.yaml"
-              jx gitops yset -p appVersion -v "$VERSION" -f "./charts/$REPO_NAME/Chart.yaml"
-              jx gitops yset -p 'image.repository' -v "$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME" -f "./charts/$REPO_NAME/values.yaml"
-              jx gitops yset -p 'image.tag'        -v "$VERSION" -f "./charts/$REPO_NAME/values.yaml"
+            # Iterate over every chart in charts/*/.
+            #   - Set version + appVersion on each: every chart needs the
+            #     bump so `jx gitops helm release` packages each at the
+            #     new version.
+            #   - Set image.repository + image.tag ONLY on charts whose
+            #     values.yaml carries an `image:` block. CRD-resource
+            #     charts don't ship containers and have no image ref.
+            #
+            # POSIX-sh-safe (Tekton steps run alpine sh): no bash arrays,
+            # no `shopt`, no `**` globs. We use a simple `for` over
+            # `charts/*/` and gate on Chart.yaml existence so an empty
+            # `charts/` directory (or a literal `charts/*/` glob with no
+            # match) doesn't error.
+            if [ -d charts ]; then
+              promoted_any=0
+              for chart_dir in charts/*/; do
+                # `for chart_dir in charts/*/` expands literally when
+                # there are no matches; guard with -d so we don't trip
+                # over the literal "charts/*/" string.
+                [ -d "$chart_dir" ] || continue
+                chart_name=$(basename "$chart_dir")
+                chart_yaml="${chart_dir}Chart.yaml"
+                values_yaml="${chart_dir}values.yaml"
+
+                if [ ! -f "$chart_yaml" ]; then
+                  echo "skipping $chart_name — no Chart.yaml"
+                  continue
+                fi
+
+                echo "promoting chart $chart_name to $VERSION"
+                jx gitops yset -p version    -v "$VERSION" -f "$chart_yaml"
+                jx gitops yset -p appVersion -v "$VERSION" -f "$chart_yaml"
+
+                # Image refs apply only to charts whose values.yaml has
+                # a top-level `image:` block. (Service chart yes; CRD-
+                # resource chart no.)
+                if [ -f "$values_yaml" ] && grep -q '^image:' "$values_yaml"; then
+                  jx gitops yset -p 'image.repository' \
+                    -v "$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME" \
+                    -f "$values_yaml"
+                  jx gitops yset -p 'image.tag' -v "$VERSION" -f "$values_yaml"
+                else
+                  echo "  no image: block in $values_yaml — skipping image ref update"
+                fi
+                promoted_any=1
+              done
+              if [ "$promoted_any" = "0" ]; then
+                echo "no charts with Chart.yaml under charts/ — skipping chart update"
+              fi
             else
-              echo "no charts/$REPO_NAME directory — skipping chart update"
+              echo "no charts/ directory — skipping chart update"
             fi
 
             TAG_SUFFIX=""
             [ -n "$CLUSTER_ID" ] && TAG_SUFFIX="-$CLUSTER_ID"
 
-            git add * || true
+            # `--` so paths beginning with `-` (none expected, defensive)
+            # aren't treated as options. Fixes SC2035 cleanly.
+            git add -- * || true
             git commit -a -m "chore: release $VERSION" --allow-empty
             git tag -fa "v${VERSION}${TAG_SUFFIX}" -m "Release v${VERSION}${TAG_SUFFIX}"
             git push --force origin "v${VERSION}${TAG_SUFFIX}"
