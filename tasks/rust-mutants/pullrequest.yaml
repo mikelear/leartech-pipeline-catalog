@@ -1,0 +1,195 @@
+# cargo-mutants — mutation testing for Rust services.
+#
+# Direct evidence the test suite catches bugs: mutates source code (replaces
+# returns with default, flips bools, etc.) and re-runs tests. Surviving
+# mutations (no test failed) point at gaps in test coverage that line/branch
+# coverage can't see.
+#
+# Cost: SLOW — 10-60 min per crate, depending on test suite size. **Don't
+# wire as a per-PR gate**; consumers either:
+#   1. Cron-trigger nightly via Tekton CronJob (recommended)
+#   2. Manual `/mutants` PR comment trigger via Lighthouse trigger config
+#   3. CI weekly schedule
+#
+# Env knobs:
+#   MUTANTS_DIFF_ONLY=true   only mutate files changed in the PR (much faster)
+#   MUTANTS_TIMEOUT=300      per-mutation timeout in seconds (default 300)
+#   MUTANTS_BASELINE=skip    skip baseline-test run (assume tests already green)
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: rust-mutants
+spec:
+  pipelineSpec:
+    tasks:
+    - name: rust-mutants
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: rust:1.88-slim-bookworm
+          name: rust-mutants
+          resources:
+            requests:
+              cpu: 800m
+              memory: 2Gi
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+              git make pkg-config libssl-dev libpq-dev build-essential jq curl >/dev/null
+
+            echo "==> installing cargo-mutants (cold ~2 min)"
+            cargo install --locked cargo-mutants
+
+            TIMEOUT="${MUTANTS_TIMEOUT:-300}"
+            BASELINE_FLAG=""
+            if [ "${MUTANTS_BASELINE:-}" = "skip" ]; then
+              BASELINE_FLAG="--baseline=skip"
+            fi
+            DIFF_FLAG=""
+            if [ "${MUTANTS_DIFF_ONLY:-false}" = "true" ] && [ -n "${PULL_NUMBER:-}" ]; then
+              # Use git to compute the PR diff against the merge base, feed
+              # to cargo-mutants which only mutates files in the diff.
+              echo "==> diff-only mode: targeting only changed files"
+              git fetch origin main
+              git diff --name-only origin/main...HEAD > /tmp/mutants.diff
+              DIFF_FLAG="--in-diff /tmp/mutants.diff"
+            fi
+
+            echo "==> cargo mutants --timeout=${TIMEOUT} ${BASELINE_FLAG} ${DIFF_FLAG}"
+            # --no-shuffle so output is deterministic across runs (easier to
+            # diagnose surviving mutations against historical reports).
+            # --json puts machine-readable results in mutants.out/mutants.json.
+            cargo mutants \
+              --timeout="${TIMEOUT}" \
+              --no-shuffle \
+              --json \
+              ${BASELINE_FLAG} \
+              ${DIFF_FLAG} \
+              || MUTANTS_EXIT=$?
+
+            # Parse mutants.out/mutants.json for the headline numbers.
+            REPORT="mutants.out/mutants.json"
+            if [ ! -f "$REPORT" ]; then
+              echo "FAIL: cargo-mutants produced no report"
+              exit 1
+            fi
+
+            CAUGHT=$(jq -r '[.[] | select(.outcome == "Caught")] | length' "$REPORT")
+            MISSED=$(jq -r '[.[] | select(.outcome == "Missed")] | length' "$REPORT")
+            TIMEOUT_COUNT=$(jq -r '[.[] | select(.outcome == "Timeout")] | length' "$REPORT")
+            UNVIABLE=$(jq -r '[.[] | select(.outcome == "Unviable")] | length' "$REPORT")
+            TOTAL=$(jq -r '. | length' "$REPORT")
+
+            echo
+            echo "=== mutation testing summary ==="
+            echo "total=${TOTAL}  caught=${CAUGHT}  missed=${MISSED}  timeout=${TIMEOUT_COUNT}  unviable=${UNVIABLE}"
+
+            # Sticky PR comment with surviving mutations summary. Per-cluster
+            # marker so GCP and Azure don't clobber each other.
+            if [ -n "${GIT_TOKEN:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
+              CLUSTER_TAG="${CLUSTER_ID:-unknown}"
+              MARKER="<!-- leartech-mutants-${CLUSTER_TAG} -->"
+
+              ICON="white_check_mark"
+              VERDICT="PASS"
+              # Any missed mutations are signal — flag but don't fail by default.
+              if [ "$MISSED" -gt 0 ]; then
+                ICON="warning"
+                VERDICT="${MISSED} mutation(s) survived"
+              fi
+
+              # Top 5 surviving mutations with file:line + the mutation kind.
+              SURVIVORS=$(jq -r '
+                [.[] | select(.outcome == "Missed")]
+                | .[:5]
+                | map("| `\(.diff.filename // "?")` | `\(.diff.line // "?")` | \(.diff.replacement // .description // "?") |")
+                | .[]
+              ' "$REPORT")
+              [ -z "$SURVIVORS" ] && SURVIVORS="| — | — | no survivors |"
+
+              BODY=$(printf '%s\n' \
+                "$MARKER" \
+                "### :${ICON}: cargo-mutants \`[${CLUSTER_TAG}]\` — ${VERDICT}" \
+                "" \
+                "**Outcome counts**: caught=\`${CAUGHT}\` missed=\`${MISSED}\` timeout=\`${TIMEOUT_COUNT}\` unviable=\`${UNVIABLE}\` (total ${TOTAL})" \
+                "" \
+                "**Top surviving mutations** (gaps in test coverage):" \
+                "" \
+                "| File | Line | Mutation |" \
+                "|---|---|---|" \
+                "${SURVIVORS}" \
+                "" \
+                "_Posted by \`tasks/rust-mutants/pullrequest.yaml\`. This task does not block merges by default — wire as \`optional: true\` or behind a comment trigger._")
+
+              API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments?per_page=100"
+              AUTH="Authorization: token ${GIT_TOKEN}"
+              ACCEPT="Accept: application/vnd.github+json"
+
+              EXISTING_ID=$(curl -fsSL -H "$AUTH" -H "$ACCEPT" "$API" \
+                | jq -r --arg marker "$MARKER" '.[] | select(.body | startswith($marker)) | .id' \
+                | head -1)
+              PAYLOAD=$(jq -cn --arg body "$BODY" '{body: $body}')
+
+              if [ -n "$EXISTING_ID" ]; then
+                echo "==> updating existing mutants [$CLUSTER_TAG] comment $EXISTING_ID"
+                curl -fsSL -X PATCH -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" \
+                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${EXISTING_ID}" >/dev/null
+              else
+                echo "==> posting new mutants [$CLUSTER_TAG] comment"
+                curl -fsSL -X POST -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" "$API" >/dev/null
+              fi
+            else
+              echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR mutants comment"
+            fi
+
+            # Default: surviving mutations don't fail the task. Override with
+            # MUTANTS_FAIL_ON_SURVIVOR=true if you want strict gating once the
+            # baseline is established.
+            if [ "${MUTANTS_FAIL_ON_SURVIVOR:-false}" = "true" ] && [ "$MISSED" -gt 0 ]; then
+              echo "FAIL: ${MISSED} mutations survived (MUTANTS_FAIL_ON_SURVIVOR=true)"
+              exit 1
+            fi
+            echo "==> mutants complete"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 2h0m0s
+status: {}
