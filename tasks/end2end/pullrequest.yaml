@@ -101,7 +101,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: debian:12-slim
+        - image: debian:13-slim
           name: end2end
           resources: {}
           env:
