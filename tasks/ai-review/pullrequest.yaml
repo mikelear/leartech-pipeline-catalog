@@ -72,13 +72,37 @@ spec:
               value: "http://ollama.ai-inference.svc.cluster.local:11434"
             - name: CHROMADB_ENDPOINT
               value: "http://ai-inference-resources-chromadb.ai-inference.svc.cluster.local:8000"
+            # llama3.1:8b (not qwen2.5-coder:14b): on the 16GB T4 the 14B
+            # model OOMs at 32K context and caps ~16K, which is smaller than
+            # real PR diffs (#77 ~29K tokens) → silent truncation → score=1.
+            # The 8B model fits 32K, reads the whole diff, and scored the
+            # full #77 diff 90/PASS (bake-off + large-diff reproduction).
             - name: OLLAMA_MODEL
-              value: "qwen2.5-coder:14b"
+              value: "llama3.1:8b"
+            # Context window for the self-hosted reviewer. 32K fits the 8B
+            # model on the T4 and covers large diffs. The worker reads this
+            # (OLLAMA_NUM_CTX) and caps the diff to fit so ollama never
+            # silently truncates.
+            - name: OLLAMA_NUM_CTX
+              value: "32768"
             - name: CLUSTER_ID
               valueFrom:
                 configMapKeyRef:
                   name: ai-review-cluster-config
                   key: CLUSTER_ID
+            # Per-cluster toggle for the self-hosted (ollama) reviewer.
+            # Only clusters with an ML/GPU node pool run it. Set "true" in
+            # the ai-review-cluster-config ConfigMap on GPU clusters (az);
+            # leave "false"/unset elsewhere (gcp has no ai-inference GPU
+            # pool yet). Flip GCP's CM value to "true" when it gets ML
+            # nodes — no catalog change needed. `optional: true` so the
+            # key being absent defaults to disabled (handled in the script).
+            - name: OLLAMA_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: ai-review-cluster-config
+                  key: OLLAMA_ENABLED
+                  optional: true
                   optional: true
           script: |
             #!/bin/sh
@@ -134,8 +158,14 @@ spec:
 
             # Review with available LLMs (each call is tolerant of failures)
 
-            # Ollama (skip if not reachable — use Python since curl may not be in image)
-            if python3 -c "import httpx; httpx.get('$OLLAMA_ENDPOINT/api/tags', timeout=5)" 2>/dev/null; then
+            # Ollama (self-hosted reviewer) — only on clusters with a GPU/ML
+            # node pool (OLLAMA_ENABLED=true in ai-review-cluster-config). This
+            # explicit gate avoids a pointless 5s reachability probe on clusters
+            # without ML nodes (e.g. gcp). Reachability is still checked as a
+            # second guard in case the pod is briefly down.
+            if [ "$OLLAMA_ENABLED" != "true" ]; then
+              echo "Ollama reviewer disabled for this cluster (OLLAMA_ENABLED!=true), skipping"
+            elif python3 -c "import httpx; httpx.get('$OLLAMA_ENDPOINT/api/tags', timeout=5)" 2>/dev/null; then
               python3 /app/review.py \
                 --provider ollama \
                 --endpoint "$OLLAMA_ENDPOINT" \
@@ -153,7 +183,7 @@ spec:
               python3 /app/review.py \
                 --provider claude \
                 --endpoint "https://api.anthropic.com/v1/messages" \
-                --model "claude-sonnet-4-20250514" \
+                --model "claude-opus-4-8" \
                 --diff /tmp/diff.txt \
                 --rag-context /tmp/rag-context.txt \
                 --standards-dir /tmp/standards \
