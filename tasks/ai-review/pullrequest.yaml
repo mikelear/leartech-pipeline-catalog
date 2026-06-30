@@ -103,7 +103,6 @@ spec:
                   name: ai-review-cluster-config
                   key: OLLAMA_ENABLED
                   optional: true
-                  optional: true
           script: |
             #!/bin/sh
             set -e
