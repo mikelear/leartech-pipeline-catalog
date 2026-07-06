@@ -67,6 +67,19 @@ spec:
             echo "=== go test -race -coverprofile (scope=$SCOPE, threshold=$THRESHOLD%) ==="
             go test ./... -v -count=1 -race -coverpkg="$SCOPE" -coverprofile=cover.out
 
+            # Exclude generated files (mocks, protobufs, etc.) from coverage —
+            # generated code isn't hand-written and shouldn't count for or
+            # against the floor/delta. Detect via the Go convention header
+            # `// Code generated ... DO NOT EDIT.` and drop their profile lines.
+            strip_generated() {
+              local prof="$1" root="${2:-.}" gen
+              gen=$(cd "$root" && grep -rlE '^// Code generated .* DO NOT EDIT\.$' --include='*.go' . 2>/dev/null | sed 's#^\./##')
+              [ -z "$gen" ] && return 0
+              grep -vFf <(printf '%s\n' $gen) "$prof" > "${prof}.f" && mv "${prof}.f" "$prof"
+            }
+            strip_generated cover.out .
+            echo "(generated files excluded from coverage)"
+
             echo
             echo "=== per-function coverage ==="
             go tool cover -func=cover.out
@@ -122,6 +135,7 @@ spec:
               # no PR-added untracked files. Suppress output (failures are
               # treated as "no baseline" rather than blocking the gate).
               if (cd "$BASE_CLONE_DIR" && go test ./... -count=1 -coverpkg="$SCOPE" -coverprofile=cover-base.out) >/tmp/base-test.log 2>&1; then
+                strip_generated "${BASE_CLONE_DIR}/cover-base.out" "$BASE_CLONE_DIR"
                 BASE_TOTAL=$(go tool cover -func="${BASE_CLONE_DIR}/cover-base.out" 2>/dev/null | awk '/^total:/ {print $3}' | sed 's/%//')
               fi
               rm -rf "$BASE_CLONE_DIR"
