@@ -73,9 +73,15 @@ spec:
             # `// Code generated ... DO NOT EDIT.` and drop their profile lines.
             strip_generated() {
               local prof="$1" root="${2:-.}" gen
-              gen=$(cd "$root" && grep -rlE '^// Code generated .* DO NOT EDIT\.$' --include='*.go' . 2>/dev/null | sed 's#^\./##')
+              # `|| true`: grep exits 1 when there are NO generated files, which
+              # under `set -eo pipefail` would kill the whole script (it did —
+              # broke go-test for repos with no generated code). Never fail here.
+              gen=$(cd "$root" && { grep -rlE '^// Code generated .* DO NOT EDIT\.$' --include='*.go' . 2>/dev/null || true; } | sed 's#^\./##')
               [ -z "$gen" ] && return 0
-              grep -vFf <(printf '%s\n' $gen) "$prof" > "${prof}.f" && mv "${prof}.f" "$prof"
+              # Likewise, if the filter would empty the profile (degenerate), keep
+              # the original rather than crash or zero it out.
+              grep -vFf <(printf '%s\n' $gen) "$prof" > "${prof}.f" 2>/dev/null || true
+              if [ -s "${prof}.f" ]; then mv "${prof}.f" "$prof"; else rm -f "${prof}.f"; fi
             }
             strip_generated cover.out .
             echo "(generated files excluded from coverage)"
