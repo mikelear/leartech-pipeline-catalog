@@ -1,0 +1,93 @@
+# Go release orchestrator WITHOUT JX environment promotion.
+#
+# Identical to tasks/go/release.yaml but omits the final
+# `tasks/release/jx-promote.yaml` step (`jx promote --all`, which auto-deploys to
+# the jx-staging Environment). Use this for services that live in a DEDICATED
+# platform namespace and deploy via a direct helmfiles/<ns>/ release (image tag
+# bumped by Renovate), not JX environment promotion — e.g. leartech-ai-gateway.
+#
+# Still builds, tags (cluster-suffixed), publishes the helm chart, and cosign-signs
+# the image — only the environment promotion is dropped. See
+# ~/leartech/hub (ai-bus/ARCHITECTURE.md §8) for the rationale.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: release
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        - image: ghcr.io/mikelear/leartech-go-runtime:0.28.0
+          name: build-make-build
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            go mod download
+            [ -f Makefile ] && grep -q "^swag:" Makefile && make swag || true
+            go build -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o bin/server "${BUILD_TARGET:-./cmd/server}"
+        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+          name: build-container-build
+          resources: {}
+          script: |
+            #!/busybox/sh
+            source .jx/variables.sh
+            cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            /kaniko/executor $KANIKO_FLAGS \
+              --cache=true \
+              --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
+              --cache-ttl=168h \
+              --context=/workspace/source \
+              --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
+              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/promote-cluster-suffixed.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/helm-release.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/cosign-sign.yaml@main
+          name: ""
+          resources: {}
+        # NOTE: tasks/release/jx-promote.yaml is intentionally OMITTED here — no
+        # `jx promote --all` to jx-staging. Deploy is via helmfiles/ai-gateway/.
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}
