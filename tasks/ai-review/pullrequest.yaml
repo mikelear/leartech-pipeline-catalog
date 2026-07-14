@@ -69,8 +69,11 @@ spec:
             # S13: route every reviewer through leartech-ai-gateway. When both are
             # set, review() funnels all providers through the gateway's OpenAI seam
             # (metered + centrally controlled); unset → direct per-provider calls.
+            # NOTE the :8080 — the gateway Service listens on 8080, not 80. Without
+            # the explicit port the URL defaults to :80 (no listener) and every
+            # reviewer call hangs ~131s on a TCP connect timeout before failing.
             - name: AI_GATEWAY_URL
-              value: "http://leartech-ai-gateway.ai-gateway.svc"
+              value: "http://leartech-ai-gateway.ai-gateway.svc:8080"
             - name: AI_GATEWAY_API_KEY
               valueFrom:
                 secretKeyRef:
