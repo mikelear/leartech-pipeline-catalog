@@ -66,6 +66,17 @@ spec:
                   name: tekton-git
                   key: password
                   optional: true
+            # S13: route every reviewer through leartech-ai-gateway. When both are
+            # set, review() funnels all providers through the gateway's OpenAI seam
+            # (metered + centrally controlled); unset → direct per-provider calls.
+            - name: AI_GATEWAY_URL
+              value: "http://leartech-ai-gateway.ai-gateway.svc"
+            - name: AI_GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-review-api-keys
+                  key: AI_GATEWAY_API_KEY
+                  optional: true
             - name: CLASSIFIER_ENDPOINT
               value: "http://leartech-ai-classifier.jx-staging.svc.cluster.local:8080"
             - name: OLLAMA_ENDPOINT
