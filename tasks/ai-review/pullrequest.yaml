@@ -235,9 +235,26 @@ spec:
               echo "No AZURE_OPENAI_API_KEY/ENDPOINT, skipping"
             fi
 
+            # Codestral (5th reviewer — code-specialized, via LiteLLM egress through the
+            # gateway: gateway -> litellm -> Mistral). Gateway-only, no direct key; the
+            # --endpoint arg is a placeholder (review.py's gateway path uses AI_GATEWAY_URL).
+            # Added as a measured A/B — compare its scores vs the incumbents before keeping.
+            if [ -n "$AI_GATEWAY_API_KEY" ]; then
+              python3 /app/review.py \
+                --provider codestral \
+                --endpoint "$AI_GATEWAY_URL" \
+                --model "codestral" \
+                --diff /tmp/diff.txt \
+                --rag-context /tmp/rag-context.txt \
+                --standards-dir /tmp/standards \
+                --output /tmp/review-codestral.json || echo "Codestral review failed"
+            else
+              echo "No AI_GATEWAY_API_KEY, skipping Codestral"
+            fi
+
             # Collect only successfully created review files
             REVIEWS=""
-            for f in /tmp/review-ollama.json /tmp/review-claude.json /tmp/review-deepseek.json; do
+            for f in /tmp/review-ollama.json /tmp/review-claude.json /tmp/review-deepseek.json /tmp/review-codestral.json; do
               [ -f "$f" ] && REVIEWS="$REVIEWS $f"
             done
             REVIEWS=$(echo $REVIEWS | xargs)
