@@ -50,13 +50,13 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.50
           name: jx-variables
           resources: {}
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: python:3.13-slim
+        - image: python:3.14-slim
           name: build-python-test
           resources: {}
           script: |
@@ -68,7 +68,7 @@ spec:
             uv sync --dev --frozen --no-cache 2>/dev/null || uv sync --dev --no-cache
             uv run coverage run -m pytest -v
             uv run coverage report
-        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources: {}
           env:
