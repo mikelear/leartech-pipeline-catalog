@@ -21,7 +21,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.56
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.50
           name: orchestrate-scan
           resources:
             requests:
