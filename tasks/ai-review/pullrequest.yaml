@@ -117,27 +117,6 @@ spec:
                   name: ai-review-cluster-config
                   key: OLLAMA_ENABLED
                   optional: true
-            # reviewer-v2 config (read by the Go `reviewer` entrypoint): the
-            # config-driven reviewer set, the aggregation strategy (mechanical|judge|
-            # both), and the judge model. Per-cluster via ai-review-cluster-config.
-            - name: REVIEWERS
-              valueFrom:
-                configMapKeyRef:
-                  name: ai-review-cluster-config
-                  key: REVIEWERS
-                  optional: true
-            - name: AGGREGATION_STRATEGY
-              valueFrom:
-                configMapKeyRef:
-                  name: ai-review-cluster-config
-                  key: AGGREGATION_STRATEGY
-                  optional: true
-            - name: JUDGE_MODEL
-              valueFrom:
-                configMapKeyRef:
-                  name: ai-review-cluster-config
-                  key: JUDGE_MODEL
-                  optional: true
           script: |
             #!/bin/sh
             set -e
@@ -190,27 +169,109 @@ spec:
               --diff /tmp/diff.txt \
               --output /tmp/rag-context.txt || true
 
-            # Build the review prompt from the standards repo + diff (per-language
-            # standards selection — Python prep, reuses review.load_standards_dir).
-            # Writes /tmp/prompt/{system-prompt.txt,standards.txt,languages.json}.
-            python3 /app/build_prompt.py \
-              --diff /tmp/diff.txt \
-              --standards-dir /tmp/standards \
-              --out-dir /tmp/prompt || echo "WARNING: build_prompt failed (reviewer falls back to a generic prompt)"
+            # Review with available LLMs (each call is tolerant of failures)
 
-            # Run the config-driven reviewer set + mechanical aggregate + optional
-            # LLM judge — ONE Go entrypoint (reviewer-v2), all via the gateway,
-            # metered, with structured JSON logs. Replaces the former per-provider
-            # shell blocks + collect loop + aggregate.py. Which reviewers / strategy /
-            # judge come from ai-review-cluster-config (REVIEWERS / AGGREGATION_STRATEGY
-            # / JUDGE_MODEL); OLLAMA_ENABLED drops the self-hosted reviewer where
-            # there's no GPU. Writes the same post_review.py-compatible aggregate JSON.
-            reviewer \
+            # Ollama (self-hosted reviewer) — only on clusters with a GPU/ML
+            # node pool (OLLAMA_ENABLED=true in ai-review-cluster-config). This
+            # explicit gate avoids a pointless 5s reachability probe on clusters
+            # without ML nodes (e.g. gcp). Reachability is still checked as a
+            # second guard in case the pod is briefly down.
+            if [ "$OLLAMA_ENABLED" != "true" ]; then
+              echo "Ollama reviewer disabled for this cluster (OLLAMA_ENABLED!=true), skipping"
+            elif python3 -c "import httpx; httpx.get('$OLLAMA_ENDPOINT/api/tags', timeout=5)" 2>/dev/null; then
+              python3 /app/review.py \
+                --provider ollama \
+                --endpoint "$OLLAMA_ENDPOINT" \
+                --model "$OLLAMA_MODEL" \
+                --diff /tmp/diff.txt \
+                --rag-context /tmp/rag-context.txt \
+                --standards-dir /tmp/standards \
+                --output /tmp/review-ollama.json || echo "Ollama review failed"
+            else
+              echo "Ollama not reachable, skipping"
+            fi
+
+            # Claude
+            if [ -n "$CLAUDE_API_KEY" ]; then
+              python3 /app/review.py \
+                --provider claude \
+                --endpoint "https://api.anthropic.com/v1/messages" \
+                --model "claude-opus-4-8" \
+                --diff /tmp/diff.txt \
+                --rag-context /tmp/rag-context.txt \
+                --standards-dir /tmp/standards \
+                --output /tmp/review-claude.json || echo "Claude review failed"
+            else
+              echo "No CLAUDE_API_KEY, skipping"
+            fi
+
+            # DeepSeek
+            if [ -n "$DEEPSEEK_API_KEY" ]; then
+              python3 /app/review.py \
+                --provider deepseek \
+                --endpoint "https://api.deepseek.com/v1/chat/completions" \
+                --model "deepseek-chat" \
+                --diff /tmp/diff.txt \
+                --rag-context /tmp/rag-context.txt \
+                --standards-dir /tmp/standards \
+                --output /tmp/review-deepseek.json || echo "DeepSeek review failed"
+            else
+              echo "No DEEPSEEK_API_KEY, skipping"
+            fi
+
+            # Azure OpenAI (4th reviewer — leartech-dockerfiles PR #27)
+            # Endpoint argument is ignored by review.py for azure_openai (read from AZURE_OPENAI_ENDPOINT env);
+            # we pass a placeholder to satisfy --endpoint required arg.
+            if [ -n "$AZURE_OPENAI_API_KEY" ] && [ -n "$AZURE_OPENAI_ENDPOINT" ]; then
+              python3 /app/review.py \
+                --provider azure_openai \
+                --endpoint "$AZURE_OPENAI_ENDPOINT" \
+                --model "gpt-4o" \
+                --diff /tmp/diff.txt \
+                --rag-context /tmp/rag-context.txt \
+                --standards-dir /tmp/standards \
+                --output /tmp/review-azure-openai.json || echo "Azure OpenAI review failed"
+            else
+              echo "No AZURE_OPENAI_API_KEY/ENDPOINT, skipping"
+            fi
+
+            # Codestral (5th reviewer — code-specialized, via LiteLLM egress through the
+            # gateway: gateway -> litellm -> Mistral). Gateway-only, no direct key; the
+            # --endpoint arg is a placeholder (review.py's gateway path uses AI_GATEWAY_URL).
+            # Added as a measured A/B — compare its scores vs the incumbents before keeping.
+            if [ -n "$AI_GATEWAY_API_KEY" ]; then
+              python3 /app/review.py \
+                --provider codestral \
+                --endpoint "$AI_GATEWAY_URL" \
+                --model "codestral" \
+                --diff /tmp/diff.txt \
+                --rag-context /tmp/rag-context.txt \
+                --standards-dir /tmp/standards \
+                --output /tmp/review-codestral.json || echo "Codestral review failed"
+            else
+              echo "No AI_GATEWAY_API_KEY, skipping Codestral"
+            fi
+
+            # Collect only successfully created review files
+            REVIEWS=""
+            for f in /tmp/review-ollama.json /tmp/review-claude.json /tmp/review-deepseek.json /tmp/review-codestral.json; do
+              [ -f "$f" ] && REVIEWS="$REVIEWS $f"
+            done
+            REVIEWS=$(echo $REVIEWS | xargs)
+            REVIEW_COUNT=$(echo $REVIEWS | wc -w | tr -d ' ')
+            echo "Got $REVIEW_COUNT successful reviews"
+
+            if [ "$REVIEW_COUNT" -eq 0 ]; then
+              echo "No LLM reviews available, skipping"
+              exit 0
+            fi
+
+            # Aggregate (pass diff for hallucination validation)
+            REVIEW_LIST=$(echo $REVIEWS | tr ' ' ',')
+            python3 /app/aggregate.py \
+              --reviews "$REVIEW_LIST" \
+              --threshold "$REVIEW_COUNT" \
               --diff /tmp/diff.txt \
-              --system-prompt /tmp/prompt/system-prompt.txt \
-              --standards /tmp/prompt/standards.txt \
-              --languages /tmp/prompt/languages.json \
-              --rag-context /tmp/rag-context.txt \
               --output /tmp/aggregate-result.json
 
             # Inject classifier result into aggregate (advisory only).
