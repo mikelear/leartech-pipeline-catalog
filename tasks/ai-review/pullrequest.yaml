@@ -226,7 +226,8 @@ spec:
               --repo "$REPO_NAME" \
               --pr "$PULL_NUMBER" \
               --sha "$PULL_PULL_SHA" \
-              --result /tmp/aggregate-result.json
+              --result /tmp/aggregate-result.json \
+              --rag-context /tmp/rag-context.txt
 
             # Capture review data for training (always, not just on override)
             python3 /app/feedback.py \
