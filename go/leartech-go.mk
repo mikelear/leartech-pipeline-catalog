@@ -47,6 +47,20 @@
 #                          can't be inferred (offline, no remote) the delta
 #                          check no-ops cleanly — pass, not fail.
 
+# ── Shell (bash-required) ─────────────────────────────────────────────────
+#
+# Recipes below use bash-only features — `set -o pipefail` and `<(...)`
+# process substitution inside strip_generated. GNU make defaults SHELL to
+# /bin/sh which on Debian/Alpine is dash/ash and does NOT support either.
+# Without this override every consumer curl'ing this file and running
+# `make -f leartech-go.mk test-coverage` in a debian-slim / golang:1.26 /
+# alpine base image hits `Syntax error: "(" unexpected` at line 11 of the
+# test-coverage recipe. Setting SHELL here makes the mk self-contained —
+# no caller needs to know or pass SHELL=/bin/bash. Bash is present in
+# every image the Tekton go-lint/go-test tasks use (golangci-lint,
+# golang:1.26, alpine after `apk add bash`).
+SHELL := /bin/bash
+
 # ── Canonical toolchain versions ─────────────────────────────────────────
 GOLANGCI_VERSION ?= 2.12.2
 
