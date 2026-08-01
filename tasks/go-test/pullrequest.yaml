@@ -53,119 +53,70 @@ spec:
             #!/bin/bash
             set -eo pipefail
 
-            # Consumer-overridable via env:
-            #   COVERAGE_THRESHOLD     — minimum acceptable total coverage % (default 60)
-            #   COVERAGE_SCOPE         — go test packages for -coverpkg (default ./internal/...)
-            #   COVERAGE_DELTA_TOLERANCE — allow PR coverage to be at most this much
-            #                             below base-branch coverage (default 0.5%, absorbs
-            #                             measurement noise). Setting to a large value
-            #                             effectively disables the delta check.
+            # Self-contained: curl the golden mk file and delegate to
+            # `make test-coverage`. The mk owns go test invocation, the
+            # strip-generated filter, floor + delta-vs-base logic — one
+            # code path shared with the developer laptop (see
+            # go/leartech-go.mk::test-coverage).
+            #
+            # This task keeps ONLY the per-cluster PR sticky-comment
+            # posting, which needs the Tekton-injected GIT_TOKEN /
+            # PULL_NUMBER / CLUSTER_ID and belongs at the CI edge, not in
+            # the shared mk.
+            #
+            # Consumer-overridable via env (defaults mirror the mk):
+            #   COVERAGE_THRESHOLD     — minimum acceptable total coverage % (default 60.0)
+            #   COVERAGE_SCOPE         — go test -coverpkg scope (default ./internal/...)
+            #   COVERAGE_DELTA_TOLERANCE — allow PR coverage to drop at most this much
+            #                             below base-branch coverage (default 0.5%).
             THRESHOLD="${COVERAGE_THRESHOLD:-60.0}"
             SCOPE="${COVERAGE_SCOPE:-./internal/...}"
             DELTA_TOL="${COVERAGE_DELTA_TOLERANCE:-0.5}"
 
-            echo "=== go test -race -coverprofile (scope=$SCOPE, threshold=$THRESHOLD%) ==="
-            go test ./... -v -count=1 -race -coverpkg="$SCOPE" -coverprofile=cover.out
+            MK_URL="https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/leartech-go.mk"
+            echo "==> fetching golden mk from $MK_URL"
+            curl -fsSL -o /tmp/leartech-go.mk "$MK_URL"
 
-            # Exclude generated files (mocks, protobufs, etc.) from coverage —
-            # generated code isn't hand-written and shouldn't count for or
-            # against the floor/delta. Detect via the Go convention header
-            # `// Code generated ... DO NOT EDIT.` and drop their profile lines.
-            strip_generated() {
-              local prof="$1" root="${2:-.}" gen
-              # `|| true`: grep exits 1 when there are NO generated files, which
-              # under `set -eo pipefail` would kill the whole script (it did —
-              # broke go-test for repos with no generated code). Never fail here.
-              gen=$(cd "$root" && { grep -rlE '^// Code generated .* DO NOT EDIT\.$' --include='*.go' . 2>/dev/null || true; } | sed 's#^\./##')
-              [ -z "$gen" ] && return 0
-              # Likewise, if the filter would empty the profile (degenerate), keep
-              # the original rather than crash or zero it out.
-              grep -vFf <(printf '%s\n' $gen) "$prof" > "${prof}.f" 2>/dev/null || true
-              if [ -s "${prof}.f" ]; then mv "${prof}.f" "$prof"; else rm -f "${prof}.f"; fi
-            }
-            strip_generated cover.out .
-            echo "(generated files excluded from coverage)"
+            # Run test-coverage: writes cover.out, prints per-func summary,
+            # threshold verdict, and (when REPO_OWNER/REPO_NAME + network
+            # available) base-branch delta. Preserve exit code — make exits
+            # non-zero on floor breach or delta regression.
+            set +e
+            make -f /tmp/leartech-go.mk test-coverage \
+              COVERAGE_THRESHOLD="$THRESHOLD" \
+              COVERAGE_SCOPE="$SCOPE" \
+              COVERAGE_DELTA_TOLERANCE="$DELTA_TOL" \
+              2>&1 | tee /tmp/test-coverage.log
+            MAKE_RC=${PIPESTATUS[0]}
+            set -eo pipefail
 
-            echo
-            echo "=== per-function coverage ==="
-            go tool cover -func=cover.out
-
+            # ── Derive summary values for the sticky ──
+            # TOTAL + LOWEST come from cover.out (mk writes it in cwd).
+            # BASE_TOTAL / BASE_DELTA / BASE_STATUS are parsed back from
+            # the make log (mk emits a "base=X% pr=Y% delta=Z%" line or
+            # a "base-branch coverage unavailable" line).
             TOTAL=$(go tool cover -func=cover.out | awk '/^total:/ {print $3}' | sed 's/%//')
 
-            echo
-            echo "=== coverage summary ==="
-            echo "total=${TOTAL}%  threshold=${THRESHOLD}%"
-
-            STATUS="pass"
-            STATUS_REASON=""
-            if awk -v t="$TOTAL" -v th="$THRESHOLD" 'BEGIN { exit !(t < th) }'; then
-              STATUS="fail"
-              STATUS_REASON="below floor ${THRESHOLD}%"
-            fi
-
-            # ── delta-coverage check: PR coverage must not drop vs base branch ──
-            # Without this, the floor check is satisfied as long as overall
-            # coverage stays above THRESHOLD — so a PR can add 100 lines of
-            # untested code (dragging coverage down) and still pass while the
-            # tested code keeps the average up. The delta check enforces
-            # "new code ships with tests" at the gate.
-            #
-            # PULL_BASE_REF is the base branch the PR targets (Tekton injects
-            # via Lighthouse env vars). Default 'main' for safety.
-            BASE_REF="${PULL_BASE_REF:-main}"
             BASE_TOTAL=""
             BASE_DELTA=""
-            BASE_STATUS=""
-
-            echo
-            echo "=== delta-coverage check vs origin/${BASE_REF} ==="
-            # Use a SEPARATE clone of base for the baseline test run.
-            # The earlier approach (git checkout origin/BASE_REF -- . in
-            # the same workspace) doesn't remove UNTRACKED files added by
-            # the PR — so newly-added _test.go files stayed in the working
-            # tree during the "base" go test, inflating base coverage to
-            # match PR coverage and producing a misleading 0.00% delta.
-            # Verified 2026-05-15 on canary PR#25: PR added tests that
-            # raised coverage from 44.9% → 57.7%, but the gate reported
-            # base=57.7% pr=57.7% delta=0.00% because base test inherited
-            # the PR's untracked test file.
-            # Portable mktemp: `mktemp -d -t prefix-XXX` is valid on
-            # BSD/macOS but GNU coreutils (Linux) rejects it with
-            # "too many templates". Catalog container is Linux
-            # (golang:1.26) so use the explicit-path form which works
-            # identically on both systems.
-            BASE_CLONE_DIR=$(mktemp -d /tmp/go-test-base-XXXXXX)
-            REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
-            if git clone --depth=1 --branch="${BASE_REF}" --quiet "$REPO_URL" "$BASE_CLONE_DIR" 2>/dev/null; then
-              # Run tests in the fresh clone — pristine base content with
-              # no PR-added untracked files. Suppress output (failures are
-              # treated as "no baseline" rather than blocking the gate).
-              if (cd "$BASE_CLONE_DIR" && go test ./... -count=1 -coverpkg="$SCOPE" -coverprofile=cover-base.out) >/tmp/base-test.log 2>&1; then
-                strip_generated "${BASE_CLONE_DIR}/cover-base.out" "$BASE_CLONE_DIR"
-                BASE_TOTAL=$(go tool cover -func="${BASE_CLONE_DIR}/cover-base.out" 2>/dev/null | awk '/^total:/ {print $3}' | sed 's/%//')
-              fi
-              rm -rf "$BASE_CLONE_DIR"
-            fi
-
-            if [ -n "$BASE_TOTAL" ]; then
-              BASE_DELTA=$(awk -v pr="$TOTAL" -v base="$BASE_TOTAL" 'BEGIN {printf "%.2f", pr - base}')
-              echo "base=${BASE_TOTAL}%  pr=${TOTAL}%  delta=${BASE_DELTA}%  tolerance=-${DELTA_TOL}%"
-              # Fail iff delta < -tolerance (i.e. coverage dropped beyond noise).
-              if awk -v d="$BASE_DELTA" -v tol="$DELTA_TOL" 'BEGIN { exit !(d < -tol) }'; then
-                STATUS="fail"
-                STATUS_REASON="${STATUS_REASON:+$STATUS_REASON; }coverage dropped ${BASE_DELTA}% vs origin/${BASE_REF} (tolerance -${DELTA_TOL}%)"
+            BASE_STATUS="UNAVAILABLE"
+            if grep -q '^base=' /tmp/test-coverage.log; then
+              BASE_LINE=$(grep -m1 '^base=' /tmp/test-coverage.log)
+              BASE_TOTAL=$(printf '%s' "$BASE_LINE" | sed -E 's/^base=([0-9.]+)%.*/\1/')
+              BASE_DELTA=$(printf '%s' "$BASE_LINE" | sed -E 's/.*delta=(-?[0-9.]+)%.*/\1/')
+              if grep -q 'coverage dropped' /tmp/test-coverage.log; then
                 BASE_STATUS="REGRESSED"
               else
                 BASE_STATUS="OK"
               fi
-            else
-              echo "base-branch coverage unavailable (new repo, base test failure, or fetch denied); skipping delta check"
-              BASE_STATUS="UNAVAILABLE"
             fi
 
-            # Build PR sticky comment. Per-cluster marker
-            # <!-- leartech-coverage-<cluster> --> so GCP and Azure
-            # coexist instead of clobbering each other (mirrors the
+            STATUS="pass"
+            if [ "$MAKE_RC" -ne 0 ]; then STATUS="fail"; fi
+
+            # ── PR sticky comment (per-cluster) ──
+            # Per-cluster marker <!-- leartech-coverage-<cluster> --> so GCP
+            # and Azure coexist instead of clobbering each other (mirrors
             # security-scan + ai-review conventions).
             if [ -n "${GIT_TOKEN:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
               apt-get update -qq && apt-get install -y -qq --no-install-recommends jq curl >/dev/null
@@ -189,15 +140,7 @@ spec:
                 | head -5)
               [ -z "$LOWEST" ] && LOWEST="| — | — | all functions ≥ 100% |"
 
-              # Build body via printf rather than HEREDOC — YAML `script: |`
-              # treats any line with less indentation than the first content
-              # line as the end of the block, so an un-indented heredoc body
-              # silently truncates the script at the catalog-parse layer
-              # (Lighthouse then skips creating the LighthouseJob — seen
-              # 2026-04-17 on PR #4 where the `test` trigger never fired).
-              # Build a per-cluster delta line so the engineer can see
-              # base/PR/delta at a glance. "UNAVAILABLE" when base branch
-              # tests couldn't be run (new repo, etc.).
+              BASE_REF="${PULL_BASE_REF:-main}"
               if [ "$BASE_STATUS" = "UNAVAILABLE" ]; then
                 DELTA_LINE="_Delta vs \`${BASE_REF}\`: unavailable (couldn't fetch/run baseline)_"
               elif [ "$BASE_STATUS" = "REGRESSED" ]; then
@@ -206,6 +149,12 @@ spec:
                 DELTA_LINE=":information_source: Delta vs \`${BASE_REF}\`: ${BASE_TOTAL}% → ${TOTAL}% (\`${BASE_DELTA}%\`)"
               fi
 
+              # Build body via printf rather than HEREDOC — YAML `script: |`
+              # treats any line with less indentation than the first content
+              # line as the end of the block, so an un-indented heredoc body
+              # silently truncates the script at the catalog-parse layer
+              # (Lighthouse then skips creating the LighthouseJob — seen
+              # 2026-04-17 on PR #4 where the `test` trigger never fired).
               BODY=$(printf '%s\n' \
                 "$MARKER" \
                 "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) \`[${CLUSTER_TAG}]\` — ${VERDICT}" \
@@ -220,7 +169,7 @@ spec:
                 "|---|---|---|" \
                 "${LOWEST}" \
                 "" \
-                "_Posted by \`tasks/go-test/pullrequest.yaml\`._")
+                "_Posted by \`tasks/go-test/pullrequest.yaml\` (delegates to \`go/leartech-go.mk::test-coverage\`)._")
 
               # ?per_page=100 so the marker search sees older comments on
               # long-lived PRs. Without it, GitHub defaults to 30 and the
@@ -248,11 +197,9 @@ spec:
               echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR coverage comment"
             fi
 
-            if [ "$STATUS" = "fail" ]; then
-              echo "FAIL: ${STATUS_REASON}"
-              exit 1
-            fi
-            echo "PASS: coverage ${TOTAL}% meets threshold ${THRESHOLD}% (delta=${BASE_DELTA:-n/a}% vs ${BASE_REF})"
+            # Propagate the make verdict — task fails iff the mk's test-coverage
+            # fails (floor breach or delta regression).
+            exit "$MAKE_RC"
   podTemplate:
     tolerations:
     - key: sku

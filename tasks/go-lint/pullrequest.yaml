@@ -28,55 +28,33 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        # Version pinned here MUST match GOLANGCI_VERSION in go/leartech-go.mk —
-        # that mk file is the single source of truth for the canonical
-        # toolchain version (see README "Canonical Go toolchain versions").
+        # Image tag pinned here is the ONE canonical golangci-lint version —
+        # it MUST equal GOLANGCI_VERSION in go/leartech-go.mk (the golden
+        # source). Bump the mk file first, then mirror the tag here in the
+        # same PR. Do not diverge — the delegated `make lint` invocation
+        # below will produce a linter set identical to what a developer
+        # runs locally with `make -f leartech-go.mk lint`.
         - image: golangci/golangci-lint:v2.12.2
           name: golangci-lint
           resources: {}
           script: |
             #!/bin/sh
             set -eu
-            # golangci-lint v2 (Go 1.24). v2 config format required in both
-            # the base config and per-repo overrides (version: "2", formatters
-            # section, linters.settings/exclusions).
-            apt-get update -qq && apt-get install -y -qq curl > /dev/null 2>&1
-            # yq for config merging (mikefarah/yq)
+            # Self-contained: curl the golden mk file and delegate. The mk
+            # file owns the merge semantics (yq base + local .golangci.yml),
+            # the timeout, and the golangci-lint invocation — CI and laptop
+            # go through the same code path (no drift possible).
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends curl make >/dev/null 2>&1
+            # yq is required by the mk's lint-config target (base←local merge).
             curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
             chmod +x /usr/local/bin/yq
 
-            # Centralised base config lives in leartech-pipeline-catalog.
-            # Per-repo .golangci.yml carries only overrides (typically just
-            # goimports.local-prefixes). yq deep-merges base ← local so local
-            # wins on any conflicts. Falls back to base-only if the repo
-            # hasn't added an override file.
-            BASE_URL="https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/.golangci.base.yml"
-            echo "==> fetching base config from $BASE_URL"
-            curl -fsSL -o /tmp/golangci.base.yml "$BASE_URL"
-            echo "==> base config fetched ($(wc -l < /tmp/golangci.base.yml) lines)"
+            MK_URL="https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/leartech-go.mk"
+            echo "==> fetching golden mk from $MK_URL"
+            curl -fsSL -o /tmp/leartech-go.mk "$MK_URL"
 
-            if [ -f .golangci.yml ]; then
-              echo "==> merging local .golangci.yml ($(wc -l < .golangci.yml) lines) onto base"
-              yq eval-all '. as $item ireduce ({}; . *+ $item)' /tmp/golangci.base.yml .golangci.yml > /tmp/golangci.merged.yml
-            else
-              echo "==> no local .golangci.yml; using base as-is"
-              cp /tmp/golangci.base.yml /tmp/golangci.merged.yml
-            fi
-            echo "==> merged config ($(wc -l < /tmp/golangci.merged.yml) lines):"
-            cat /tmp/golangci.merged.yml
-            echo "==> end merged config"
-
-            echo "==> go mod download"
-            go mod download
-
-            echo "==> golangci-lint run -v"
-            # --timeout 15m covers the package-loader phase. Azure builder
-            # nodes were hitting 10m on cold-cache builds (10m exact:
-            # arrivals-observer PR #2 saw 8m36s package-load + 2m49s
-            # linters = 10m + change). 15m gives margin without bloating
-            # the Tekton pod-level timeout (still 30m below).
-            golangci-lint run -v --timeout 15m --config /tmp/golangci.merged.yml ./...
-            echo "==> lint complete"
+            echo "==> make -f /tmp/leartech-go.mk lint"
+            make -f /tmp/leartech-go.mk lint
   podTemplate:
     tolerations:
     - key: sku
