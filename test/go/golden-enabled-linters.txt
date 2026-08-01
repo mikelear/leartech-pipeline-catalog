@@ -1,0 +1,12 @@
+errcheck
+gocritic
+gosec
+govet
+ineffassign
+misspell
+nolintlint
+prealloc
+revive
+staticcheck
+unconvert
+unused

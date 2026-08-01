@@ -27,6 +27,8 @@ help:
 	@echo "    test-internal    Run Nmap + egress test inside namespace"
 	@echo "    test-all         Run all scan tests sequentially"
 	@echo ""
+	@echo "    test-go-parity   Assert leartech-go.mk merge matches golden linter set"
+	@echo ""
 	@echo "    logs TASK=x      Tail logs (x = static, image, dynamic, external, internal)"
 	@echo "    clean            Delete all test pods"
 	@echo ""
@@ -115,6 +117,13 @@ test-all: test-static test-image test-external test-internal
 	@echo ""
 	@echo "=== All tests complete ==="
 
+# test-go-parity: pure shell + yq — no cluster required. Runs directly (not
+# via a taskrun) because it just diffs merged config against a golden snapshot.
+test-go-parity:
+	@echo ""
+	@echo "=== Go mk parity check ==="
+	@sh $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))/go/parity_test.sh
+
 clean-static:
 	@kubectl $(CONTEXT) delete pod static-scan-test -n $(NAMESPACE) --ignore-not-found=true 2>/dev/null
 
@@ -136,4 +145,4 @@ clean: clean-static clean-image clean-external clean-internal clean-dynamic
 logs:
 	kubectl $(CONTEXT) logs -n $(NAMESPACE) $(TASK)-scan-test -f
 
-.PHONY: help test-static test-image test-external test-internal test-dynamic test-all clean clean-static clean-image clean-external clean-internal clean-dynamic logs
+.PHONY: help test-static test-image test-external test-internal test-dynamic test-all test-go-parity clean clean-static clean-image clean-external clean-internal clean-dynamic logs

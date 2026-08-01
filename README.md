@@ -197,6 +197,86 @@ Push to main. Every PR will trigger all scans on both clusters. Results are post
 
 ---
 
+## Canonical Go toolchain versions
+
+Leartech Go services share a single source of truth for what CI runs — the
+Tekton tasks in `tasks/go-lint/` and `tasks/go-test/` — and a matching set of
+`make` targets in `go/leartech-go.mk` that a developer runs on their laptop.
+CI and local invoke IDENTICAL commands with IDENTICAL config. If they ever
+drift, this catalog is wrong.
+
+### The canonical version
+
+| Tool | Canonical version | Set in |
+|------|-------------------|--------|
+| `golangci-lint` | `2.12.2` | `go/leartech-go.mk` → `GOLANGCI_VERSION`; mirrored in `tasks/go-lint/pullrequest.yaml` step image `golangci/golangci-lint:v2.12.2` |
+
+To bump the linter version:
+
+1. Edit `GOLANGCI_VERSION` in `go/leartech-go.mk`.
+2. Update the step image tag in `tasks/go-lint/pullrequest.yaml` in the SAME PR.
+3. The parity test at `test/go/parity_test.sh` fails if a linter is added or
+   removed without an intentional update — the version bump itself doesn't
+   change the set, so no parity update is needed for a straight version bump.
+
+### Using `leartech-go.mk` in a consumer repo
+
+Two supported patterns, both equivalent from the CI perspective (same commands, same config):
+
+**Pattern A — one-shot `make -f`**
+
+```bash
+# In your Go service repo
+curl -fsSL https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/leartech-go.mk -o leartech-go.mk
+make -f leartech-go.mk lint          # curl base config + yq-merge + golangci-lint
+make -f leartech-go.mk test-coverage # go test -race -coverpkg=./internal/... + delta-vs-base
+make -f leartech-go.mk pre-push      # vet tidy-check build test-coverage lint vuln
+```
+
+**Pattern B — `include` from your Makefile**
+
+```make
+# Makefile in your Go service repo
+include leartech-go.mk
+
+# Repo-specific targets can go here; they don't collide with the canonical ones.
+```
+
+Then `make lint`, `make test-coverage`, `make pre-push` behave the same way.
+
+### Consumer-tunable knobs
+
+All variables in `leartech-go.mk` use `?=` so a repo can override before include:
+
+| Variable | Default | What it controls |
+|---|---|---|
+| `GOLANGCI_VERSION` | `2.12.2` | Displayed for `make -f leartech-go.mk help`; the tool version you should install locally |
+| `GOLANGCI_BASE_URL` | raw.githubusercontent.com/…/main/go/.golangci.base.yml | Where `lint-config` curls the base config from |
+| `GOLANGCI_BASE_FILE` | (unset) | Optional local path to the base config; when set + exists, used INSTEAD of curl (for dogfooding within this repo) |
+| `GOLANGCI_MERGED` | `.golangci.merged.yml` | Output path for the merged config |
+| `COVERAGE_SCOPE` | `./internal/...` | `go test -coverpkg` scope |
+| `COVERAGE_THRESHOLD` | `60.0` | Minimum acceptable total coverage % |
+| `COVERAGE_DELTA_TOLERANCE` | `0.5` | Max allowed drop vs base coverage in pp (absorbs noise) |
+| `PULL_BASE_REF` | `main` | Base branch for delta-vs-base check |
+
+The Tekton go-test task also reads these from env vars — set them via
+`env:` in the consumer repo's `.lighthouse/jenkins-x/pullrequest.yaml` and
+they flow through to both CI and local without duplication.
+
+### What `pre-push` runs
+
+`pre-push` is the local equivalent of "everything CI would fail you on before
+your PR opens":
+
+```
+vet → tidy-check → build → test-coverage → lint → vuln
+```
+
+Ordered cheap-first so a broken `go vet` fails in seconds instead of after
+the ~90s coverage run.
+
+---
+
 ## Testing
 
 There are two levels of testing, designed to avoid the slow push → PR → wait → check cycle.
