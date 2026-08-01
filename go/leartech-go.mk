@@ -202,6 +202,11 @@ vuln: ## Run govulncheck ./...
 # "delta check unavailable" line — never fails the local run for infra
 # reasons. Task behaviour is preserved in CI because Tekton always sets
 # REPO_OWNER / REPO_NAME / PULL_BASE_REF and has network to github.com.
+# test-coverage uses bash (process substitution + set -o pipefail); the go-test
+# image (golang:1.26) has bash. Target-specific so `lint` stays /bin/sh-safe
+# (golangci-lint image is alpine, no bash). Fixes "Syntax error: ( unexpected".
+test-coverage: SHELL := /bin/bash
+test-coverage: .SHELLFLAGS := -ec
 test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	@set -eo pipefail; \
 	SCOPE="$(COVERAGE_SCOPE)"; \
