@@ -28,7 +28,10 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: golangci/golangci-lint:v2.11.4
+        # Version pinned here MUST match GOLANGCI_VERSION in go/leartech-go.mk —
+        # that mk file is the single source of truth for the canonical
+        # toolchain version (see README "Canonical Go toolchain versions").
+        - image: golangci/golangci-lint:v2.12.2
           name: golangci-lint
           resources: {}
           script: |
