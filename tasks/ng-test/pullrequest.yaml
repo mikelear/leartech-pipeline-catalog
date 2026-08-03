@@ -48,7 +48,7 @@ spec:
         # blocks `apk add`. Staying on node:22-alpine (runs as root) keeps
         # the whole pipeline pattern consistent with every other catalog
         # task in this repo.
-        - image: node:22-alpine
+        - image: node:24-alpine
           name: ng-test
           resources:
             requests:
