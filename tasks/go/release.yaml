@@ -46,7 +46,12 @@ spec:
             jx gitops variables
         - image: ghcr.io/mikelear/leartech-go-runtime:0.28.0
           name: build-make-build
-          resources: {}
+          # `go build` of a real module (type-check + codegen) exceeds the inherited
+          # 256Mi under node pressure. Reserve headroom to avoid eviction flakes.
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
           script: |
             #!/bin/sh
             set -e

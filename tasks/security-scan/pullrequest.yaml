@@ -13,9 +13,11 @@ spec:
         stepTemplate:
           name: ""
           resources:
+            # gosec/trivy source scan walks the whole tree; 512Mi under-reserves the
+            # pod under node pressure. Bump for reliability (fleet-wide flake fix).
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 500m
+              memory: 1Gi
           workingDir: /workspace/source
         steps:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream

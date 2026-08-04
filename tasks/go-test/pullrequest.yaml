@@ -39,9 +39,13 @@ spec:
         - image: golang:1.26
           name: go-test
           resources:
+            # `go test ./... -race` + envtest (real apiserver+etcd) is memory-heavy;
+            # 512Mi under-reserved the pod (Burstable) → evicted/OOM under node
+            # pressure = intermittent single-cluster test flakes. Reserve for the
+            # -race+envtest worst case so the pod is scheduled with real headroom.
             requests:
-              cpu: 400m
-              memory: 512Mi
+              cpu: "1"
+              memory: 2Gi
           env:
             - name: GIT_TOKEN
               valueFrom:

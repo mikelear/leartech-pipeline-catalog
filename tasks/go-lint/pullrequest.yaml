@@ -36,7 +36,13 @@ spec:
         # runs locally with `make -f leartech-go.mk lint`.
         - image: golangci/golangci-lint:v2.12.2
           name: golangci-lint
-          resources: {}
+          # golangci-lint loads the whole type-checked module graph — memory-heavy
+          # on real modules; the inherited 512Mi under-reserves it (Burstable pod
+          # evicted/OOM under node pressure = lint flakes). Reserve real headroom.
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
           script: |
             #!/bin/sh
             set -eu

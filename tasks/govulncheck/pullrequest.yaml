@@ -31,9 +31,11 @@ spec:
         - image: golang:1.26-alpine
           name: govulncheck
           resources:
+            # govulncheck loads the full module + vuln DB; 512Mi is borderline and
+            # under-reserves the pod under node pressure. Bump for reliability.
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: 500m
+              memory: 1Gi
           env:
           # Honour the `toolchain` directive in go.mod (e.g. toolchain go1.26.3)
           # by auto-downloading the requested version. AZ + GCP builders
