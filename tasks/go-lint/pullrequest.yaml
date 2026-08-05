@@ -38,9 +38,14 @@ spec:
           name: golangci-lint
           # golangci-lint loads the whole type-checked module graph — memory-heavy
           # on real modules; the inherited 512Mi under-reserves it (Burstable pod
-          # evicted/OOM under node pressure = lint flakes). Reserve real headroom.
+          # evicted/OOM under node pressure = lint flakes). Reserve real headroom,
+          # with matching limits == requests → Guaranteed QoS (evicted absolute-last;
+          # a request-only Burstable pod is still evicted under node pressure).
           resources:
             requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
               cpu: "1"
               memory: 2Gi
           script: |
