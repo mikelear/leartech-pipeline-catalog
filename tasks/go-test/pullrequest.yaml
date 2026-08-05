@@ -43,7 +43,13 @@ spec:
             # 512Mi under-reserved the pod (Burstable) → evicted/OOM under node
             # pressure = intermittent single-cluster test flakes. Reserve for the
             # -race+envtest worst case so the pod is scheduled with real headroom.
+            # Matching limits == requests → Guaranteed QoS: a request-only
+            # (Burstable) pod is still evicted under node pressure (the residual
+            # single-cluster test flake); Guaranteed pods are evicted absolute-last.
             requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
               cpu: "1"
               memory: 2Gi
           env:
