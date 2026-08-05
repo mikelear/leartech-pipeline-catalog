@@ -98,7 +98,14 @@ spec:
               COVERAGE_DELTA_TOLERANCE="$DELTA_TOL" \
               2>&1 | tee /tmp/test-coverage.log
             MAKE_RC=${PIPESTATUS[0]}
-            set -eo pipefail
+            # Everything below is best-effort OBSERVABILITY (coverage sticky
+            # comment) — the gate verdict is MAKE_RC (test + coverage) alone,
+            # emitted via `exit "$MAKE_RC"` at the end. Deliberately stay under
+            # `set +e` (NOT `set -eo pipefail`): the comment path pipes
+            # `curl | jq | head -1`, and `head` closing early sends SIGPIPE to
+            # jq/curl → 141 under pipefail, which previously failed the whole
+            # task even though every test PASSED (green-recorded-as-red). A
+            # cosmetic comment must never override a green verdict.
 
             # ── Derive summary values for the sticky ──
             # TOTAL + LOWEST come from cover.out (mk writes it in cwd).
