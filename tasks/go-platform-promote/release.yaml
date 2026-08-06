@@ -1,0 +1,139 @@
+# Go release orchestrator for OWN-NAMESPACE platform services (ai-gateway,
+# code-audit, litellm, …). Identical to tasks/go/release.yaml EXCEPT the final
+# `jx-promote` step (which only promotes to the jx-staging environment) is replaced
+# by a `platform-promote` step that opens a GitOps PR bumping the pinned chart in the
+# service's own platform helmfile (helmfiles/<ns>/helmfile.yaml). Same automated-PR +
+# gate/verify flow as jx-promote, but namespace-aware.
+#
+# The consumer sets these env in its .lighthouse/jenkins-x/release.yaml stepTemplate:
+#   PLATFORM_PROMOTE_NAMESPACE  — target namespace (e.g. ai-gateway)          [required]
+#   PLATFORM_PROMOTE_HELMFILE   — helmfiles/<ns>/helmfile.yaml                [required]
+#   PLATFORM_PROMOTE_CHART      — pinned chart name (default: $APP_NAME)      [optional]
+#   PLATFORM_PROMOTE_MIGRATION  — "true" → PR carries a migration caution note[optional]
+# See the "own-namespace platform services" standard in ~/leartech/hub.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: release
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          # Kubernetes schedules the pod on SUM of all step containers'
+          # requests (Tekton runs steps sequentially but all containers
+          # exist up-front). Modest per-step requests keep the pod
+          # fitting on standard AKS/GKE nodes.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        - image: ghcr.io/mikelear/leartech-go-runtime:0.28.0
+          name: build-make-build
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            go mod download
+            [ -f Makefile ] && grep -q "^swag:" Makefile && make swag || true
+            go build -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o bin/server "${BUILD_TARGET:-./cmd/server}"
+        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+          name: build-container-build
+          resources: {}
+          script: |
+            #!/busybox/sh
+            source .jx/variables.sh
+            cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            # Layer cache: --cache=true reuses identical layers across builds,
+            # stored in $PUSH_CONTAINER_REGISTRY/.../kaniko-cache. Major speedup
+            # (~50% on incremental builds) since base-image + apk/apt + COPY of
+            # vendored deps stay cached between PRs. --cache-ttl=168h (7d) so
+            # layers eventually re-validate. See ~/leartech/hub/shared-rules/build-speed.md.
+            /kaniko/executor $KANIKO_FLAGS \
+              --cache=true \
+              --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
+              --cache-ttl=168h \
+              --context=/workspace/source \
+              --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
+              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/promote-cluster-suffixed.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/helm-release.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/cosign-sign.yaml@main
+          name: ""
+          resources: {}
+        # Platform-namespace promote (replaces jx-promote). Opens a GitOps PR
+        # bumping the pin in the service's own helmfile, per-cluster (CLUSTER_ID).
+        - image: ghcr.io/mikelear/platform-promote:latest
+          name: platform-promote
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          script: |
+            #!/bin/sh
+            set -e
+            source .jx/variables.sh
+            if [ -z "$PLATFORM_PROMOTE_NAMESPACE" ] || [ -z "$PLATFORM_PROMOTE_HELMFILE" ]; then
+              echo "platform-promote: PLATFORM_PROMOTE_NAMESPACE and PLATFORM_PROMOTE_HELMFILE must be set by the consumer release.yaml" >&2
+              exit 1
+            fi
+            MIG=""
+            [ "$PLATFORM_PROMOTE_MIGRATION" = "true" ] && MIG="--migration"
+            platform-promote \
+              --chart "${PLATFORM_PROMOTE_CHART:-$APP_NAME}" \
+              --namespace "$PLATFORM_PROMOTE_NAMESPACE" \
+              --helmfile "$PLATFORM_PROMOTE_HELMFILE" \
+              --version "$VERSION" \
+              --cluster "$CLUSTER_ID" \
+              --owner "${REPO_OWNER:-mikelear}" \
+              $MIG \
+              --release-url "https://github.com/${REPO_OWNER:-mikelear}/${REPO_NAME}/releases/tag/v${VERSION}-${CLUSTER_ID}"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}
