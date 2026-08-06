@@ -42,7 +42,10 @@ spec:
             jx gitops variables
         - image: node:22-alpine
           name: build-npm-install
-          resources: {}
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
           script: |
             #!/bin/sh
             set -e
@@ -55,7 +58,10 @@ spec:
             npm ci --legacy-peer-deps || npm install --legacy-peer-deps
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
-          resources: {}
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
           script: |
             #!/busybox/sh
             source .jx/variables.sh

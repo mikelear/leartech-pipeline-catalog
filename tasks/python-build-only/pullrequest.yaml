@@ -100,7 +100,10 @@ spec:
             jx gitops variables
         - image: python:3.13-slim
           name: build-python-test
-          resources: {}
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
           # `set -e` is mandatory — without it, a non-zero exit from
           # ruff/pytest is swallowed by the shell and the step reports
           # success even when the tests failed. Captured as memory
@@ -123,7 +126,10 @@ spec:
             uv run coverage report
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
-          resources: {}
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
           # PR-CI kaniko pattern: no ghcr.io auth. The consumer Dockerfile
           # must use a public base image (e.g. python:3.13-slim) so kaniko
           # can pull without credentials. If the consumer's Dockerfile uses

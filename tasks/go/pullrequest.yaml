@@ -63,7 +63,10 @@ spec:
             go build -trimpath -ldflags="-s -w" -o bin/server "${BUILD_TARGET:-./cmd/server}"
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
-          resources: {}
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
           script: |
             #!/busybox/sh
             source .jx/variables.sh
