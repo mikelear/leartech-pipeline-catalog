@@ -50,7 +50,10 @@ spec:
             jx gitops variables
         - image: ghcr.io/mikelear/leartech-go-runtime:0.28.0
           name: build-make-build
-          resources: {}
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
           script: |
             #!/bin/sh
             set -e
@@ -59,7 +62,10 @@ spec:
             go build -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o bin/server "${BUILD_TARGET:-./cmd/server}"
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
-          resources: {}
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
           script: |
             #!/busybox/sh
             source .jx/variables.sh
