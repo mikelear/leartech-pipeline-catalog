@@ -58,7 +58,10 @@ spec:
             jx gitops variables
         - image: python:3.13-slim
           name: build-python-test
-          resources: {}
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
           script: |
             #!/bin/sh
             set -e
@@ -70,7 +73,10 @@ spec:
             uv run coverage report
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
-          resources: {}
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
           env:
             - name: GIT_TOKEN
               valueFrom:

@@ -59,7 +59,10 @@ spec:
             cargo build --locked ${BUILD_TARGET:+--package $BUILD_TARGET}
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
-          resources: {}
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
           env:
             # GIT_TOKEN gets passed as a kaniko build-arg so the Dockerfile
             # can configure git credentials inside the builder stage to

@@ -89,7 +89,10 @@ spec:
             [ -f Makefile ] && grep -q "^openapi:" Makefile && make openapi || true
         - image: gcr.io/kaniko-project/executor:v1.9.1-debug
           name: build-container-build
-          resources: {}
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
           env:
             # Pass GitHub Packages credentials into the build context so the
             # Dockerfile's `ARG GITHUB_USER` / `ARG GITHUB_TOKEN` resolve to
