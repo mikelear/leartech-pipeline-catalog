@@ -128,3 +128,20 @@ fi
 echo "PASS: merged linter set + formatter set match golden snapshots"
 echo "      linters:    $(wc -l < "$GOLDEN_LINTERS") enabled"
 echo "      formatters: $(wc -l < "$GOLDEN_FORMATTERS") enabled"
+
+# ── Coverage default-pair parity ────────────────────────────────────────
+# test-coverage detects overrides by comparing each COVERAGE_* against a
+# *_DEFAULT twin. If a twin drifts from its `?=` default the detector silently
+# mis-reports, so assert the pairs agree.
+echo "==> parity_test.sh: coverage knob defaults vs their _DEFAULT twins"
+MK="$(dirname "$0")/../../go/leartech-go.mk"
+parity_fail=0
+for KNOB in COVERAGE_SCOPE COVERAGE_THRESHOLD COVERAGE_DELTA_TOLERANCE; do
+  live=$(grep -E "^${KNOB} \?= " "$MK" | head -1 | sed "s/^${KNOB} ?= //")
+  twin=$(grep -E "^${KNOB}_DEFAULT := " "$MK" | head -1 | sed "s/^${KNOB}_DEFAULT := //")
+  if [ "$live" != "$twin" ]; then
+    echo "FAIL: ${KNOB} default '${live}' != ${KNOB}_DEFAULT '${twin}' — override detection would misreport"
+    parity_fail=1
+  fi
+done
+[ "$parity_fail" -eq 0 ] && echo "PASS: coverage knob defaults match their _DEFAULT twins" || exit 1

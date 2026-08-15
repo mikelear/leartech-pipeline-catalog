@@ -56,9 +56,26 @@ GOLANGCI_BASE_FILE ?=
 GOLANGCI_MERGED ?= .golangci.merged.yml
 
 # ── Coverage knobs (mirror tasks/go-test/pullrequest.yaml defaults) ──────
+#
+# The *_DEFAULT copies below are the SAME literals, held as non-overridable
+# `:=` so `test-coverage` can detect when a caller has changed a knob and warn
+# that the run no longer matches CI. Keep each pair in lockstep — the parity
+# test asserts they agree, so a drift here fails the catalog's own gate.
+#
+# WHY THIS EXISTS: on 2026-08-15 an agent correctly curled this golden mk and
+# invoked it directly (as pre-push-validation mandates) but ran it with
+# COVERAGE_DELTA_TOLERANCE=5.0 — ten times the pinned 0.5. Its pre-push check
+# went green, CI failed the delta gate, and go-test burned three cycles before
+# anyone noticed the local run had never been equivalent. Overriding the pinned
+# values silently converts "verified against the golden mk" into "verified
+# against something else that looks like it".
 COVERAGE_SCOPE ?= ./internal/...
 COVERAGE_THRESHOLD ?= 60.0
 COVERAGE_DELTA_TOLERANCE ?= 0.5
+
+COVERAGE_SCOPE_DEFAULT := ./internal/...
+COVERAGE_THRESHOLD_DEFAULT := 60.0
+COVERAGE_DELTA_TOLERANCE_DEFAULT := 0.5
 
 # ── Delta baseline knobs ─────────────────────────────────────────────────
 PULL_BASE_REF ?= main
@@ -321,6 +338,30 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	SCOPE="$(COVERAGE_SCOPE)"; \
 	THRESHOLD="$(COVERAGE_THRESHOLD)"; \
 	DELTA_TOL="$(COVERAGE_DELTA_TOLERANCE)"; \
+	OVERRIDDEN=""; \
+	[ "$$SCOPE"     != "$(COVERAGE_SCOPE_DEFAULT)" ]     && OVERRIDDEN="$$OVERRIDDEN COVERAGE_SCOPE=$$SCOPE(default:$(COVERAGE_SCOPE_DEFAULT))"; \
+	[ "$$THRESHOLD" != "$(COVERAGE_THRESHOLD_DEFAULT)" ] && OVERRIDDEN="$$OVERRIDDEN COVERAGE_THRESHOLD=$$THRESHOLD(default:$(COVERAGE_THRESHOLD_DEFAULT))"; \
+	[ "$$DELTA_TOL" != "$(COVERAGE_DELTA_TOLERANCE_DEFAULT)" ] && OVERRIDDEN="$$OVERRIDDEN COVERAGE_DELTA_TOLERANCE=$$DELTA_TOL(default:$(COVERAGE_DELTA_TOLERANCE_DEFAULT))"; \
+	if [ -n "$$OVERRIDDEN" ]; then \
+	  echo ""; \
+	  echo "################################################################"; \
+	  echo "## ⚠  COVERAGE GATE OVERRIDDEN — THIS RUN DOES NOT MATCH CI    ##"; \
+	  echo "################################################################"; \
+	  echo "##  overridden:$$OVERRIDDEN"; \
+	  echo "##"; \
+	  echo "##  The pinned defaults exist so a local run is BY CONSTRUCTION"; \
+	  echo "##  identical to CI. Overriding them makes a green local run"; \
+	  echo "##  meaningless as a pre-push signal — CI still enforces the"; \
+	  echo "##  defaults and will fail on exactly what you relaxed."; \
+	  echo "##"; \
+	  echo "##  IF YOU ARE AN AGENT: do NOT override these to get green."; \
+	  echo "##  Re-run with no COVERAGE_* set. If a default is genuinely"; \
+	  echo "##  wrong that is a pipeline-catalog change, not a local flag."; \
+	  echo "##  Record any override in the PR description — a reviewer"; \
+	  echo "##  cannot otherwise tell your pre-push check was weakened."; \
+	  echo "################################################################"; \
+	  echo ""; \
+	fi; \
 	echo "=== go test -race -coverprofile (scope=$$SCOPE, threshold=$$THRESHOLD%) ==="; \
 	go test ./... -v -count=1 -race -coverpkg="$$SCOPE" -coverprofile=cover.out; \
 	strip_generated() { \
