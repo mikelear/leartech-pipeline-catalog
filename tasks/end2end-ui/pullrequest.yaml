@@ -125,12 +125,8 @@ spec:
             echo "    APP_NAME=$APP_NAME  PULL_NUMBER=$PULL_NUMBER  CLUSTER_ID=${CLUSTER_ID:-}"
 
             # ── Helper: post/update sticky PR comment ───────────────────
-            post_sticky() {
+            post_sticky_once() {
               local body="$1"
-              if [ -z "$GIT_TOKEN" ] || [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ] || [ -z "$PULL_NUMBER" ]; then
-                echo "(skipping PR comment — missing env)"
-                return
-              fi
               local api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments"
               local existing
               existing=$(curl -sS -H "Authorization: token ${GIT_TOKEN}" "$api" \
@@ -147,6 +143,28 @@ spec:
                   -d "$(jq -n --arg b "$body" '{body: $b}')" "$api" >/dev/null
                 echo "==> posting new end2end-ui [$CLUSTER_TAG] comment"
               fi
+            }
+
+            # A PR comment is a notification, not a verdict. Delivery must never decide
+            # this check: the curl|jq pipe aborts under pipefail when GitHub returns an
+            # error object instead of an array (HTTP 503 on 2026-08-17).
+            post_sticky() {
+              local body="$1"
+              if [ -z "$GIT_TOKEN" ] || [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ] || [ -z "$PULL_NUMBER" ]; then
+                echo "(skipping PR comment — missing env)"
+                return 0
+              fi
+              local attempt
+              for attempt in 1 2 3; do
+                if post_sticky_once "$body"; then
+                  return 0
+                fi
+                echo "==> comment delivery attempt $attempt failed; retrying in $((attempt * 5))s"
+                sleep $((attempt * 5))
+              done
+              echo "==> WARNING: could not deliver the end2end-ui [$CLUSTER_TAG] comment after 3 attempts."
+              echo "==> Continuing anyway: this check's result is decided by the test outcome, not by comment delivery."
+              return 0
             }
 
             # ── Check if end2end-ui/ exists ─────────────────────────────

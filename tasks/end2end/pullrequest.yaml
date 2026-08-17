@@ -159,12 +159,8 @@ spec:
             MARKER="<!-- leartech-end2end-${CLUSTER_TAG} -->"
 
             # ── helper: post/patch sticky comment ──────────────────────
-            post_sticky() {
+            post_sticky_once() {
               local body="$1"
-              if [ -z "${GIT_TOKEN:-}" ] || [ -z "${PULL_NUMBER:-}" ]; then
-                echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR comment"
-                return 0
-              fi
               # ?per_page=100 so the marker search sees older comments on
               # long-lived PRs. Without it GitHub defaults to 30 and the
               # sticky-patch lookup misses — duplicate comments posted.
@@ -185,6 +181,28 @@ spec:
                 echo "==> posting new end2end [$CLUSTER_TAG] comment"
                 curl -fsSL -X POST -H "$auth" -H "$accept" -d "$payload" "$api" >/dev/null
               fi
+            }
+
+            # A PR comment is a notification, not a verdict. Delivery failure must
+            # never decide this check: az/end2end went red on 2026-08-17 because a
+            # "not configured" note hit HTTP 503 while the step had nothing to test.
+            post_sticky() {
+              local body="$1"
+              if [ -z "${GIT_TOKEN:-}" ] || [ -z "${PULL_NUMBER:-}" ]; then
+                echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR comment"
+                return 0
+              fi
+              local attempt
+              for attempt in 1 2 3; do
+                if post_sticky_once "$body"; then
+                  return 0
+                fi
+                echo "==> comment delivery attempt $attempt failed; retrying in $((attempt * 5))s"
+                sleep $((attempt * 5))
+              done
+              echo "==> WARNING: could not deliver the end2end [$CLUSTER_TAG] comment after 3 attempts."
+              echo "==> Continuing anyway: this check's result is decided by the test outcome, not by comment delivery."
+              return 0
             }
 
             # ── branch 1: no end2end/run.sh → friendly pass ─────────────
