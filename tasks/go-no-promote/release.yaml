@@ -70,16 +70,6 @@ spec:
             #!/busybox/sh
             source .jx/variables.sh
             cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
-            # --build-arg VERSION: the go build above stamps bin/server with
-            # -ldflags "-X main.version=$(cat VERSION)", but the Dockerfile then
-            # runs its OWN go build inside kaniko, so that stamped binary is not
-            # what ships. Without passing VERSION through, a Dockerfile's
-            # `ARG VERSION=dev` default wins and the running service reports
-            # version="dev" on every structured log line. Confirmed live on
-            # leartech-plan-api, leartech-artifact-api and
-            # leartech-lighthouse-pr-events: no log line in the estate could be
-            # attributed to a build. Harmless where a Dockerfile declares no such
-            # ARG — kaniko ignores an unused build-arg.
             /kaniko/executor $KANIKO_FLAGS \
               --cache=true \
               --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
