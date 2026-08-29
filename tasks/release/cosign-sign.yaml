@@ -33,7 +33,7 @@ spec:
           resources: {}
           workingDir: /workspace/source
         steps:
-        - image: bitnami/cosign:latest
+        - image: bitnami/cosign:latest@sha256:3e033887ed477d88393b7bc1aa634e21bbbe5268dd360ed550ac1c476bb9cd51
           name: cosign-sign
           resources: {}
           securityContext:

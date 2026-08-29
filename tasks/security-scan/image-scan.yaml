@@ -23,7 +23,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/mikelear/security-tools:latest
+        - image: ghcr.io/mikelear/security-tools:0.50.1
           name: dependency-scan
           resources: {}
           env:
