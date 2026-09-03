@@ -32,13 +32,22 @@ if [ -n "$mk_v" ] && [ -n "$readme_v" ] && [ "$mk_v" != "$readme_v" ]; then
       The README is where a developer reads which version to install locally."
 fi
 
+lint_v=$(sed -n 's/.*golangci\/golangci-lint:v\([0-9][0-9.]*\).*/\1/p' "$root/.lighthouse/jenkins-x/lint.yaml" | head -1)
+echo "  .lighthouse lint config-schema step  = ${lint_v:-<none>}"
+if [ -n "$lint_v" ] && [ -n "$task_v" ] && [ "$lint_v" != "$task_v" ]; then
+  report "the lint pipeline's config-schema step (v$lint_v) and the go-lint task (v$task_v) disagree.
+      The schema check would validate the base config against a different version
+      than consumers actually lint with, so a key this version accepts and that one
+      ignores would pass here and be silently dropped there."
+fi
+
 readme_img=$(sed -n 's/.*golangci\/golangci-lint:v\([0-9][0-9.]*\).*/\1/p' "$readme" | head -1)
 if [ -n "$readme_img" ] && [ -n "$task_v" ] && [ "$readme_img" != "$task_v" ]; then
   report "the README quotes step image v$readme_img but the task pins v$task_v"
 fi
 
 if [ "$fail" -eq 0 ]; then
-  echo "PASS: golangci-lint is pinned to $mk_v in all three places"
+  echo "PASS: golangci-lint is pinned to $mk_v in all four places"
   exit 0
 fi
 exit 1

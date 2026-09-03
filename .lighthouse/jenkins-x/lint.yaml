@@ -85,6 +85,13 @@ spec:
             #!/bin/sh
             set -e
             sh test/go/version_pin_test.sh
+        - image: golangci/golangci-lint:v2.13.2
+          name: config-schema
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            sh test/go/config_schema_test.sh
         - image: cytopia/yamllint:latest
           name: yamllint
           resources: {}

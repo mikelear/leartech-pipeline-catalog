@@ -209,7 +209,7 @@ drift, this catalog is wrong.
 
 | Tool | Canonical version | Set in |
 |------|-------------------|--------|
-| `golangci-lint` | `2.13.2` | `go/leartech-go.mk` → `GOLANGCI_VERSION`; mirrored in `tasks/go-lint/pullrequest.yaml` step image `golangci/golangci-lint:v2.13.2` |
+| `golangci-lint` | `2.13.2` | `go/leartech-go.mk` → `GOLANGCI_VERSION`; mirrored in `tasks/go-lint/pullrequest.yaml` and `.lighthouse/jenkins-x/lint.yaml` step images `golangci/golangci-lint:v2.13.2`. Agreement is asserted by `test/go/version_pin_test.sh`. |
 
 To bump the linter version:
 

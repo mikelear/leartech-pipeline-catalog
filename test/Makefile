@@ -27,6 +27,7 @@ help:
 	@echo "    test-internal    Run Nmap + egress test inside namespace"
 	@echo "    test-all         Run all scan tests sequentially"
 	@echo ""
+	@echo "    test-go-config-schema  Assert the shared base config is schema-valid"
 	@echo "    test-go-version-pin  Assert golangci-lint is pinned identically in mk, task and README"
 	@echo "    test-go-parity   Assert leartech-go.mk merge matches golden linter set"
 	@echo ""
@@ -120,6 +121,11 @@ test-all: test-static test-image test-external test-internal
 
 # test-go-parity: pure shell + yq — no cluster required. Runs directly (not
 # via a taskrun) because it just diffs merged config against a golden snapshot.
+test-go-config-schema:
+	@echo ""
+	@echo "=== golangci-lint base config schema check ==="
+	@sh $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))/go/config_schema_test.sh
+
 test-go-version-pin:
 	@echo ""
 	@echo "=== golangci-lint version pin check ==="
@@ -151,4 +157,4 @@ clean: clean-static clean-image clean-external clean-internal clean-dynamic
 logs:
 	kubectl $(CONTEXT) logs -n $(NAMESPACE) $(TASK)-scan-test -f
 
-.PHONY: help test-go-version-pin test-static test-image test-external test-internal test-dynamic test-all test-go-parity clean clean-static clean-image clean-external clean-internal clean-dynamic logs
+.PHONY: help test-go-config-schema test-go-version-pin test-static test-image test-external test-internal test-dynamic test-all test-go-parity clean clean-static clean-image clean-external clean-internal clean-dynamic logs
