@@ -42,13 +42,13 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.98
           name: jx-variables
           resources: {}
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: ghcr.io/mikelear/leartech-go-runtime:0.49.24
+        - image: ghcr.io/mikelear/leartech-go-runtime:0.50.4
           name: build-make-build
           resources:
             requests:
@@ -60,7 +60,7 @@ spec:
             go mod download
             [ -f Makefile ] && grep -q "^swag:" Makefile && make swag || true
             go build -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o bin/server "${BUILD_TARGET:-./cmd/server}"
-        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources:
             requests:
