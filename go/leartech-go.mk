@@ -21,9 +21,7 @@
 #
 # Consumer-tunable variables (all `?=` so a repo can override before include):
 #
-#   GOLANGCI_VERSION       ONE canonical golangci-lint version — bump here,
-#                          the tasks step image gets bumped to match in the
-#                          same PR. See README "Canonical Go toolchain versions".
+#   GOLANGCI_VERSION       golangci-lint version this mk expects on PATH.
 #   GOLANGCI_BASE_URL      Where to fetch the base config from at CI time.
 #                          Defaults to the raw file in leartech-pipeline-catalog@main.
 #   GOLANGCI_BASE_FILE     Optional local path to the base config. When set and

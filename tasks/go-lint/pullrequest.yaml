@@ -28,12 +28,6 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        # Image tag pinned here is the ONE canonical golangci-lint version —
-        # it MUST equal GOLANGCI_VERSION in go/leartech-go.mk (the golden
-        # source). Bump the mk file first, then mirror the tag here in the
-        # same PR. Do not diverge — the delegated `make lint` invocation
-        # below will produce a linter set identical to what a developer
-        # runs locally with `make -f leartech-go.mk lint`.
         - image: golangci/golangci-lint:v2.13.2
           name: golangci-lint
           # golangci-lint loads the whole type-checked module graph — memory-heavy

@@ -78,6 +78,13 @@ spec:
               exit 1
             fi
             echo "yq-parse: ok"
+        - image: mikefarah/yq:4
+          name: version-pins
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            sh test/go/version_pin_test.sh
         - image: cytopia/yamllint:latest
           name: yamllint
           resources: {}
