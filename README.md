@@ -209,7 +209,7 @@ drift, this catalog is wrong.
 
 | Tool | Canonical version | Set in |
 |------|-------------------|--------|
-| `golangci-lint` | `2.12.2` | `go/leartech-go.mk` → `GOLANGCI_VERSION`; mirrored in `tasks/go-lint/pullrequest.yaml` step image `golangci/golangci-lint:v2.12.2` |
+| `golangci-lint` | `2.13.2` | `go/leartech-go.mk` → `GOLANGCI_VERSION`; mirrored in `tasks/go-lint/pullrequest.yaml` step image `golangci/golangci-lint:v2.13.2` |
 
 To bump the linter version:
 
@@ -250,7 +250,7 @@ All variables in `leartech-go.mk` use `?=` so a repo can override before include
 
 | Variable | Default | What it controls |
 |---|---|---|
-| `GOLANGCI_VERSION` | `2.12.2` | Displayed for `make -f leartech-go.mk help`; the tool version you should install locally |
+| `GOLANGCI_VERSION` | `2.13.2` | Displayed for `make -f leartech-go.mk help`; the tool version you should install locally |
 | `GOLANGCI_BASE_URL` | raw.githubusercontent.com/…/main/go/.golangci.base.yml | Where `lint-config` curls the base config from |
 | `GOLANGCI_BASE_FILE` | (unset) | Optional local path to the base config; when set + exists, used INSTEAD of curl (for dogfooding within this repo) |
 | `GOLANGCI_MERGED` | `.golangci.merged.yml` | Output path for the merged config |

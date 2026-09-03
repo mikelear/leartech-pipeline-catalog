@@ -34,7 +34,7 @@ spec:
         # same PR. Do not diverge — the delegated `make lint` invocation
         # below will produce a linter set identical to what a developer
         # runs locally with `make -f leartech-go.mk lint`.
-        - image: golangci/golangci-lint:v2.12.2
+        - image: golangci/golangci-lint:v2.13.2
           name: golangci-lint
           # golangci-lint loads the whole type-checked module graph — memory-heavy
           # on real modules; the inherited 512Mi under-reserves it (Burstable pod
