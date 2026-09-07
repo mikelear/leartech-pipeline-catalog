@@ -1,39 +1,71 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "schedule": ["before 9am on Monday"],
+  "extends": [
+    "config:recommended"
+  ],
+  "schedule": [
+    "before 9am on Monday"
+  ],
   "platformAutomerge": true,
   "packageRules": [
     {
-      "matchUpdateTypes": ["patch"],
+      "matchUpdateTypes": [
+        "patch"
+      ],
       "automerge": true,
       "groupName": "patch updates"
     },
     {
-      "matchUpdateTypes": ["minor"],
+      "matchUpdateTypes": [
+        "minor"
+      ],
       "groupName": "minor updates"
     },
     {
-      "matchManagers": ["helmv3"],
+      "matchManagers": [
+        "helmv3"
+      ],
       "groupName": "helm chart updates"
     },
     {
-      "matchManagers": ["dockerfile"],
+      "matchManagers": [
+        "dockerfile"
+      ],
       "groupName": "docker base image updates"
     },
     {
       "description": "Auto-merge leartech-gate image bumps as soon as they land. The catalog's qa-gate task is the consumer; bumping it makes new gate behaviour roll out across both gsm + akv clusters within minutes. 'at any time' overrides the default Monday-only schedule because gate fixes (e.g. multi-doc YAML parser, post-deploy quill) need to flow through fast.",
-      "matchPackageNames": ["us-central1-docker.pkg.dev/product-first/oci/leartech-gate"],
+      "matchPackageNames": [
+        "us-central1-docker.pkg.dev/product-first/oci/leartech-gate"
+      ],
       "groupName": "leartech-gate",
-      "schedule": ["at any time"],
+      "schedule": [
+        "at any time"
+      ],
       "automerge": true,
       "automergeStrategy": "squash"
     },
     {
       "description": "Auto-merge playwright-runner image bumps as soon as they land. arrivals-observer's dispatched Jobs use this image; bumping it picks up new browser/SDK versions used by post-deploy tests.",
-      "matchPackageNames": ["us-central1-docker.pkg.dev/product-first/oci/playwright-runner"],
+      "matchPackageNames": [
+        "us-central1-docker.pkg.dev/product-first/oci/playwright-runner"
+      ],
       "groupName": "playwright-runner",
-      "schedule": ["at any time"],
+      "schedule": [
+        "at any time"
+      ],
+      "automerge": true,
+      "automergeStrategy": "squash"
+    },
+    {
+      "description": "Auto-merge ai-review-worker bumps as soon as they land. This image is the AI review gate that runs on EVERY repo's PRs, so a fix in it is blocked estate-wide until this pin moves \u2014 and on the default Monday-only schedule that is up to seven days. Worse, grouping puts it behind unrelated high-risk bumps in the same PR (the 'minor updates' group has carried jx-boot 3.16->3.17 and kaniko 1.9->1.24), so a one-line gate fix waits on changes nobody wants to merge in a hurry. Same reasoning and same treatment as leartech-gate and playwright-runner above.",
+      "matchPackageNames": [
+        "ghcr.io/mikelear/ai-review-worker"
+      ],
+      "groupName": "ai-review-worker",
+      "schedule": [
+        "at any time"
+      ],
       "automerge": true,
       "automergeStrategy": "squash"
     }
@@ -42,15 +74,23 @@
     {
       "description": "Catch image: refs in .lighthouse triggers.",
       "customType": "regex",
-      "fileMatch": ["\\.lighthouse/.+\\.yaml$"],
-      "matchStrings": ["image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"],
+      "fileMatch": [
+        "\\.lighthouse/.+\\.yaml$"
+      ],
+      "matchStrings": [
+        "image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"
+      ],
       "datasourceTemplate": "docker"
     },
     {
       "description": "Catch image: refs in tasks/*/pullrequest.yaml + release.yaml (catalog tasks consumed via uses:). Includes the leartech-gate image pin in tasks/qa-gate/.",
       "customType": "regex",
-      "fileMatch": ["^tasks/.+\\.yaml$"],
-      "matchStrings": ["image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"],
+      "fileMatch": [
+        "^tasks/.+\\.yaml$"
+      ],
+      "matchStrings": [
+        "image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"
+      ],
       "datasourceTemplate": "docker"
     }
   ]
