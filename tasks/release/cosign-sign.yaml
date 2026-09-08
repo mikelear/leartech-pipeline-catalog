@@ -10,6 +10,40 @@
 # in the transparency log") and fails the pipeline even though the
 # image is correctly signed.
 #
+# --registry-referrers-mode=legacy (added 2026-09-08) — READ THIS BEFORE
+# REMOVING IT.
+#
+# cosign v3 changed its DEFAULT signature storage from the tag-based
+# convention (<repo>:sha256-<digest>.sig) to OCI 1.1 referrers. Sigstore's
+# own docs put it plainly: "all new images signed with cosign v3 are shown
+# as not signed by systems that don't support OCI 1.1 referrers."
+#
+# This image is bitnami/cosign, pinned by digest but on a v3 build, so every
+# signature written since that rollover is referrer-attached. Consequences
+# observed on the build clusters 2026-09-08:
+#
+#   * Kyverno's verify-image-signatures reported 1,271 fail / 0 pass on GCP
+#     with the error ".attestors[0].entries[0].keys: no signatures found",
+#     even though the images ARE signed — cosign verify succeeds on every
+#     version tested (mcp-servers 0.0.71/0.0.90/0.0.95/0.0.97/0.0.99/0.0.100).
+#     Kyverno's key attestor reads the .sig tag; nothing was there.
+#   * Upgrading Kyverno 1.17/1.18 -> 1.19.0 did NOT fix it, and neither did
+#     rekor.ignoreTlog. The format is the blocker, not the verifier version.
+#   * It is not specific to us: Harbor has the same bug open
+#     (goharbor/harbor#23013, #22592).
+#
+# `legacy` restores the .sig tag, which is what Kyverno and most other
+# verifiers expect. cosign itself reads BOTH formats, so nothing that
+# currently verifies stops verifying.
+#
+# NOTE ON THE GUARD ABOVE: `cosign verify` has no --registry-referrers-mode
+# flag and reads either format, so it cannot tell "signed as a referrer" from
+# "signed as a tag". That is fine for NEW images (unsigned -> guard fails ->
+# signed in legacy mode) but means images already signed as referrers are
+# SKIPPED and never gain a .sig tag. Those need the one-off backfill in
+# scripts/backfill-legacy-signatures.sh; they are not fixed by this change
+# alone.
+#
 # The credHelpers strip is required because bitnami/cosign doesn't ship
 # the gcloud / az docker credential helpers that Tekton's injected
 # config.json references.
@@ -66,7 +100,10 @@ spec:
               echo "$IMAGE already signed — skipping (retry-safe)"
             else
               echo "Signing $IMAGE"
-              cosign sign --key /tmp/cosign.key --yes "$IMAGE"
+              # --registry-referrers-mode=legacy: write the .sig tag, not an
+              # OCI 1.1 referrer. See the header for why.
+              cosign sign --key /tmp/cosign.key --yes \
+                --registry-referrers-mode=legacy "$IMAGE"
             fi
             rm -f /tmp/cosign.key
   podTemplate:
