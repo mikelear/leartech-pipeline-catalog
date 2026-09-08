@@ -92,6 +92,18 @@ spec:
             #!/bin/sh
             set -e
             sh test/go/config_schema_test.sh
+        - image: golang:1.24
+          name: auth-conformance-selftest
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            # The auth-conformance checker fails OTHER repos' builds, so it
+            # gets the same treatment it hands out: every rule has a fixture
+            # violating exactly one thing, and a control violating nothing.
+            # Two of these rules were wrong on first contact with the estate;
+            # the controls are what caught that.
+            cd go/authconformance && go test ./...
         - image: cytopia/yamllint:latest
           name: yamllint
           resources: {}
