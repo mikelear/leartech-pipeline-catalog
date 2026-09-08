@@ -10,39 +10,36 @@
 # in the transparency log") and fails the pipeline even though the
 # image is correctly signed.
 #
-# --registry-referrers-mode=legacy (added 2026-09-08) — READ THIS BEFORE
-# REMOVING IT.
+# SIGNATURE FORMAT — KNOWN GAP. DO NOT "FIX" IT WITH A FLAG (2026-09-08)
 #
-# cosign v3 changed its DEFAULT signature storage from the tag-based
-# convention (<repo>:sha256-<digest>.sig) to OCI 1.1 referrers. Sigstore's
-# own docs put it plainly: "all new images signed with cosign v3 are shown
-# as not signed by systems that don't support OCI 1.1 referrers."
+# cosign v3 changed its DEFAULT signature storage from the tag convention
+# (<repo>:sha256-<digest>.sig) to OCI 1.1 referrers. Sigstore's docs: "all new
+# images signed with cosign v3 are shown as not signed by systems that don't
+# support OCI 1.1 referrers." Kyverno's key attestor is one of those systems,
+# so verify-image-signatures reads 1,271 fail / 0 pass on GCP with
+# ".attestors[0].entries[0].keys: no signatures found" for images that ARE
+# correctly signed (cosign verify succeeds on every version tested).
 #
-# This image is bitnami/cosign, pinned by digest but on a v3 build, so every
-# signature written since that rollover is referrer-attached. Consequences
-# observed on the build clusters 2026-09-08:
+# A previous revision added --registry-referrers-mode=legacy here believing it
+# would restore the .sig tag. IT DOES NOT. That flag is a FETCH option --
+# cosign's own help says "mode for fetching references from the registry" -- so
+# on `sign` it is inert. Verified: signing with it exits 0, emits no "Pushing
+# signature to" line, and a registry API probe of the expected .sig tag returns
+# 404. Removed again here.
 #
-#   * Kyverno's verify-image-signatures reported 1,271 fail / 0 pass on GCP
-#     with the error ".attestors[0].entries[0].keys: no signatures found",
-#     even though the images ARE signed — cosign verify succeeds on every
-#     version tested (mcp-servers 0.0.71/0.0.90/0.0.95/0.0.97/0.0.99/0.0.100).
-#     Kyverno's key attestor reads the .sig tag; nothing was there.
-#   * Upgrading Kyverno 1.17/1.18 -> 1.19.0 did NOT fix it, and neither did
-#     rekor.ignoreTlog. The format is the blocker, not the verifier version.
-#   * It is not specific to us: Harbor has the same bug open
-#     (goharbor/harbor#23013, #22592).
+# There is no write-side format flag in cosign v3; bundle-via-referrers is
+# simply what v3 does. --tlog-upload=false is also deprecated in v3 and
+# rejected alongside the default signing config.
 #
-# `legacy` restores the .sig tag, which is what Kyverno and most other
-# verifiers expect. cosign itself reads BOTH formats, so nothing that
-# currently verifies stops verifying.
+# Deliberately NOT pinning cosign back to v2 to satisfy the verifier. This is a
+# security control; pinning it to an older major so a downstream tool is happy
+# is the wrong trade. The fix belongs on the verifying side.
 #
-# NOTE ON THE GUARD ABOVE: `cosign verify` has no --registry-referrers-mode
-# flag and reads either format, so it cannot tell "signed as a referrer" from
-# "signed as a tag". That is fine for NEW images (unsigned -> guard fails ->
-# signed in legacy mode) but means images already signed as referrers are
-# SKIPPED and never gain a .sig tag. Those need the one-off backfill in
-# scripts/backfill-legacy-signatures.sh; they are not fixed by this change
-# alone.
+# Open, tracked separately: making Kyverno read referrer-attached signatures.
+# Upstream says verifyImageSignatures supports OCI 1.1 and the key-attestor bug
+# (kyverno/kyverno#16435) is milestoned 1.19.0 -- but both clusters are ON
+# 1.19.0 with rekor.ignoreTlog and it still fails, so either that fix is
+# incomplete or there is configuration still to find.
 #
 # The credHelpers strip is required because bitnami/cosign doesn't ship
 # the gcloud / az docker credential helpers that Tekton's injected
@@ -78,6 +75,11 @@ spec:
               secretKeyRef:
                 name: cosign-keys
                 key: cosign.key
+          - name: COSIGN_PUB
+            valueFrom:
+              secretKeyRef:
+                name: cosign-keys
+                key: cosign.pub
           script: |
             #!/bin/bash
             set -e
@@ -89,6 +91,7 @@ spec:
             export DOCKER_CONFIG=/root/.docker
 
             echo "$COSIGN_KEY" > /tmp/cosign.key
+            echo "$COSIGN_PUB" > /tmp/cosign.pub
             IMAGE="$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
 
             # Skip-if-already-signed: cosign verify hits the OCI registry's
@@ -96,16 +99,13 @@ spec:
             # so this is a registry-only idempotency check. If the
             # signature is present and verifies with our pubkey, the sign
             # step is unnecessary and would 409 against Rekor anyway.
-            if cosign verify --key /tmp/cosign.key --insecure-ignore-tlog=true "$IMAGE" >/dev/null 2>&1; then
+            if cosign verify --key /tmp/cosign.pub --insecure-ignore-tlog=true "$IMAGE" >/dev/null 2>&1; then
               echo "$IMAGE already signed — skipping (retry-safe)"
             else
               echo "Signing $IMAGE"
-              # --registry-referrers-mode=legacy: write the .sig tag, not an
-              # OCI 1.1 referrer. See the header for why.
-              cosign sign --key /tmp/cosign.key --yes \
-                --registry-referrers-mode=legacy "$IMAGE"
+              cosign sign --key /tmp/cosign.key --yes "$IMAGE"
             fi
-            rm -f /tmp/cosign.key
+            rm -f /tmp/cosign.key /tmp/cosign.pub
   podTemplate:
     tolerations:
     - key: sku
