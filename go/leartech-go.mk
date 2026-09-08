@@ -169,7 +169,7 @@ lint-config: ## Produce $(GOLANGCI_MERGED) from base config (curled or local) me
 # --timeout 15m matches the task; see task comment (Azure builder nodes hit
 # 10m on cold-cache package-load). Locally the timeout is generous, not
 # tight — matching the CI value keeps the two runs comparable.
-lint: lint-config file-size ## Run golangci-lint against the merged config
+lint: lint-config file-size swag-check ## Run golangci-lint against the merged config (+ swagger spec freshness)
 	@set -eu; \
 	if ! command -v golangci-lint >/dev/null 2>&1; then \
 	  echo "==> golangci-lint not found on PATH"; \
@@ -181,6 +181,113 @@ lint: lint-config file-size ## Run golangci-lint against the merged config
 	echo "==> golangci-lint run -v --timeout 15m --config $(GOLANGCI_MERGED) ./..."; \
 	golangci-lint run -v --timeout 15m --config $(GOLANGCI_MERGED) ./...; \
 	echo "==> lint complete"
+
+# ── swag: the OpenAPI spec must match the annotations ────────────────────
+#
+# WHY THIS LIVES HERE AND NOT IN EACH REPO.
+#
+# swag-check existed only in individual service Makefiles, and CI never ran any
+# of them — the Tekton tasks invoke THIS file, which had no swagger concept. So
+# the gate that stops a stale spec shipping ran nowhere: it fired only when a
+# developer happened to type `make` locally. leartech-ai-gateway#30 would have
+# merged a spec missing two response fields, and release.yaml publishes
+# angular/typescript/go/python/rust clients from that spec, so five SDKs would
+# have shipped without them. It was caught by hand, not by the pipeline.
+#
+# THE VERSION COMES FROM go.mod, DELIBERATELY.
+#
+# Every repo previously carried a separate SWAG_VERSION constant with a comment
+# saying "kept in sync with go.mod". Measured 2026-09-08: three of four had
+# drifted (v1.16.3, v1.16.4, v1.16.4 against go.mod's v1.16.6 everywhere). A
+# second source of truth for a version is a second thing to forget. Reading
+# go.mod removes the constant rather than policing it — the pattern is borrowed
+# from mqube-ledger, which has done it this way for years.
+#
+# AND THE GUARD CHECKS THE VERSION, NOT JUST PRESENCE.
+#
+# The old guard was `if ! command -v swag`. Whichever swag you happened to have
+# installed then won, and a different minor version emits a different spec — so
+# `swag-check` reported "not in sync" against a perfectly good committed spec.
+# That cost real debugging time on 2026-09-08 and looked exactly like a genuine
+# drift. Install when absent OR when the version differs.
+#
+# SKIPS CLEANLY for repos with no swagger. Not every Go service has annotations,
+# and this target is now on the `lint` path for all of them.
+
+# swag's own --version output has been unreliable across patch releases, so the
+# marker file records what we installed rather than asking the binary.
+SWAG_MARKER ?= $(shell go env GOPATH)/bin/.swag-version
+
+swag-version: ## Print the swag version this repo requires (from go.mod)
+	@grep -E '^\s+github.com/swaggo/swag ' go.mod 2>/dev/null | awk '{print $$2}' \
+	  || echo "(no swaggo/swag in go.mod)"
+
+# Resolves the required version, installs only if missing or mismatched, and
+# echoes the binary path. Used by both swag and swag-check.
+define swag_ensure
+	want=$$(grep -E '^[[:space:]]+github.com/swaggo/swag ' go.mod 2>/dev/null | awk '{print $$2}'); \
+	if [ -z "$$want" ]; then echo "==> swag: no swaggo/swag in go.mod; nothing to do"; exit 0; fi; \
+	have=$$(cat "$(SWAG_MARKER)" 2>/dev/null || echo none); \
+	bin=$$(go env GOPATH)/bin/swag; \
+	if [ ! -x "$$bin" ] || [ "$$have" != "$$want" ]; then \
+	  echo "==> installing swag $$want (had $$have) — version taken from go.mod"; \
+	  go install github.com/swaggo/swag/cmd/swag@$$want; \
+	  printf '%s' "$$want" > "$(SWAG_MARKER)"; \
+	fi
+endef
+
+# A repo has a spec to check only if docs/ is committed AND some file carries
+# swaggo annotations. Both, because docs/ can linger after annotations are
+# removed and vice versa.
+define swag_applicable
+	if [ ! -d docs ]; then echo "==> swag-check: no docs/ directory; skipping"; exit 0; fi; \
+	if ! grep -rqE '^//[[:space:]]*@(title|Summary|Router)' --include='*.go' . 2>/dev/null; then \
+	  echo "==> swag-check: no swaggo annotations found; skipping"; exit 0; \
+	fi
+endef
+
+swag: ## Regenerate docs/ from the swaggo annotations (version from go.mod)
+	@set -eu; \
+	$(swag_applicable); \
+	$(swag_ensure); \
+	echo "==> swag init -g $(SWAG_ENTRYPOINT) -o docs"; \
+	$$(go env GOPATH)/bin/swag init $(SWAG_FLAGS) -g $(SWAG_ENTRYPOINT) -o docs
+
+# Per-repo overrides, read from OPTIONAL dotfiles so CI needs no per-repo
+# invocation — the Tekton task runs this mk with no arguments, so anything
+# repo-specific has to be discoverable from the working tree.
+#
+# .swagflags exists because leartech-auth-service needs
+# `--parseDependency --useStructName`: without them swag emits full package
+# paths as schema names (GithubComMikelearLeartechAuthServiceModelsTenant
+# instead of Tenant), and those names become the generated SDK type names in
+# five languages. Running the central check WITHOUT a repo's real flags would
+# produce a different spec and report a false "stale" — the exact failure mode
+# this whole change exists to remove, so it must not be reintroduced here.
+SWAG_ENTRYPOINT ?= $(shell cat .swagentrypoint 2>/dev/null || echo cmd/server/main.go)
+SWAG_FLAGS      ?= $(shell cat .swagflags 2>/dev/null)
+
+swag-check: ## Fail if docs/ is stale against the annotations (renders to a temp dir)
+	@set -eu; \
+	$(swag_applicable); \
+	$(swag_ensure); \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	$$(go env GOPATH)/bin/swag init $(SWAG_FLAGS) -g $(SWAG_ENTRYPOINT) -o "$$tmp" >/dev/null 2>&1 || { \
+	  echo "FAIL: swag init failed — the annotations do not parse" >&2; exit 1; }; \
+	rc=0; \
+	for f in swagger.json swagger.yaml; do \
+	  [ -f "docs/$$f" ] || { echo "FAIL: docs/$$f is missing" >&2; rc=1; continue; }; \
+	  diff -q "docs/$$f" "$$tmp/$$f" >/dev/null 2>&1 || { \
+	    echo "FAIL: docs/$$f is STALE against the annotations — run: make swag" >&2; rc=1; }; \
+	done; \
+	if [ $$rc -ne 0 ]; then \
+	  echo "" >&2; \
+	  echo "release.yaml publishes angular/typescript/go/python/rust clients from" >&2; \
+	  echo "docs/swagger.json, so a stale spec ships SDKs missing endpoints." >&2; \
+	  exit 1; \
+	fi; \
+	echo "==> swag-check: docs/ matches the annotations"
 
 # ── file-size: the accumulation guard golangci-lint cannot provide ───────
 #
@@ -429,5 +536,5 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 
 # pre-push: what you should run before `git push`. Order chosen so cheap
 # checks fail fast:  vet → tidy-check → build → test-coverage → lint → vuln.
-pre-push: vet tidy-check build test-coverage lint vuln ## Full pre-push gate (vet tidy-check build test-coverage lint vuln)
+pre-push: vet tidy-check build test-coverage lint vuln ## Full pre-push gate (vet tidy-check build test-coverage lint[+swag-check] vuln)
 	@echo "==> pre-push gate: all checks passed"
