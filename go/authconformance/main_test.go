@@ -29,6 +29,13 @@ type fixture struct {
 	chartEnv     string // rendered env block for the deployment template
 	valuesAuth   string // the `auth:` block in values.yaml
 	authConfFile string
+
+	// authProfile is the .authprofile content. Defaults to the type the default
+	// fixture actually is — it constructs auth.NewVerifier and spends no
+	// outbound token — so existing tests stay about the rule they were written
+	// for rather than becoming profile tests. Set noAuthProfile to omit it.
+	authProfile   string
+	noAuthProfile bool
 }
 
 func (fx fixture) build(t *testing.T) string {
@@ -76,6 +83,13 @@ func main() { _, _ = auth.NewVerifier(nil, auth.VerifierConfig{}) }
 	if fx.authConfFile != "" {
 		write(t, filepath.Join(root, ".authconformance"), fx.authConfFile)
 	}
+	if !fx.noAuthProfile {
+		ap := fx.authProfile
+		if ap == "" {
+			ap = "type: inbound-resource-server\n"
+		}
+		write(t, filepath.Join(root, ".authprofile"), ap)
+	}
 	return root
 }
 
@@ -93,10 +107,13 @@ func write(t *testing.T, path, content string) {
 func run(t *testing.T, root string) []string {
 	t.Helper()
 	var r report
+	var ev evidence
 	ex := loadExemption(root, &r)
 	checkGoCommonFloor(root, &r)
-	hasOutbound := checkGoSource(root, &r)
+	hasOutbound := checkGoSource(root, &r, &ev)
 	checkChart(root, ex, hasOutbound, &r)
+	prof := loadProfile(root, &r, ev)
+	checkProfile(prof, ev, &r)
 
 	var rules []string
 	for _, f := range r.findings {
@@ -356,10 +373,16 @@ import (
 )
 
 func main() {
+	// Dual-role: validates inbound AND mints for outbound. The verifier is
+	// here because the scenario this fixture describes (mcp-servers) does
+	// both, and the profile cross-check needs the inbound half to be real
+	// rather than implied by the chart.
+	_, _ = auth.NewVerifier(nil, auth.VerifierConfig{})
 	c, _ := auth.NewServiceClient(nil, auth.Config{})
 	_, _ = c.GetAuthToken(context.Background())
 }
 `},
+		authProfile: "type: dual-role\n",
 		chartEnv: "        - name: LEARTECH_AUTH_ISSUER\n          value: \"x\"\n" +
 			"        - name: LEARTECH_AUTH_AUDIENCE\n          value: \"y\"\n" +
 			"        - name: LEARTECH_AUTH_CLIENT_ID\n          value: \"svc\"\n",
@@ -399,10 +422,16 @@ import (
 )
 
 func main() {
+	// Dual-role: validates inbound AND mints for outbound. The verifier is
+	// here because the scenario this fixture describes (mcp-servers) does
+	// both, and the profile cross-check needs the inbound half to be real
+	// rather than implied by the chart.
+	_, _ = auth.NewVerifier(nil, auth.VerifierConfig{})
 	c, _ := auth.NewServiceClient(nil, auth.Config{})
 	_, _ = c.GetAuthToken(context.Background())
 }
 `},
+		authProfile: "type: dual-role\n",
 		chartEnv: "        - name: LEARTECH_AUTH_ISSUER\n          value: \"x\"\n" +
 			"        - name: LEARTECH_AUTH_AUDIENCE\n          value: \"y\"\n" +
 			"        - name: LEARTECH_AUTH_SERVER_URL\n          value: \"https://hydra\"\n",
@@ -441,10 +470,16 @@ import (
 )
 
 func main() {
+	// Dual-role: validates inbound AND mints for outbound. The verifier is
+	// here because the scenario this fixture describes (mcp-servers) does
+	// both, and the profile cross-check needs the inbound half to be real
+	// rather than implied by the chart.
+	_, _ = auth.NewVerifier(nil, auth.VerifierConfig{})
 	c, _ := auth.NewServiceClient(nil, auth.Config{})
 	_, _ = c.GetAuthToken(context.Background())
 }
 `},
+		authProfile: "type: dual-role\n",
 		chartEnv: "        - name: LEARTECH_AUTH_SERVER_URL\n          value: \"https://hydra\"\n" +
 			"        - name: LEARTECH_AUTH_AUDIENCE\n          value: \"y\"\n",
 	}.build(t)
