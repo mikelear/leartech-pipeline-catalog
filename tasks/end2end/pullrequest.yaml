@@ -47,7 +47,14 @@
 #     ],
 #     "metadata": {
 #       "preview_url": "https://...",       // echoed for convenience
-#       "version":     "0.0.0-PR-4-1-SNAPSHOT"
+#       "version":     "0.0.0-PR-4-1-SNAPSHOT",
+#       "doc": "### How audience binding behaves\n| req | result |\n..."
+#                                           // OPTIONAL markdown. Rendered into
+#                                           // the PR comment under a collapsed
+#                                           // "What this run measured" block.
+#                                           // For stating the behaviour the run
+#                                           // just measured, so the explanation
+#                                           // cannot drift from the assertions.
 #     }
 #   }
 #
@@ -152,6 +159,14 @@ spec:
             HAS_SCRIPT=0
             [ -x end2end/run.sh ] && HAS_SCRIPT=1
 
+            # A repo with no end2end must SAY SO. end2end/NONE holds the reason.
+            HAS_OPTOUT=0
+            OPTOUT_REASON=""
+            if [ -f end2end/NONE ]; then
+              OPTOUT_REASON=$(grep -vE '^\s*(#|$)' end2end/NONE | head -3 | tr '\n' ' ' | sed 's/  */ /g')
+              [ -n "$OPTOUT_REASON" ] && HAS_OPTOUT=1
+            fi
+
             # Per-cluster sticky marker so GCP and Azure comments coexist
             # instead of clobbering each other (mirrors the security-scan
             # + ai-review conventions).
@@ -205,21 +220,75 @@ spec:
               return 0
             }
 
-            # ── branch 1: no end2end/run.sh → friendly pass ─────────────
-            if [ "$HAS_SCRIPT" = "0" ]; then
-              echo "==> no executable end2end/run.sh in repo; posting 'not configured' note"
+            # ── branch 1: no end2end/run.sh ─────────────────────────────
+            #
+            # This used to print "PASS: no end2end configured" and exit 0, so a
+            # repo with NO tests reported a green tick indistinguishable from a
+            # repo whose whole suite passed. That is the same defect that cost
+            # four days on 2026-09-12, when five services showed
+            # Arrival.phase=Failed with tests=[] and the empty list was read as
+            # "the packs produced nothing" rather than "nothing ran".
+            #
+            # A check that cannot fail is not coverage. So absence is now a
+            # DECISION the repo has to record, exactly as .authprofile makes a
+            # service state its auth type rather than being inferred:
+            #
+            #   end2end/run.sh   -> run it (below)
+            #   end2end/NONE     -> skip, loudly, quoting the declared reason
+            #   neither          -> FAIL
+            #
+            # The opt-out is deliberately a file with a reason in it and not a
+            # bare flag. "optional: true" and "auth.enabled: false" were the
+            # same shape and both hid real gaps; a reason has to be written by
+            # someone and can be argued with in review.
+            if [ "$HAS_SCRIPT" = "0" ] && [ "$HAS_OPTOUT" = "1" ]; then
+              echo "==> no end2end/run.sh; end2end/NONE declares: $OPTOUT_REASON"
               body=$(printf '%s\n' \
                 "$MARKER" \
-                ":information_source: **End-to-end: not configured** \`[$CLUSTER_TAG]\`" \
+                ":fast_forward: **End-to-end: SKIPPED (declared)** \`[$CLUSTER_TAG]\`" \
                 "" \
-                "This repo has no executable \`end2end/run.sh\`. Add one (make it \`chmod +x\`) to run presubmit checks against the preview deploy." \
+                "This repo declares it has no end2end suite, in \`end2end/NONE\`:" \
+                "" \
+                "> $OPTOUT_REASON" \
+                "" \
+                "**Nothing was tested against the preview deploy.** This check is green because the" \
+                "absence is declared, not because anything passed. Delete \`end2end/NONE\` and add an" \
+                "executable \`end2end/run.sh\` to change that." \
                 "" \
                 "Contract: \`tasks/end2end/pullrequest.yaml\` in \`leartech-pipeline-catalog\`." \
                 "" \
                 "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
               post_sticky "$body"
-              echo "PASS: no end2end configured"
+              echo "SKIPPED: no end2end suite, declared in end2end/NONE — nothing was tested"
               exit 0
+            fi
+
+            if [ "$HAS_SCRIPT" = "0" ]; then
+              echo "==> no executable end2end/run.sh and no end2end/NONE declaration"
+              body=$(printf '%s\n' \
+                "$MARKER" \
+                ":x: **End-to-end: undeclared** \`[$CLUSTER_TAG]\`" \
+                "" \
+                "This repo has neither an executable \`end2end/run.sh\` nor an \`end2end/NONE\` declaration," \
+                "so nothing ran against the preview deploy and nothing says that was intended." \
+                "" \
+                "Pick one:" \
+                "" \
+                "* add \`end2end/run.sh\` (\`chmod +x\`) — it runs against the live preview, with" \
+                "  \`PREVIEW_URL\` and \`PREVIEW_NAMESPACE\` in the environment;" \
+                "* or add \`end2end/NONE\` containing one line saying why this service has no" \
+                "  end2end suite. That keeps the check green while making the gap visible in the" \
+                "  repo and in this comment, instead of looking like a pass." \
+                "" \
+                "This used to report \`PASS: no end2end configured\`, which made \"no tests\" and" \
+                "\"all tests passed\" the same green tick." \
+                "" \
+                "Contract: \`tasks/end2end/pullrequest.yaml\` in \`leartech-pipeline-catalog\`." \
+                "" \
+                "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
+              post_sticky "$body"
+              echo "FAIL: no end2end/run.sh and no end2end/NONE declaration" >&2
+              exit 1
             fi
 
             # ── branch 2: wait for preview ─────────────────────────────
@@ -366,6 +435,25 @@ spec:
               ICON="x"; VERDICT="FAIL"
             fi
 
+            # metadata.doc — OPTIONAL markdown the suite emits for humans.
+            #
+            # A pass/fail table says a property held; it does not say what the
+            # property IS. For auth especially the useful artefact is the measured
+            # behaviour itself — which audience requests are refused, which come
+            # back silently empty, what a scope does and does not gate — written
+            # where someone opening the PR will read it, by the same run that just
+            # proved it.
+            #
+            # Emitted rather than hand-written so it cannot drift: if the behaviour
+            # changes the suite fails, and whatever it prints next describes the new
+            # behaviour.
+            DOC=$(jq -r '.metadata.doc // empty' end2end/results.json 2>/dev/null || true)
+            if [ -n "$DOC" ]; then
+              DOC_BLOCK=$(printf '%s\n' "" "<details><summary>What this run measured</summary>" "" "$DOC" "" "</details>")
+            else
+              DOC_BLOCK=""
+            fi
+
             body=$(printf '%s\n' \
               "$MARKER" \
               ":${ICON}: **End-to-end: ${VERDICT}** \`[$CLUSTER_TAG]\` — ${SUMMARY}" \
@@ -375,6 +463,7 @@ spec:
               "| Test | Status | Duration | Message |" \
               "|---|---|---|---|" \
               "${TEST_ROWS}" \
+              "${DOC_BLOCK}" \
               "" \
               "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
             post_sticky "$body"
