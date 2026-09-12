@@ -459,11 +459,29 @@ func checkGoSource(root string, r *report, ev *evidence) (hasOutboundLeg bool) {
 			return true
 		})
 
+		// RFC 9728 metadata, found in STRING LITERALS ONLY.
+		//
+		// This was a raw file search and it was wrong: it matched the path in a
+		// COMMENT. On 2026-09-12 it derived leartech-auth-service as
+		// public-resource-server because a doc comment in internal/authgraph
+		// mentions /.well-known/oauth-protected-resource while explaining what
+		// the DCR allow-list is for. auth-service is the ISSUER.
+		//
+		// Same failure the disable-flag rule already guards against: prose
+		// describing a thing is not the thing, and a tool that cannot tell the
+		// difference punishes documentation.
 		if !isTest && ev != nil {
-			if src, rerr := os.ReadFile(path); rerr == nil &&
-				strings.Contains(string(src), "oauth-protected-resource") {
-				ev.protectedResAt = append(ev.protectedResAt, path)
-			}
+			ast.Inspect(f, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				if strings.Contains(lit.Value, "oauth-protected-resource") {
+					ev.protectedResAt = append(ev.protectedResAt,
+						fmt.Sprintf("%s:%d", path, fset.Position(lit.Pos()).Line))
+				}
+				return true
+			})
 		}
 
 		// Disable flags that actually FEED configuration — a struct tag that
