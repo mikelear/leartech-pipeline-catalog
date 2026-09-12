@@ -47,7 +47,14 @@
 #     ],
 #     "metadata": {
 #       "preview_url": "https://...",       // echoed for convenience
-#       "version":     "0.0.0-PR-4-1-SNAPSHOT"
+#       "version":     "0.0.0-PR-4-1-SNAPSHOT",
+#       "doc": "### How audience binding behaves\n| req | result |\n..."
+#                                           // OPTIONAL markdown. Rendered into
+#                                           // the PR comment under a collapsed
+#                                           // "What this run measured" block.
+#                                           // For stating the behaviour the run
+#                                           // just measured, so the explanation
+#                                           // cannot drift from the assertions.
 #     }
 #   }
 #
@@ -428,6 +435,25 @@ spec:
               ICON="x"; VERDICT="FAIL"
             fi
 
+            # metadata.doc — OPTIONAL markdown the suite emits for humans.
+            #
+            # A pass/fail table says a property held; it does not say what the
+            # property IS. For auth especially the useful artefact is the measured
+            # behaviour itself — which audience requests are refused, which come
+            # back silently empty, what a scope does and does not gate — written
+            # where someone opening the PR will read it, by the same run that just
+            # proved it.
+            #
+            # Emitted rather than hand-written so it cannot drift: if the behaviour
+            # changes the suite fails, and whatever it prints next describes the new
+            # behaviour.
+            DOC=$(jq -r '.metadata.doc // empty' end2end/results.json 2>/dev/null || true)
+            if [ -n "$DOC" ]; then
+              DOC_BLOCK=$(printf '%s\n' "" "<details><summary>What this run measured</summary>" "" "$DOC" "" "</details>")
+            else
+              DOC_BLOCK=""
+            fi
+
             body=$(printf '%s\n' \
               "$MARKER" \
               ":${ICON}: **End-to-end: ${VERDICT}** \`[$CLUSTER_TAG]\` — ${SUMMARY}" \
@@ -437,6 +463,7 @@ spec:
               "| Test | Status | Duration | Message |" \
               "|---|---|---|---|" \
               "${TEST_ROWS}" \
+              "${DOC_BLOCK}" \
               "" \
               "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
             post_sticky "$body"
