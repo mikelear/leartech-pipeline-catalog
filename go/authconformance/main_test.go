@@ -16,7 +16,9 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -591,5 +593,87 @@ func TestCommentMentioningTheFlagDoesNotTrip(t *testing.T) {
 	rules := run(t, fixture{chartEnv: env}.build(t))
 	if has(rules, "no-optional-credential") {
 		t.Fatalf("a comment describing the removed flag tripped the rule: %v", rules)
+	}
+}
+
+// ── the checker must survive its own delivery mechanism ─────────────────────
+//
+// leartech-go.mk does NOT vendor this tool. It curls ONE file:
+//
+//	curl -fsSL -o "$work/main.go" "$(AUTHCONF_URL)"
+//	printf 'module authconformance\n\ngo 1.24\n' > "$work/go.mod"
+//	( cd "$work" && go build -o "$work/authconformance" . )
+//
+// So the package being a single file is not a style preference — it is a
+// property the delivery requires.
+//
+// On 2026-09-12 the profile checks were added in a second file, profile.go.
+// Everything built and every test passed here, and every repo's lint broke:
+//
+//	./main.go:275:10: undefined: loadProfile
+//	./main.go:276:2: undefined: checkProfile
+//	make: *** [auth-conformance] Error 1
+//
+// A green package-level test suite said nothing about it, because the suite
+// compiles the package as a package. These two tests close that gap.
+
+func TestCheckerIsASingleFile(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	var sources []string
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		sources = append(sources, n)
+	}
+	if len(sources) == 0 {
+		t.Fatal("found no non-test .go files — wrong directory, and the check below " +
+			"would pass vacuously")
+	}
+	if len(sources) != 1 || sources[0] != "main.go" {
+		sort.Strings(sources)
+		t.Fatalf("the checker is spread across %v.\n\n"+
+			"leartech-go.mk curls ONE file to $work/main.go and compiles it standalone, "+
+			"so anything defined elsewhere is undefined at every repo's lint — which is "+
+			"exactly what happened on 2026-09-12 when the profile checks landed in "+
+			"profile.go. Keep it in main.go, or teach the mk to fetch a manifest first.",
+			sources)
+	}
+}
+
+// The real proof: compile main.go ALONE, the way the mk does. The single-file
+// assertion above is a proxy; this is the thing itself, and it would also catch
+// a main.go that compiles only because of something in the repo it will not
+// have at runtime.
+func TestCheckerCompilesStandalone(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go toolchain")
+	}
+
+	work := t.TempDir()
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "main.go"), src, 0o600); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	// Byte-for-byte the go.mod the mk writes.
+	if err := os.WriteFile(filepath.Join(work, "go.mod"),
+		[]byte("module authconformance\n\ngo 1.24\n"), 0o600); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	cmd := exec.Command("go", "build", "-o", filepath.Join(work, "authconformance"), ".")
+	cmd.Dir = work
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("main.go does not compile on its own, so `make auth-conformance` is "+
+			"broken in every repo that curls it:\n\n%s", out)
 	}
 }
