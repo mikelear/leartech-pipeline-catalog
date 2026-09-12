@@ -31,6 +31,11 @@
 #                          to raw.githubusercontent.
 #   GOLANGCI_MERGED        Output path for the merged config (default
 #                          .golangci.merged.yml in the repo root).
+#   AUTHCONF_URL           Where to fetch the auth-conformance checker from.
+#                          Defaults to the raw file in leartech-pipeline-catalog@main.
+#   AUTHCONF_FILE          Optional local path to the checker source. When set
+#                          and present, used INSTEAD of curl'ing — lets the
+#                          catalog dogfood ./go/authconformance/main.go.
 #   COVERAGE_SCOPE         `go test -coverpkg` scope (default ./internal/...).
 #   COVERAGE_THRESHOLD     Minimum acceptable total coverage % (default 60.0).
 #   COVERAGE_DELTA_TOLERANCE
@@ -52,6 +57,11 @@ GOLANGCI_VERSION ?= 2.13.2
 GOLANGCI_BASE_URL ?= https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/.golangci.base.yml
 GOLANGCI_BASE_FILE ?=
 GOLANGCI_MERGED ?= .golangci.merged.yml
+
+# auth-conformance: the estate auth standard as a gate. Same curl-or-local
+# shape as GOLANGCI_BASE_*, so the catalog can dogfood it against its own copy.
+AUTHCONF_URL ?= https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/authconformance/main.go
+AUTHCONF_FILE ?=
 
 # ── Coverage knobs (mirror tasks/go-test/pullrequest.yaml defaults) ──────
 #
@@ -100,7 +110,7 @@ FILE_SIZE_FAIL ?= 0
 # .DEFAULT_GOAL so `make -f leartech-go.mk` (no target) prints help.
 .DEFAULT_GOAL := help
 
-.PHONY: help lint-config lint file-size vet tidy-check test test-coverage build vuln pre-push
+.PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage build vuln pre-push
 
 help: ## Print available targets
 	@echo ""
@@ -111,6 +121,8 @@ help: ## Print available targets
 	@echo ""
 	@echo "  Targets:"
 	@echo "    lint-config     Fetch base config + yq-merge with local .golangci.yml → $(GOLANGCI_MERGED)"
+	@echo "    auth-conformance Enforce the estate auth standard (code + chart)"
+	@echo "    auth-standard   Print the auth standard + rationale (no checks run)"
 	@echo "    lint            Run golangci-lint (depends on lint-config, file-size)"
 	@echo "    file-size       Report hand-written .go files over the warn threshold"
 	@echo "    vet             go vet ./..."
@@ -164,12 +176,58 @@ lint-config: ## Produce $(GOLANGCI_MERGED) from base config (curled or local) me
 	fi; \
 	echo "==> merged config → $(GOLANGCI_MERGED) ($$(wc -l < $(GOLANGCI_MERGED)) lines)"
 
+
+# ── auth-conformance: the estate auth standard, enforced ──────────────────────
+#
+# Runs on every PR (via `lint`) and every release for any repo that is BOTH a
+# deployed service (a chart with a Chart.yaml) AND an auth consumer (imports
+# go-common's auth package). Everything else is skipped, loudly.
+#
+# It fails a build when a service departs from the standard: go-common below
+# the floor, the dual-role ServiceClient used for an inbound-only service, a
+# chart missing LEARTECH_AUTH_ISSUER / LEARTECH_AUTH_AUDIENCE or carrying the
+# old envconfig-era names, or ANY flag that can turn auth off.
+#
+# A repo with a genuine exception declares it in `.authconformance` with a
+# mandatory reason — see the checker's godoc. Exceptions arrive in a diff with
+# an argument attached, where a reviewer can disagree with them.
+#
+# Run in a throwaway module: the checker is stdlib-only precisely so this needs
+# no network fetch beyond the source itself and adds nothing to the consumer's
+# go.mod.
+auth-standard: ## Print the estate auth standard (what auth-conformance enforces, and why)
+	@set -eu; \
+	work=$$(mktemp -d); \
+	trap 'rm -rf "$$work"' EXIT; \
+	if [ -n "$(AUTHCONF_FILE)" ] && [ -f "$(AUTHCONF_FILE)" ]; then \
+	  cp "$(AUTHCONF_FILE)" "$$work/main.go"; \
+	else \
+	  curl -fsSL -o "$$work/main.go" "$(AUTHCONF_URL)"; \
+	fi; \
+	printf 'module authconformance\n\ngo 1.24\n' > "$$work/go.mod"; \
+	( cd "$$work" && go run . --explain )
+
+auth-conformance: ## Enforce the estate auth standard (code + chart)
+	@set -eu; \
+	work=$$(mktemp -d); \
+	trap 'rm -rf "$$work"' EXIT; \
+	if [ -n "$(AUTHCONF_FILE)" ] && [ -f "$(AUTHCONF_FILE)" ]; then \
+	  echo "==> using local checker $(AUTHCONF_FILE)"; \
+	  cp "$(AUTHCONF_FILE)" "$$work/main.go"; \
+	else \
+	  echo "==> fetching auth-conformance checker from $(AUTHCONF_URL)"; \
+	  curl -fsSL -o "$$work/main.go" "$(AUTHCONF_URL)"; \
+	fi; \
+	printf 'module authconformance\n\ngo 1.24\n' > "$$work/go.mod"; \
+	( cd "$$work" && go build -o "$$work/authconformance" . ); \
+	"$$work/authconformance" "$$(pwd)"
+
 # ── lint: mirror of the golangci-lint invocation in tasks/go-lint/pullrequest.yaml ──
 #
 # --timeout 15m matches the task; see task comment (Azure builder nodes hit
 # 10m on cold-cache package-load). Locally the timeout is generous, not
 # tight — matching the CI value keeps the two runs comparable.
-lint: lint-config file-size swag-check ## Run golangci-lint against the merged config (+ swagger spec freshness)
+lint: lint-config file-size swag-check auth-conformance ## Run golangci-lint against the merged config (+ swagger freshness + auth standard)
 	@set -eu; \
 	if ! command -v golangci-lint >/dev/null 2>&1; then \
 	  echo "==> golangci-lint not found on PATH"; \

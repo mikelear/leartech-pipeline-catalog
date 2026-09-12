@@ -30,6 +30,7 @@ help:
 	@echo "    test-go-config-schema  Assert the shared base config is schema-valid"
 	@echo "    test-go-version-pin  Assert golangci-lint is pinned identically in mk, task and README"
 	@echo "    test-go-parity   Assert leartech-go.mk merge matches golden linter set"
+	@echo "    test-go-authconformance  Self-test the auth-conformance checker (fixtures)"
 	@echo ""
 	@echo "    logs TASK=x      Tail logs (x = static, image, dynamic, external, internal)"
 	@echo "    clean            Delete all test pods"
@@ -130,6 +131,11 @@ test-go-version-pin:
 	@echo ""
 	@echo "=== golangci-lint version pin check ==="
 	@sh $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))/go/version_pin_test.sh
+
+test-go-authconformance:
+	@echo ""
+	@echo "=== auth-conformance checker self-test ==="
+	@cd $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))/../go/authconformance && go test ./...
 
 test-go-parity:
 	@echo ""
