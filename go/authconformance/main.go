@@ -63,11 +63,28 @@ var requiredChartEnv = []string{
 	"LEARTECH_AUTH_AUDIENCE",
 }
 
-// forbiddenChartEnv: names from the envconfig-derived era, plus credentials a
-// resource server does not spend, plus the one that reads like the issuer knob
+// forbiddenChartEnv is always wrong: names from the envconfig-derived era that
+// match nothing any service reads, plus the one that reads like the issuer knob
 // and is not.
 var forbiddenChartEnv = []string{
 	"AUTH_SERVERURL", "AUTH_CLIENTID", "AUTH_CLIENTSECRET", "AUTH_AUDIENCE", "AUTH_TOKENURL",
+}
+
+// outboundOnlyChartEnv is wrong ONLY for a service with no outbound leg.
+//
+// These were in forbiddenChartEnv unconditionally, which was wrong: a service
+// that genuinely MINTS tokens — leartech-mcp-servers builds per-server s2s
+// clients — legitimately needs a client identity, and flagging it would have
+// told a correct service to delete credentials it actually spends. The code
+// rule already distinguishes the two roles by looking for outbound calls; the
+// chart rule has to use the same signal or it contradicts it.
+// LEARTECH_AUTH_SERVER_URL is here rather than in forbiddenChartEnv for the
+// same reason. It is go-common Config.ServerURL — the TOKEN ENDPOINT a
+// ServiceClient posts to, not the issuer a Verifier validates against. For a
+// resource server it is a decoy that reads like the issuer knob and does
+// nothing; for a service that mints tokens it is required.
+var outboundOnlyChartEnv = []string{
+	"LEARTECH_AUTH_CLIENT_ID", "LEARTECH_AUTH_CLIENT_SECRET", "LEARTECH_AUTH_TARGET_AUDIENCE",
 	"LEARTECH_AUTH_SERVER_URL",
 }
 
@@ -184,6 +201,16 @@ THE LEARTECH AUTH STANDARD — for any service deployed into these clusters.
      something else. NAMING one in an inert/ignored-vars list is fine and
      encouraged — that reports it as ignored. READING one is not.
 
+       This includes optional: true on a credential's secretKeyRef, which is
+       the same trade in chart form: the pod STARTS with an empty client id and
+       secret, and the first token mint fails downstream as a 401 attributed to
+       the wrong layer. Measured 2026-09-12: 19 such mounts across 14 services,
+       concealing one identity that existed in no secret backend at all and had
+       run on an empty secret for months. Without the flag a missing secret is
+       CreateContainerConfigError at pod start — unmissable, attributable, fixed
+       in minutes. Still allowed on genuinely optional things (Redis passwords,
+       GitHub tokens).
+
   5. A genuine exception is DECLARED, in .authconformance, with a reason:
        issuer-env: HYDRA_PUBLIC_URL
        reason: this service IS the issuer — ...
@@ -214,8 +241,8 @@ func main() {
 	var r report
 	ex := loadExemption(root, &r)
 	checkGoCommonFloor(root, &r)
-	checkGoSource(root, &r)
-	checkChart(root, ex, &r)
+	hasOutboundLeg := checkGoSource(root, &r)
+	checkChart(root, ex, hasOutboundLeg, &r)
 
 	// A gate that examined nothing looks exactly like a gate that found
 	// nothing. Make the difference loud.
@@ -329,7 +356,7 @@ func checkGoCommonFloor(root string, r *report) {
 
 // ── code ───────────────────────────────────────────────────────────────────
 
-func checkGoSource(root string, r *report) {
+func checkGoSource(root string, r *report) (hasOutboundLeg bool) {
 	var (
 		serviceClientAt []string
 		hasOutbound     bool
@@ -384,6 +411,7 @@ func checkGoSource(root string, r *report) {
 			"constructs auth.NewServiceClient (%s) but never spends an outbound token (no %s). A service that only VALIDATES tokens is an OAuth2 resource server and must use auth.NewVerifier, which asks for Issuer+Audience and nothing else. ServiceClient's validateConfig additionally demands ClientID and ClientSecret — credentials this service never uses — and their absence took plan-api off the air on 2026-08-13. NOTE: forwarding an inbound bearer to a peer is NOT an outbound leg.",
 			strings.Join(serviceClientAt, ", "), strings.Join(outboundCalls, "/"))
 	}
+	return hasOutbound
 }
 
 type flagUse struct{ name, how string }
@@ -469,7 +497,79 @@ func walkGoFset(root string, fset *token.FileSet, fn func(string, *ast.File)) {
 
 var envNameRE = regexp.MustCompile(`(?m)^\s*-\s*name:\s*([A-Z][A-Z0-9_]*)\s*$`)
 
-func checkChart(root string, ex exemption, r *report) {
+// credentialEnv are the env vars whose secret MUST exist for the service to
+// function. A missing one is a deploy-time fault, not a runtime one.
+var credentialEnv = []string{
+	"LEARTECH_AUTH_CLIENT_ID",
+	"LEARTECH_AUTH_CLIENT_SECRET",
+}
+
+// checkOptionalCredentials fails on `optional: true` under a credential's
+// secretKeyRef.
+//
+// WHY THIS IS A GATE AND NOT A LINT SUGGESTION. `optional: true` is the same
+// trade as an AUTH_ENABLED flag, which this tool already refuses: it converts a
+// PROVISIONING failure into a silent RUNTIME one. The pod starts with an empty
+// client id and secret and the first token mint fails downstream as a 401
+// attributed to the wrong layer.
+//
+// Measured across the estate on 2026-09-12: 19 live auth-credential mounts
+// carried it across 14 services, the orchestrator controller among them. It had
+// concealed an entire missing identity — leartech-lighthouse-pr-events mounts
+// its client secret optional:true, that secret existed in neither GSM nor the
+// cluster, and the pod had been running with an EMPTY secret for months instead
+// of failing to start. Nothing reported it because an empty credential and a
+// working one are indistinguishable until something tries to mint.
+//
+// Without the flag a missing secret is CreateContainerConfigError at pod start:
+// unmissable, attributable, and fixed in minutes.
+//
+// Comment lines are skipped, so prose explaining the rule — including the
+// comment a chart author writes when removing it — cannot trip it.
+func checkOptionalCredentials(src, path string, r *report) {
+	lines := strings.Split(src, "\n")
+
+	for i, line := range lines {
+		m := envNameRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		name := m[1]
+		if !containsStr(credentialEnv, name) {
+			continue
+		}
+
+		// Scan this env entry only: it ends at the next `- name:` or a
+		// dedent to the list level.
+		for j := i + 1; j < len(lines) && j < i+12; j++ {
+			next := lines[j]
+			trimmed := strings.TrimSpace(next)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if envNameRE.MatchString(next) || strings.HasPrefix(trimmed, "- ") {
+				break
+			}
+			if strings.Contains(trimmed, "optional: true") {
+				r.fail("no-optional-credential", path,
+					"mounts %s with `optional: true`. The pod will START with an empty credential and fail later at token mint, as a 401 attributed to the wrong layer. This is the same trade as an AUTH_ENABLED flag. Drop it so a missing secret is CreateContainerConfigError at pod start.",
+					name)
+				break
+			}
+		}
+	}
+}
+
+func containsStr(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func checkChart(root string, ex exemption, hasOutboundLeg bool, r *report) {
 	declared := map[string]string{} // env name -> file it appeared in
 	var valuesFiles []string
 
@@ -492,6 +592,7 @@ func checkChart(root string, ex exemption, r *report) {
 					declared[m[1]] = path
 				}
 			}
+			checkOptionalCredentials(src, path, r)
 			if strings.HasSuffix(d.Name(), "values.yaml") {
 				valuesFiles = append(valuesFiles, path)
 			}
@@ -506,6 +607,21 @@ func checkChart(root string, ex exemption, r *report) {
 		// An exemption substitutes ONE name for the issuer. It still has to be
 		// rendered — otherwise the exemption would excuse the variable being
 		// absent altogether, which is the failure it was meant to describe.
+		// A dual-role service configures auth.Config, which has NO Issuer field:
+		// ServerURL is both the token endpoint it posts to and the base the JWKS
+		// is derived from. So for a service that mints tokens,
+		// LEARTECH_AUTH_SERVER_URL genuinely IS the issuer, and demanding a
+		// separate LEARTECH_AUTH_ISSUER would be asking for a variable go-common
+		// does not read in that role.
+		//
+		// This is the counterpart to outboundOnlyChartEnv listing SERVER_URL:
+		// for a pure resource server it is a decoy that reads like the issuer
+		// knob and is not one; for a minting service it is the issuer.
+		if want == "LEARTECH_AUTH_ISSUER" && hasOutboundLeg {
+			if _, rendered := declared["LEARTECH_AUTH_SERVER_URL"]; rendered {
+				continue
+			}
+		}
 		if want == "LEARTECH_AUTH_ISSUER" && ex.issuerEnv != "" {
 			if _, rendered := declared[ex.issuerEnv]; rendered {
 				continue
@@ -522,7 +638,18 @@ func checkChart(root string, ex exemption, r *report) {
 	for _, bad := range append(append([]string{}, forbiddenChartEnv...), disableFlags...) {
 		if f, ok := declared[bad]; ok {
 			r.fail("chart-env-contract", f,
-				"declares %s. It is either a non-standard name from the envconfig-derived era, a client credential a resource server does not spend, or a flag that can relax auth.", bad)
+				"declares %s. It is either a non-standard name from the envconfig-derived era or a flag that can relax auth — neither is read by any service.", bad)
+		}
+	}
+
+	// Client credentials are a defect only for a service that spends no token.
+	if !hasOutboundLeg {
+		for _, bad := range outboundOnlyChartEnv {
+			if f, ok := declared[bad]; ok {
+				r.fail("verifier-for-inbound", f,
+					"declares %s, but no Go source in this repo spends an outbound token (no %s). A pure resource server holds no client identity, and an unused credential that gates startup is what took plan-api off the air on 2026-08-13.",
+					bad, strings.Join(outboundCalls, "/"))
+			}
 		}
 	}
 
@@ -532,8 +659,11 @@ func checkChart(root string, ex exemption, r *report) {
 			case "enabled", "required", "disabled", "skip", "optional":
 				r.fail("no-disable-flag", vf, "declares auth.%s — auth must not be conditional.", key)
 			case "clientId", "clientid", "clientSecret", "clientsecret":
+				if hasOutboundLeg {
+					continue
+				}
 				r.fail("verifier-for-inbound", vf,
-					"declares auth.%s. A resource server spends no outbound token and holds no client identity; these were only ever load-bearing as input to the dual-role ServiceClient's validateConfig.", key)
+					"declares auth.%s, but no Go source in this repo spends an outbound token. A pure resource server holds no client identity; these were only ever load-bearing as input to the dual-role ServiceClient's validateConfig.", key)
 			}
 		}
 	}

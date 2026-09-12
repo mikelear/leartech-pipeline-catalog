@@ -95,8 +95,8 @@ func run(t *testing.T, root string) []string {
 	var r report
 	ex := loadExemption(root, &r)
 	checkGoCommonFloor(root, &r)
-	checkGoSource(root, &r)
-	checkChart(root, ex, &r)
+	hasOutbound := checkGoSource(root, &r)
+	checkChart(root, ex, hasOutbound, &r)
 
 	var rules []string
 	for _, f := range r.findings {
@@ -336,5 +336,225 @@ func TestChartRepoWithoutGoCommonAuthIsSkipped(t *testing.T) {
 func TestServiceWithChartAndGoCommonAuthIsEnforced(t *testing.T) {
 	if ok, _ := applicable(fixture{}.build(t)); !ok {
 		t.Fatal("a deployed auth consumer was skipped — the gate would enforce nothing")
+	}
+}
+
+// A service that genuinely MINTS outbound tokens legitimately carries a client
+// identity, and the chart rule must not contradict the code rule.
+//
+// This case was a FALSE POSITIVE before the rule became role-aware:
+// leartech-mcp-servers verifies inbound AND builds per-server s2s clients, and
+// the gate told it to delete credentials it actually spends.
+func TestChartClientCredentialsAllowedWhenAServiceMintsTokens(t *testing.T) {
+	root := fixture{
+		files: map[string]string{"main.go": `package main
+
+import (
+	"context"
+
+	"github.com/mikelear/leartech-go-common/pkg/auth"
+)
+
+func main() {
+	c, _ := auth.NewServiceClient(nil, auth.Config{})
+	_, _ = c.GetAuthToken(context.Background())
+}
+`},
+		chartEnv: "        - name: LEARTECH_AUTH_ISSUER\n          value: \"x\"\n" +
+			"        - name: LEARTECH_AUTH_AUDIENCE\n          value: \"y\"\n" +
+			"        - name: LEARTECH_AUTH_CLIENT_ID\n          value: \"svc\"\n",
+		valuesAuth: "auth:\n  audience: x\n  clientId: svc\n",
+	}.build(t)
+
+	if rules := run(t, root); len(rules) != 0 {
+		t.Fatalf("a service with a real outbound leg was flagged for holding a client identity: %v", rules)
+	}
+}
+
+// The same chart WITHOUT an outbound leg must still fail — otherwise the
+// exemption above would excuse every service.
+func TestChartClientCredentialsRefusedWhenNothingMintsTokens(t *testing.T) {
+	root := fixture{
+		chartEnv: "        - name: LEARTECH_AUTH_ISSUER\n          value: \"x\"\n" +
+			"        - name: LEARTECH_AUTH_AUDIENCE\n          value: \"y\"\n" +
+			"        - name: LEARTECH_AUTH_CLIENT_ID\n          value: \"svc\"\n",
+	}.build(t)
+
+	if !has(run(t, root), "verifier-for-inbound") {
+		t.Fatal("a pure resource server declaring LEARTECH_AUTH_CLIENT_ID was accepted")
+	}
+}
+
+// LEARTECH_AUTH_SERVER_URL is go-common's TOKEN ENDPOINT (Config.ServerURL),
+// not the issuer. A minting service needs it; a resource server must not carry
+// it, because it reads like the issuer knob and is not one.
+func TestServerURLAllowedWhenAServiceMintsTokens(t *testing.T) {
+	root := fixture{
+		files: map[string]string{"main.go": `package main
+
+import (
+	"context"
+
+	"github.com/mikelear/leartech-go-common/pkg/auth"
+)
+
+func main() {
+	c, _ := auth.NewServiceClient(nil, auth.Config{})
+	_, _ = c.GetAuthToken(context.Background())
+}
+`},
+		chartEnv: "        - name: LEARTECH_AUTH_ISSUER\n          value: \"x\"\n" +
+			"        - name: LEARTECH_AUTH_AUDIENCE\n          value: \"y\"\n" +
+			"        - name: LEARTECH_AUTH_SERVER_URL\n          value: \"https://hydra\"\n",
+	}.build(t)
+	if rules := run(t, root); len(rules) != 0 {
+		t.Fatalf("a minting service was flagged for declaring its token endpoint: %v", rules)
+	}
+}
+
+func TestServerURLRefusedForAPureResourceServer(t *testing.T) {
+	root := fixture{
+		chartEnv: "        - name: LEARTECH_AUTH_ISSUER\n          value: \"x\"\n" +
+			"        - name: LEARTECH_AUTH_AUDIENCE\n          value: \"y\"\n" +
+			"        - name: LEARTECH_AUTH_SERVER_URL\n          value: \"https://hydra\"\n",
+	}.build(t)
+	if !has(run(t, root), "verifier-for-inbound") {
+		t.Fatal("a resource server declaring LEARTECH_AUTH_SERVER_URL was accepted — it is a decoy that reads like the issuer")
+	}
+}
+
+// A DUAL-ROLE service satisfies the issuer requirement with
+// LEARTECH_AUTH_SERVER_URL, because auth.Config has no separate Issuer field —
+// ServerURL is both the token endpoint and the JWKS base.
+//
+// This was a FALSE POSITIVE before: leartech-maestro-service mints tokens for
+// its notification client and was told to add a variable go-common does not
+// read in that role.
+func TestServerURLSatisfiesTheIssuerForAMintingService(t *testing.T) {
+	root := fixture{
+		files: map[string]string{"main.go": `package main
+
+import (
+	"context"
+
+	"github.com/mikelear/leartech-go-common/pkg/auth"
+)
+
+func main() {
+	c, _ := auth.NewServiceClient(nil, auth.Config{})
+	_, _ = c.GetAuthToken(context.Background())
+}
+`},
+		chartEnv: "        - name: LEARTECH_AUTH_SERVER_URL\n          value: \"https://hydra\"\n" +
+			"        - name: LEARTECH_AUTH_AUDIENCE\n          value: \"y\"\n",
+	}.build(t)
+	if rules := run(t, root); len(rules) != 0 {
+		t.Fatalf("a minting service was told to add LEARTECH_AUTH_ISSUER: %v", rules)
+	}
+}
+
+// And a pure resource server still may NOT substitute it — there SERVER_URL is
+// the token endpoint it never posts to, and the issuer must be named.
+func TestServerURLDoesNotSatisfyTheIssuerForAResourceServer(t *testing.T) {
+	root := fixture{
+		chartEnv: "        - name: LEARTECH_AUTH_SERVER_URL\n          value: \"https://hydra\"\n" +
+			"        - name: LEARTECH_AUTH_AUDIENCE\n          value: \"y\"\n",
+	}.build(t)
+	if !has(run(t, root), "chart-env-contract") {
+		t.Fatal("a resource server substituted SERVER_URL for the issuer and was accepted")
+	}
+}
+
+// ── no-optional-credential ───────────────────────────────────────────────────
+
+const (
+	optionalCredEnv = `        - name: LEARTECH_AUTH_ISSUER
+          value: "x"
+        - name: LEARTECH_AUTH_AUDIENCE
+          value: "y"
+        - name: LEARTECH_AUTH_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: svc-oauth
+              key: CLIENT_ID
+              optional: true
+`
+	requiredCredEnv = `        - name: LEARTECH_AUTH_ISSUER
+          value: "x"
+        - name: LEARTECH_AUTH_AUDIENCE
+          value: "y"
+        - name: LEARTECH_AUTH_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: svc-oauth
+              key: CLIENT_ID
+        - name: LEARTECH_AUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: svc-oauth
+              key: CLIENT_SECRET
+`
+	optionalNonCredEnv = `        - name: LEARTECH_AUTH_ISSUER
+          value: "x"
+        - name: LEARTECH_AUTH_AUDIENCE
+          value: "y"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: svc-redis
+              key: password
+              optional: true
+`
+)
+
+func TestOptionalCredentialIsRefused(t *testing.T) {
+	rules := run(t, fixture{chartEnv: optionalCredEnv}.build(t))
+	if !has(rules, "no-optional-credential") {
+		t.Fatalf("optional:true on a credential was allowed.\n\n"+
+			"It is the same trade as an AUTH_ENABLED flag, which this tool already "+
+			"refuses: the pod starts with an empty credential and fails later at token "+
+			"mint, as a 401 attributed to the wrong layer. 19 live mounts carried it "+
+			"across 14 services on 2026-09-12, concealing an entire missing identity.\n\n"+
+			"rules fired: %v", rules)
+	}
+}
+
+// The control. Without it the refusal above would pass equally on a rule that
+// rejected every credential mount.
+func TestRequiredCredentialIsAccepted(t *testing.T) {
+	rules := run(t, fixture{chartEnv: requiredCredEnv}.build(t))
+	if has(rules, "no-optional-credential") {
+		t.Fatalf("a correctly-required credential mount was refused: %v", rules)
+	}
+}
+
+// optional:true is legitimate on things that genuinely are optional. Scope
+// creep here gets the whole rule exempted wholesale.
+func TestOptionalIsStillAllowedOnNonCredentials(t *testing.T) {
+	rules := run(t, fixture{chartEnv: optionalNonCredEnv}.build(t))
+	if has(rules, "no-optional-credential") {
+		t.Fatalf("the rule fired on a non-auth secret; it is scoped to auth "+
+			"credentials on purpose: %v", rules)
+	}
+}
+
+// The comment a chart author writes when REMOVING the flag must not re-trip it,
+// or every chart documenting the decision fails.
+func TestCommentMentioningTheFlagDoesNotTrip(t *testing.T) {
+	env := `        - name: LEARTECH_AUTH_ISSUER
+          value: "x"
+        - name: LEARTECH_AUTH_AUDIENCE
+          value: "y"
+        # NO optional: true here, deliberately — a missing secret must fail the
+        # pod at start rather than at first token mint.
+        - name: LEARTECH_AUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: svc-oauth
+              key: CLIENT_SECRET
+`
+	rules := run(t, fixture{chartEnv: env}.build(t))
+	if has(rules, "no-optional-credential") {
+		t.Fatalf("a comment describing the removed flag tripped the rule: %v", rules)
 	}
 }
