@@ -339,3 +339,60 @@ func Use(c Chain) { _ = c.Middleware(nil) }
 			"declaration: %v", rules)
 	}
 }
+
+// ── prose is not an endpoint ─────────────────────────────────────────────────
+
+// THE REGRESSION. RFC 9728 detection was a raw file search and matched the path
+// in a COMMENT. On 2026-09-12 it derived leartech-auth-service as
+// public-resource-server because a doc comment in internal/authgraph mentions
+// /.well-known/oauth-protected-resource while explaining what the DCR
+// allow-list is for. auth-service is the ISSUER.
+//
+// Same failure the disable-flag rule already guards against: prose describing a
+// thing is not the thing, and a tool that cannot tell the difference punishes
+// documentation — which is how you get code with no comments and a gate nobody
+// trusts.
+func TestProtectedResourceInACommentIsNotAnEndpoint(t *testing.T) {
+	commentOnly := `package main
+
+import "github.com/mikelear/leartech-go-common/pkg/auth"
+
+// Registrants discover the issuer through RFC 9728 metadata, published at
+// /.well-known/oauth-protected-resource by the PUBLIC deployment — not by this
+// one, which is internal.
+func main() { _, _ = auth.NewVerifier(nil, auth.VerifierConfig{}) }
+`
+	rules := run(t, fixture{
+		authProfile: "type: inbound-resource-server\n",
+		files:       map[string]string{"main.go": commentOnly},
+	}.build(t))
+	if has(rules, "profile-matches-code") {
+		t.Fatalf("a comment mentioning the RFC 9728 path was read as serving it, so an "+
+			"inbound service was mistaken for a public one: %v", rules)
+	}
+}
+
+// The control: an actual route registration IS the endpoint.
+func TestProtectedResourceInAStringLiteralIsAnEndpoint(t *testing.T) {
+	served := `package main
+
+import (
+	"net/http"
+
+	"github.com/mikelear/leartech-go-common/pkg/auth"
+)
+
+func main() {
+	_, _ = auth.NewVerifier(nil, auth.VerifierConfig{})
+	http.HandleFunc("/.well-known/oauth-protected-resource", nil)
+}
+`
+	rules := run(t, fixture{
+		authProfile: "type: public-resource-server\n",
+		files:       map[string]string{"main.go": served},
+	}.build(t))
+	if has(rules, "profile-matches-code") {
+		t.Fatalf("a real /.well-known/oauth-protected-resource route was not recognised, "+
+			"so no service can ever declare public-resource-server: %v", rules)
+	}
+}
