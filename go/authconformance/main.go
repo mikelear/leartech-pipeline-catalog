@@ -217,6 +217,31 @@ THE LEARTECH AUTH STANDARD — for any service deployed into these clusters.
      The reason is mandatory. An exception should arrive in a diff with an
      argument attached, where a reviewer can disagree with it.
 
+    6. The service DECLARES what kind of auth participant it is, in
+       .authprofile, and the tool cross-checks that against the code:
+         type: inbound-resource-server   validates tokens, mints none
+         type: dual-role                 validates AND mints
+         type: outbound-only             mints only; has no audience of its own
+         type: public-resource-server    inbound, for external DCR clients;
+                                         audience is its own URL (RFC 8707
+                                         resource indicator) published via
+                                         RFC 9728 protected-resource metadata
+         type: issuer                    the auth service; needs a reason,
+                                         because it validates what it mints and
+                                         so nothing can contradict it
+         type: none                      does not participate in auth
+       There is NO single standard env set — the correct one is a function of
+       the type. An inbound-only service holding CLIENT_ID/CLIENT_SECRET looks
+       like it carries an identity it never spends, which is how inert
+       credentials reached several charts and how an operator comes to believe
+       a variable is load-bearing when nothing reads it.
+       Declared AND derived, because neither works alone: derivation guesses
+       (a UUID-based heuristic once reported the platform's own SPA client as a
+       stranger holding internal audiences), and declaration drifts (someone
+       adds an outbound call and the declaration becomes a comment that lies).
+       It fails on CONTRADICTIONS the evidence proves, never on absence of
+       evidence — a constructor behind a helper is reported, not failed.
+
 Prove it in tests, not prose: pair every accept with a refuse that differs by
 one variable. A lone refusal proves nothing — everything refuses when the rig
 is misconfigured.
@@ -239,10 +264,16 @@ func main() {
 	}
 
 	var r report
+	var ev evidence
 	ex := loadExemption(root, &r)
 	checkGoCommonFloor(root, &r)
-	hasOutboundLeg := checkGoSource(root, &r)
+	hasOutboundLeg := checkGoSource(root, &r, &ev)
 	checkChart(root, ex, hasOutboundLeg, &r)
+
+	// Profile last: it reports what the earlier walks proved, so it must run
+	// after them.
+	prof := loadProfile(root, &r, ev)
+	checkProfile(prof, ev, &r)
 
 	// A gate that examined nothing looks exactly like a gate that found
 	// nothing. Make the difference loud.
@@ -356,7 +387,22 @@ func checkGoCommonFloor(root string, r *report) {
 
 // ── code ───────────────────────────────────────────────────────────────────
 
-func checkGoSource(root string, r *report) (hasOutboundLeg bool) {
+// fileImportsAuth reports whether this file imports go-common/pkg/auth. Used to
+// qualify generically-named calls (Middleware, BearerAuth) so they only count
+// as inbound auth evidence where the auth package is actually in scope.
+func fileImportsAuth(f *ast.File) bool {
+	for _, im := range f.Imports {
+		if im.Path == nil {
+			continue
+		}
+		if strings.Contains(im.Path.Value, "leartech-go-common/pkg/auth") {
+			return true
+		}
+	}
+	return false
+}
+
+func checkGoSource(root string, r *report, ev *evidence) (hasOutboundLeg bool) {
 	var (
 		serviceClientAt []string
 		hasOutbound     bool
@@ -379,15 +425,46 @@ func checkGoSource(root string, r *report) (hasOutboundLeg bool) {
 			name := sel.Sel.Name
 
 			if name == "NewServiceClient" && !isTest {
-				serviceClientAt = append(serviceClientAt, fmt.Sprintf("%s:%d", path, fset.Position(call.Pos()).Line))
+				at := fmt.Sprintf("%s:%d", path, fset.Position(call.Pos()).Line)
+				serviceClientAt = append(serviceClientAt, at)
+				ev.serviceClientAt = append(ev.serviceClientAt, at)
+			}
+			// THE INBOUND HALF, WHICH HAS TWO SHAPES.
+			//
+			// NewVerifier is the obvious one. But a dual-role service validates
+			// inbound through its ServiceClient — maestro does
+			// `au.Middleware(nil)` and never calls NewVerifier at all — so
+			// looking only for NewVerifier derived maestro as "outbound-only"
+			// when it is dual-role. Middleware and BearerAuth are the other
+			// shape.
+			//
+			// Gated on the FILE importing go-common/pkg/auth, because
+			// "Middleware" is an extremely common method name and an unguarded
+			// match would call any gin middleware an inbound auth gate. That
+			// error points the wrong way: it would fail a genuinely
+			// outbound-only service for validating tokens it does not.
+			if !isTest && (name == "NewVerifier" || name == "Middleware" || name == "BearerAuth") {
+				if fileImportsAuth(f) {
+					ev.verifierAt = append(ev.verifierAt,
+						fmt.Sprintf("%s:%d", path, fset.Position(call.Pos()).Line))
+				}
 			}
 			for _, oc := range outboundCalls {
 				if name == oc && !isTest {
 					hasOutbound = true
+					ev.outboundAt = append(ev.outboundAt,
+						fmt.Sprintf("%s:%d", path, fset.Position(call.Pos()).Line))
 				}
 			}
 			return true
 		})
+
+		if !isTest && ev != nil {
+			if src, rerr := os.ReadFile(path); rerr == nil &&
+				strings.Contains(string(src), "oauth-protected-resource") {
+				ev.protectedResAt = append(ev.protectedResAt, path)
+			}
+		}
 
 		// Disable flags that actually FEED configuration — a struct tag that
 		// binds one, or a direct os.Getenv on the literal.
