@@ -34,6 +34,15 @@
 # Standard debian-slim packages are pre-installed (jq, curl, bash,
 # python3, openssl) so scripts can call them without apk/apt-get.
 #
+#   $AUTHTOKEN          path to the Go JWT/JSON reader built for this run:
+#                         "$AUTHTOKEN" field access_token   < token response
+#                         "$AUTHTOKEN" claim scp            < a JWT
+#                       Source of truth is go/authtoken/main.go in
+#                       leartech-pipeline-catalog, with unit tests for the
+#                       case that matters: an unreadable token does not read
+#                       as a token with no scopes. python3 remains only until
+#                       the last consumer script stops using it.
+#
 # ── end2end/results.json SCHEMA ────────────────────────────────────────
 #
 #   {
@@ -730,6 +739,18 @@ spec:
             echo "==> preview stable; invoking end2end/run.sh"
 
             # ── branch 3: run consumer script ──────────────────────────
+            # Where the Go JWT reader is. Scripts must take it from here
+            # rather than guess a path: run.sh cds into end2end/, so a
+            # relative path works until someone runs a check directly, and
+            # then it silently is not there.
+            export AUTHTOKEN=/workspace/source/authtoken
+            if [ ! -x "$AUTHTOKEN" ]; then
+              echo "FAIL: $AUTHTOKEN is missing or not executable." >&2
+              echo "      The authtoken-build step failed or was skipped, and a suite" >&2
+              echo "      that cannot read a token must not report on scopes." >&2
+              exit 1
+            fi
+
             SCRIPT_EXIT=0
             bash end2end/run.sh || SCRIPT_EXIT=$?
             echo "==> end2end/run.sh exited with $SCRIPT_EXIT"
