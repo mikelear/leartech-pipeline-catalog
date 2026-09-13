@@ -432,24 +432,44 @@ spec:
             # PREVIEW_URL stays exported and stays the right target for a check
             # that is ABOUT the public path -- TLS, redirects, a UI a browser
             # loads. Everything else should prefer the Service.
+            # Resolved AFTER the deploy, by resolve_preview_service_url below.
+            #
+            # Deriving it here killed every end2end run in the estate. The step
+            # runs under `set -eo pipefail`, and
+            #
+            #   svc=$(kubectl get svc -o name | sed ... | grep -x "$APP_NAME" | head -1)
+            #
+            # exits 1 when grep matches nothing -- which is the normal case at
+            # this point, because the preview namespace does not exist yet. The
+            # step died immediately after apt-get with a single line of output
+            # and no message at all.
             PREVIEW_SERVICE_URL=""
-            if command -v kubectl >/dev/null 2>&1; then
-              # Prefer a Service whose name matches this app, so a preview that
-              # also runs an issuer or a datastore does not get probed on the
-              # wrong one. Falls back to the only Service if there is exactly
-              # one, and to nothing at all rather than to a guess.
-              svc=$(kubectl -n "$PREVIEW_NAMESPACE" get svc -o name 2>/dev/null                       | sed 's|service/||' | grep -x "$APP_NAME" | head -1)
-              [ -z "$svc" ] && svc=$(kubectl -n "$PREVIEW_NAMESPACE" get svc -o name 2>/dev/null                       | sed 's|service/||' | grep -- "$APP_NAME" | grep -v -- '-public$' | head -1)
-              if [ -n "$svc" ]; then
-                port=$(kubectl -n "$PREVIEW_NAMESPACE" get svc "$svc"                          -o jsonpath='{.spec.ports[0].port}' 2>/dev/null)
-                [ -n "$port" ] && PREVIEW_SERVICE_URL="http://${svc}.${PREVIEW_NAMESPACE}.svc.cluster.local:${port}"
-              fi
-            fi
             export PREVIEW_SERVICE_URL
+
+            # Every command here is guarded: this function may NEVER fail the
+            # step. Its whole purpose is to prefer a better probe target, and
+            # falling back to the public URL is a worse probe, not a failure.
+            resolve_preview_service_url() {
+              command -v kubectl >/dev/null 2>&1 || return 0
+              local svcs svc port
+              svcs=$(kubectl -n "$PREVIEW_NAMESPACE" get svc -o name 2>/dev/null | sed 's|service/||' || true)
+              [ -n "$svcs" ] || return 0
+              # Exact name match first, so a preview that also runs an issuer or
+              # a datastore is not probed on one of those. Then a substring
+              # match excluding the -public surface, which is what
+              # release-prefixed Service names need.
+              svc=$(printf '%s\n' "$svcs" | grep -x "$APP_NAME" | head -1 || true)
+              [ -n "$svc" ] || svc=$(printf '%s\n' "$svcs" | grep -- "$APP_NAME" | grep -v -- '-public$' | head -1 || true)
+              [ -n "$svc" ] || return 0
+              port=$(kubectl -n "$PREVIEW_NAMESPACE" get svc "$svc" -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || true)
+              [ -n "$port" ] || return 0
+              PREVIEW_SERVICE_URL="http://${svc}.${PREVIEW_NAMESPACE}.svc.cluster.local:${port}"
+              export PREVIEW_SERVICE_URL
+            }
 
             echo "==> consumer env:"
             echo "    PREVIEW_URL=$PREVIEW_URL"
-            echo "    PREVIEW_SERVICE_URL=${PREVIEW_SERVICE_URL:-<none found>}"
+            echo "    PREVIEW_SERVICE_URL=<resolved after the deploy>"
             echo "    PREVIEW_HOST_BASE=$PREVIEW_HOST_BASE"
             echo "    PREVIEW_NAMESPACE=$PREVIEW_NAMESPACE"
             echo "    APP_NAME=$APP_NAME  PULL_NUMBER=$PULL_NUMBER  CLUSTER_ID=${CLUSTER_ID:-}"
@@ -705,7 +725,10 @@ spec:
             HEALTH_CANDIDATES="${END2END_HEALTH_PATH:-/health/live /health/ready /health /healthz}"
 
             # Where readiness is measured. The Service when there is one, the
-            # public URL otherwise.
+            # public URL otherwise. Resolved here rather than at env-setup time
+            # because the preview namespace does not exist yet up there.
+            resolve_preview_service_url
+            echo "==> PREVIEW_SERVICE_URL=${PREVIEW_SERVICE_URL:-<none found>}"
             PROBE_BASE="${PREVIEW_SERVICE_URL:-$PREVIEW_URL}"
             DEADLINE=$(( $(date +%s) + MAX_WAIT ))
 
