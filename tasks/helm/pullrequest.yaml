@@ -157,6 +157,17 @@ spec:
               echo "==> a chart that never deploys in CI is only render-tested"
               exit 0
             fi
+            # `jx preview create` needs DOCKER_REGISTRY and DOCKER_REGISTRY_ORG
+            # even for a chart repo that builds no image. jx-variables wrote
+            # both to .jx/variables.sh two steps ago; without sourcing it this
+            # step ends as
+            #
+            #   error: failed to create env vars: missing $DOCKER_REGISTRY environment variable
+            #
+            # which is what the umbrella's own PR did on its first green
+            # chart-tests run. The go task has always sourced it; this one was
+            # written without that line.
+            . ./.jx/variables.sh
             jx preview create
       podTemplate:
         tolerations:
