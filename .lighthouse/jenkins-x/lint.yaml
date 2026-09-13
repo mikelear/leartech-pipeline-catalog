@@ -138,6 +138,17 @@ spec:
               echo "    exercises them -- the same gap this repo fails others for."
             fi
             echo "==> tested $found module(s)"
+
+            # The shared end2end runner is shell, not a Go module, so the loop
+            # above cannot see it. It decides what a check's exit code MEANS
+            # and writes the results.json the qa-gate reads, and it carried two
+            # defects this year that each survived because nothing exercised
+            # it.
+            for t in end2end-runner/*_test.sh; do
+              [ -f "$t" ] || continue
+              echo "==> $t"
+              bash "$t" || rc=1
+            done
             exit "$rc"
         - image: cytopia/yamllint:latest
           name: yamllint
