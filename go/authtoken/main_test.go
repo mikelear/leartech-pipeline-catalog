@@ -105,3 +105,73 @@ func TestField(t *testing.T) {
 			"would otherwise look identical to a refused grant")
 	}
 }
+
+func TestPayloadAndClaimAgree(t *testing.T) {
+	tok := jwt(t, map[string]any{"scp": []any{"a"}, "aud": "x", "iss": "https://issuer"})
+	p, err := payload([]byte(tok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(p), &m); err != nil {
+		t.Fatalf("payload is not valid JSON: %v (%s)", err, p)
+	}
+	if m["iss"] != "https://issuer" {
+		t.Errorf("payload lost iss: %s", p)
+	}
+	// The two share a decoder precisely so they cannot disagree; assert it,
+	// because "claim says one thing and payload another" is the bug that
+	// having two code paths would produce.
+	got, err := claim([]byte(tok), "aud")
+	if err != nil || got != "x" {
+		t.Errorf("claim(aud) = %q, %v", got, err)
+	}
+	if _, err := payload([]byte("not-a-token")); err == nil {
+		t.Error("payload accepted a non-token; an unreadable token must be an error")
+	}
+}
+
+// A forged token exists to show that a resource server checks signatures
+// rather than merely parsing tokens. Its claims must therefore be perfect
+// and its signature unverifiable — anything else and a rejection is about
+// the claims instead.
+func TestForgeProducesAnUnverifiableTokenWithIntactClaims(t *testing.T) {
+	in := `{"sub":"forged-subject","aud":["leartech-maestro-service"],"scp":["leartechapi.internal_services"]}`
+	tok, err := forge([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(strings.Split(tok, ".")); n != 3 {
+		t.Fatalf("forged token has %d segments, want 3", n)
+	}
+	if got, _ := claim([]byte(tok), "aud"); got != "leartech-maestro-service" {
+		t.Errorf("forged aud = %q; a rejection must not be attributable to the claims", got)
+	}
+	if got, _ := claim([]byte(tok), "scp"); got != "leartechapi.internal_services" {
+		t.Errorf("forged scp = %q", got)
+	}
+
+	// Two forgeries must differ in signature: a fixed key would make this a
+	// credential someone could add to a JWKS, and then the test it supports
+	// would silently start passing for the wrong reason.
+	again, err := forge([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := func(s string) string { return strings.Split(s, ".")[2] }
+	if sig(tok) == sig(again) {
+		t.Error("two forgeries share a signature, so the signing key is not random")
+	}
+	// Same claims, so only the signature may differ.
+	if strings.Join(strings.Split(tok, ".")[:2], ".") != strings.Join(strings.Split(again, ".")[:2], ".") {
+		t.Error("forgeries differ in header or payload, not just signature")
+	}
+
+	if _, err := forge([]byte(`{}`)); err == nil {
+		t.Error("forging with no claims should be refused: such a token would be rejected " +
+			"for its empty payload rather than its signature, proving nothing")
+	}
+	if _, err := forge([]byte(`not json`)); err == nil {
+		t.Error("forge accepted non-JSON claims")
+	}
+}
