@@ -72,6 +72,24 @@ var (
 	// that exemption is how it stops meaning anything.
 	patternListRe = regexp.MustCompile(`(^|/)\.(gitignore|dockerignore|gitattributes)$`)
 
+	// Declaration files that a checker VERIFIES against the code. Their
+	// comments explain a declared value, and the value is cross-checked —
+	// .authprofile says what kind of auth participant a service is, and
+	// authconformance fails the build on a contradiction with what the code
+	// does. That is a stronger binding than a unit test: the declaration
+	// cannot drift from the behaviour without failing.
+	//
+	// Without this, a .authprofile can carry no explanation at all, because
+	// the ratio rule fails on any prose with zero test lines and a
+	// declaration file has none. leartech-gate #23 and leartech-plan-api #38
+	// both stalled on exactly that, and the alternative was a bare
+	// "type: inbound-resource-server" with nothing saying how it was
+	// determined — which is what the file's own convention argues against.
+	//
+	// Narrow on purpose, and for a specific reason rather than a category:
+	// the file is itself verified. A .yaml or .go comment is not.
+	verifiedDeclarationRe = regexp.MustCompile(`(^|/)\.(authprofile|authconformance)$`)
+
 	// A claim inside a TEST file needs no proven-by: the file is the proof.
 	// Documentation-through-tests is the goal, so a test header stating what it
 	// proves is the shape we want, not the shape we are policing.
@@ -163,6 +181,9 @@ func evaluate(added []addedLine, exists func(string) bool) report {
 		}
 		if patternListRe.MatchString(a.file) {
 			continue // a label for a group of globs, not a claim about behaviour
+		}
+		if verifiedDeclarationRe.MatchString(a.file) {
+			continue // a declaration a checker cross-checks against the code
 		}
 		if testFileRe.MatchString(a.file) {
 			continue // sits with its proof; this is the documentation we want
