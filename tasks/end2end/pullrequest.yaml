@@ -293,7 +293,20 @@ spec:
 
             # ── branch 2: wait for preview ─────────────────────────────
             MAX_WAIT="${END2END_HEALTH_TIMEOUT:-600}"
-            HEALTH_PATH="${END2END_HEALTH_PATH:-/health/live}"
+            # Candidate health paths, tried in order until one answers 200.
+            #
+            # This was a single default of /health/live, and three services do
+            # not serve it: maestro registers GET "" on /health, mcp-servers
+            # serves /healthz. Both reported
+            #   FAIL: preview never reached stable ready state
+            # while every pod was Running and their helm releases were
+            # deployed — a healthy preview declared dead by a probe looking in
+            # the wrong place, and the message blamed the deploy.
+            #
+            # END2END_HEALTH_PATH still wins when set, so a service with an
+            # unusual path can be explicit. When unset, the probe discovers the
+            # path instead of assuming it.
+            HEALTH_CANDIDATES="${END2END_HEALTH_PATH:-/health/live /health/ready /health /healthz}"
             DEADLINE=$(( $(date +%s) + MAX_WAIT ))
 
             # Try preview-gate first (deployed as part of preview helmfile).
@@ -355,6 +368,28 @@ spec:
               done
             else
               # Fallback: direct health probe (3 consecutive 200s)
+              # Resolve which candidate this service actually serves before
+              # timing anything. A probe that never finds a live path must say
+              # so with the paths it tried, not report the preview as dead.
+              HEALTH_PATH=""
+              RESOLVE_DEADLINE=$(( $(date +%s) + 120 ))
+              while [ -z "$HEALTH_PATH" ] && [ "$(date +%s)" -lt "$RESOLVE_DEADLINE" ]; do
+                for cand in $HEALTH_CANDIDATES; do
+                  if curl -sSf -o /dev/null -m 5 "$PREVIEW_URL$cand" 2>/dev/null; then
+                    HEALTH_PATH="$cand"
+                    echo "==> health path resolved: $HEALTH_PATH"
+                    break
+                  fi
+                done
+                [ -z "$HEALTH_PATH" ] && sleep 5
+              done
+              if [ -z "$HEALTH_PATH" ]; then
+                echo "==> no candidate health path answered 200 in 120s; tried: $HEALTH_CANDIDATES"
+                echo "==> continuing with the first candidate so the wait below reports a real"
+                echo "    timeout rather than a resolution failure"
+                HEALTH_PATH="$(printf '%s\n' $HEALTH_CANDIDATES | head -1)"
+              fi
+
               echo "==> waiting up to $((MAX_WAIT / 60)) min for $PREVIEW_URL$HEALTH_PATH (3 consecutive 200s)"
               STREAK=0
               REQUIRED=3
@@ -372,6 +407,9 @@ spec:
                       ":x: **End-to-end: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" \
                       "" \
                       "\`$PREVIEW_URL$HEALTH_PATH\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." \
+                      "" \
+                      "Candidates tried: \`$HEALTH_CANDIDATES\`. If this service serves a different" \
+                      "path, set \`END2END_HEALTH_PATH\` in its \`.lighthouse/jenkins-x/end2end.yaml\`." \
                       "" \
                       "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
                     post_sticky "$body"
