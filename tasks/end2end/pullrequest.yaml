@@ -399,18 +399,17 @@ spec:
                     2>/dev/null | grep -v '^$' | head -1 || true)
                 fi
                 if [ -z "$HEALTH_PATH" ]; then
-                  # Last resort before candidates: any deployment whose name
-                  # contains the app name. Still scoped to the service, never
-                  # to whatever sorts first.
-                  HEALTH_PATH=$(kubectl -n "$PREVIEW_NAMESPACE" get deploy -o json 2>/dev/null \
-                    | python3 -c "
-import json,sys,os
-app=os.environ.get('APP_NAME','')
-for it in json.load(sys.stdin).get('items',[]):
-    if app and app in it['metadata']['name']:
-        p=(it['spec']['template']['spec']['containers'][0].get('readinessProbe') or {}).get('httpGet',{}).get('path')
-        if p: print(p); break
-" 2>/dev/null || true)
+                  # Last resort before candidates: the deployment whose NAME
+                  # contains the app name. Helm prefixes the release, so this is
+                  # usually the tier that hits. Still scoped to the service —
+                  # never to whatever sorts first.
+                  dep=$(kubectl -n "$PREVIEW_NAMESPACE" get deploy -o name 2>/dev/null \
+                        | grep -- "$APP_NAME" | head -1 || true)
+                  if [ -n "$dep" ]; then
+                    HEALTH_PATH=$(kubectl -n "$PREVIEW_NAMESPACE" get "$dep" \
+                      -o jsonpath='{.spec.template.spec.containers[0].readinessProbe.httpGet.path}' \
+                      2>/dev/null || true)
+                  fi
                 fi
                 if [ -n "$HEALTH_PATH" ]; then
                   echo "==> health path from the deployed readinessProbe: $HEALTH_PATH"
