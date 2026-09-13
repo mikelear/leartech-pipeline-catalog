@@ -9,7 +9,7 @@
 #
 # WHAT IT DOES, in order:
 #   1. lint the chart (dependency build first, so subchart pins resolve)
-#   2. run the repo's OWN executable checks — tests/*/run.sh
+#   2. run the repo's OWN executable checks — tests/*_test.go (Go)
 #   3. deploy the chart into a preview, if the repo has a preview helmfile
 #
 # Step 2 is the point. A chart's faults are mostly not in its manifests:
@@ -19,6 +19,10 @@
 # provisioning Job after the client was already created. `helm lint` and
 # `helm template` passed on every one. The repo's tests caught them, so the
 # pipeline has to run them.
+#
+# Those tests are Go, and each is mutation-verified in its own repo: the
+# assertion is shown to fail when the thing it checks is broken, and to pass
+# when it is not. A chart test that cannot fail is decoration.
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
@@ -76,6 +80,28 @@ spec:
               helm lint "$dir"
             done
 
+        # The chart's own tests are Go, and no single image has both the Go
+        # toolchain and helm: jx-boot:3.16.59 carries helm 3.15.1 and curl but
+        # neither go nor python3 (probed, not assumed). So compile here, run
+        # next door. `go test -c` also removes a trap worth naming: `go test`
+        # caches on file inputs, and a chart read through exec is not one of
+        # them, so a run against a mutated chart replays the previous PASS. A
+        # compiled binary cannot do that.
+        - image: golang:1.26
+          name: chart-tests-build
+          resources: {}
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+            if [ ! -f tests/go.mod ]; then
+              echo "==> no tests/go.mod — nothing to compile"
+              exit 0
+            fi
+            cd tests
+            go vet ./...
+            CGO_ENABLED=0 go test -c -o /workspace/source/chart.test ./...
+            echo "==> built chart.test ($(stat -c%s /workspace/source/chart.test) bytes, static)"
+
         - image: ghcr.io/jenkins-x/jx-boot:3.16.59
           name: chart-tests
           resources: {}
@@ -83,31 +109,38 @@ spec:
             #!/usr/bin/env bash
             set -euo pipefail
             shopt -s nullglob
-            runners=(tests/*/run.sh)
-            if [ ${#runners[@]} -eq 0 ]; then
-              echo "==> no tests/*/run.sh in this repo"
+
+            # Runners this step no longer executes. Left unrun they would read
+            # as passing, so refuse instead of skipping.
+            stale=(tests/*/run.sh)
+            if [ ${#stale[@]} -gt 0 ]; then
+              echo "FAIL: ${stale[*]} will not be run — this step executes Go tests."
+              echo "      Convert them to tests/*_test.go. A runner nothing invokes is"
+              echo "      worse than no test: it looks like coverage in the tree."
+              exit 1
+            fi
+
+            if [ ! -f tests/go.mod ]; then
+              echo "==> no tests/go.mod in this repo"
               echo "==> NOTE: helm lint and helm template cannot see install ORDER,"
               echo "    a delisted image tag, or a hook that waits on a resource the"
               echo "    same release has not created yet. A chart with no executable"
               echo "    checks is unverified in exactly the ways charts fail."
               exit 0
             fi
-            # python3 and curl are what the existing runners use. If they are
-            # absent the checks would be skipped, and a skipped check reads as
-            # a passing one — so say so and fail instead.
-            for tool in python3 curl; do
-              command -v "$tool" >/dev/null 2>&1 || {
-                echo "FAIL: $tool is missing, so tests/*/run.sh cannot run."
-                echo "      Refusing to report success for checks that never executed."
-                exit 1
-              }
-            done
-            rc=0
-            for r in "${runners[@]}"; do
-              echo "==> $r"
-              bash "$r" || { echo "FAIL: $r"; rc=1; }
-            done
-            exit "$rc"
+
+            if [ ! -x chart.test ]; then
+              echo "FAIL: tests/go.mod exists but chart.test was not built."
+              echo "      The compile step failed or was skipped, and skipping a"
+              echo "      check is not the same as passing it."
+              exit 1
+            fi
+
+            # The tests shell out to helm, and the chart's subchart archives
+            # come from the dependency build in chart-lint, which ran in this
+            # same workspace.
+            command -v helm >/dev/null || { echo "FAIL: helm missing from this image"; exit 1; }
+            cd tests && exec /workspace/source/chart.test -test.v
 
         - image: ghcr.io/jenkins-x-plugins/jx-preview:0.6.0
           name: promote-jx-preview
