@@ -195,3 +195,41 @@ func TestPatternListCommentsAreNotProse(t *testing.T) {
 			"has leaked beyond the three filenames it names", r2.comments, len(counted))
 	}
 }
+
+// TestVerifiedDeclarationCommentsAreNotProse covers files whose declared value
+// a CHECKER cross-checks against the code.
+//
+// .authprofile says what kind of auth participant a service is, and
+// authconformance fails the build when that contradicts what the code does.
+// The comment explaining it is therefore bound to the behaviour by a
+// mechanism, which is the property the ratio rule exists to demand — it just
+// is not a Go test.
+//
+// Without the exemption a .authprofile can carry no explanation at all: the
+// rule fails on any prose with zero test lines, and a declaration file has
+// none. leartech-gate #23 and leartech-plan-api #38 both stalled on that, and
+// the alternative was a bare type: line with nothing saying how it was
+// determined.
+func TestVerifiedDeclarationCommentsAreNotProse(t *testing.T) {
+	exempt := []addedLine{
+		{file: ".authprofile", text: "# inbound-resource-server: builds NewVerifier, mints nothing"},
+		{file: ".authconformance", text: "# issuer-env: HYDRA_PUBLIC_URL — this service IS the issuer"},
+		{file: "sub/dir/.authprofile", text: "# dual-role, and here is why"},
+	}
+	if r := evaluate(exempt, func(string) bool { return true }); r.comments != 0 {
+		t.Errorf("counted %d prose line(s) in verified declaration files; the declaration is "+
+			"cross-checked against the code, which is a stronger binding than a test", r.comments)
+	}
+
+	// The exemption must not leak to anything a checker does NOT verify.
+	counted := []addedLine{
+		{file: "values.yaml", text: "# the issuer must be reachable"},
+		{file: "internal/auth/profile.go", text: "// the profile must say inbound"},
+		{file: "docs/authprofile.md", text: "# what .authprofile means"},
+		{file: ".authprofile.example", text: "# a sample, not a declaration"},
+	}
+	if r := evaluate(counted, func(string) bool { return true }); r.comments != len(counted) {
+		t.Errorf("counted %d of %d prose lines outside verified declarations; the exemption "+
+			"has leaked past the two filenames it names", r.comments, len(counted))
+	}
+}
