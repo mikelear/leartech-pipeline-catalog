@@ -17,6 +17,15 @@
 # ── ENV AVAILABLE TO end2end/run.sh ────────────────────────────────────
 #
 #   PREVIEW_URL         https://<APP_NAME>-pr-<PULL_NUMBER>.jx.leartech.com
+#                       Through the ingress. Use it for checks that are ABOUT
+#                       the public path - TLS, redirects, a UI a browser loads.
+#   PREVIEW_SERVICE_URL http://<svc>.<PREVIEW_NAMESPACE>.svc.cluster.local:<port>
+#                       The app's own Service. Prefer this for everything else:
+#                       no DNS, no certificate and no Ingress object have to be
+#                       right for it to work, and a 404 from it is the app's
+#                       404 rather than an ingress default backend's. Empty
+#                       when no Service matching APP_NAME exists, which is
+#                       itself worth noticing.
 #   PREVIEW_HOST_BASE   pr-<PULL_NUMBER>.jx.leartech.com
 #                       (suffix shared by all preview hostnames — useful
 #                       for multi-subdomain stacks like auth-ui + auth-api
@@ -399,8 +408,48 @@ spec:
             export PREVIEW_URL="https://${PREVIEW_HOST_PREFIX}-${PREVIEW_HOST_BASE}"
             export PREVIEW_NAMESPACE="jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}"
 
+            # ── PREVIEW_SERVICE_URL: the app's own Service, in the cluster ──
+            #
+            # PREVIEW_URL goes through the ingress, which means DNS, a
+            # certificate and an Ingress object all have to be right before a
+            # test can say anything about the POD. Two failures today were
+            # exactly that and neither named the ingress:
+            #
+            #   * three services were reported "never reached stable ready
+            #     state" while every pod was Running, because the probe
+            #     guessed a health path the ingress happened not to serve;
+            #   * leartech-mcp-servers' chart ships no ingress template for its
+            #     internal surface at all, so every request went to the ingress
+            #     controller's default backend and came back 404 -- which its
+            #     auth suite reported as "/mcps admitted an unauthenticated
+            #     request (404)" while the pod was correctly answering 401.
+            #
+            # A 404 from a default backend is indistinguishable from a 404 from
+            # the app. So the Service name is published too, and it is what
+            # readiness is judged on: the question "is this pod serving" should
+            # not be answered through three other components.
+            #
+            # PREVIEW_URL stays exported and stays the right target for a check
+            # that is ABOUT the public path -- TLS, redirects, a UI a browser
+            # loads. Everything else should prefer the Service.
+            PREVIEW_SERVICE_URL=""
+            if command -v kubectl >/dev/null 2>&1; then
+              # Prefer a Service whose name matches this app, so a preview that
+              # also runs an issuer or a datastore does not get probed on the
+              # wrong one. Falls back to the only Service if there is exactly
+              # one, and to nothing at all rather than to a guess.
+              svc=$(kubectl -n "$PREVIEW_NAMESPACE" get svc -o name 2>/dev/null                       | sed 's|service/||' | grep -x "$APP_NAME" | head -1)
+              [ -z "$svc" ] && svc=$(kubectl -n "$PREVIEW_NAMESPACE" get svc -o name 2>/dev/null                       | sed 's|service/||' | grep -- "$APP_NAME" | grep -v -- '-public$' | head -1)
+              if [ -n "$svc" ]; then
+                port=$(kubectl -n "$PREVIEW_NAMESPACE" get svc "$svc"                          -o jsonpath='{.spec.ports[0].port}' 2>/dev/null)
+                [ -n "$port" ] && PREVIEW_SERVICE_URL="http://${svc}.${PREVIEW_NAMESPACE}.svc.cluster.local:${port}"
+              fi
+            fi
+            export PREVIEW_SERVICE_URL
+
             echo "==> consumer env:"
             echo "    PREVIEW_URL=$PREVIEW_URL"
+            echo "    PREVIEW_SERVICE_URL=${PREVIEW_SERVICE_URL:-<none found>}"
             echo "    PREVIEW_HOST_BASE=$PREVIEW_HOST_BASE"
             echo "    PREVIEW_NAMESPACE=$PREVIEW_NAMESPACE"
             echo "    APP_NAME=$APP_NAME  PULL_NUMBER=$PULL_NUMBER  CLUSTER_ID=${CLUSTER_ID:-}"
@@ -654,6 +703,10 @@ spec:
             # unusual path can be explicit. When unset, the probe discovers the
             # path instead of assuming it.
             HEALTH_CANDIDATES="${END2END_HEALTH_PATH:-/health/live /health/ready /health /healthz}"
+
+            # Where readiness is measured. The Service when there is one, the
+            # public URL otherwise.
+            PROBE_BASE="${PREVIEW_SERVICE_URL:-$PREVIEW_URL}"
             DEADLINE=$(( $(date +%s) + MAX_WAIT ))
 
             # Try preview-gate first (deployed as part of preview helmfile).
@@ -771,7 +824,7 @@ spec:
               RESOLVE_DEADLINE=$(( $(date +%s) + 120 ))
               while [ -z "$HEALTH_PATH" ] && [ "$(date +%s)" -lt "$RESOLVE_DEADLINE" ]; do
                 for cand in $HEALTH_CANDIDATES; do
-                  if curl -sSf -o /dev/null -m 5 "$PREVIEW_URL$cand" 2>/dev/null; then
+                  if curl -sSf -o /dev/null -m 5 "$PROBE_BASE$cand" 2>/dev/null; then
                     HEALTH_PATH="$cand"
                     echo "==> health path resolved: $HEALTH_PATH"
                     break
@@ -786,11 +839,23 @@ spec:
                 HEALTH_PATH="$(printf '%s\n' $HEALTH_CANDIDATES | head -1)"
               fi
 
-              echo "==> waiting up to $((MAX_WAIT / 60)) min for $PREVIEW_URL$HEALTH_PATH (3 consecutive 200s)"
+              # Judge readiness on the pod, through its Service, rather than through
+              # the ingress. A 404 from an ingress default backend is indistinguishable
+              # from a 404 from the app, and two failures today were exactly that.
+              # If no Service was found, fall back to the public URL and SAY so: a probe
+              # that silently changed target would make one green tick mean two things.
+              if [ -n "${PREVIEW_SERVICE_URL:-}" ]; then
+                echo "==> probing the app's Service, not the ingress"
+              else
+                echo "==> no Service found for $APP_NAME; falling back to the public URL."
+                echo "    DNS, the certificate and the Ingress all have to be right for this"
+                echo "    to say anything about the pod."
+              fi
+              echo "==> waiting up to $((MAX_WAIT / 60)) min for $PROBE_BASE$HEALTH_PATH (3 consecutive 200s)"
               STREAK=0
               REQUIRED=3
               while [ "$STREAK" -lt "$REQUIRED" ]; do
-                if curl -sSf -o /dev/null -m 5 "$PREVIEW_URL$HEALTH_PATH" 2>/dev/null; then
+                if curl -sSf -o /dev/null -m 5 "$PROBE_BASE$HEALTH_PATH" 2>/dev/null; then
                   STREAK=$((STREAK + 1))
                   echo "   probe $STREAK/$REQUIRED ok"
                 else
@@ -802,7 +867,7 @@ spec:
                       "$MARKER" \
                       ":x: **End-to-end: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" \
                       "" \
-                      "\`$PREVIEW_URL$HEALTH_PATH\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." \
+                      "\`$PROBE_BASE$HEALTH_PATH\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." \
                       "" \
                       "Candidates tried: \`$HEALTH_CANDIDATES\`. If this service serves a different" \
                       "path, set \`END2END_HEALTH_PATH\` in its \`.lighthouse/jenkins-x/end2end.yaml\`." \
