@@ -142,6 +142,10 @@ spec:
             command -v helm >/dev/null || { echo "FAIL: helm missing from this image"; exit 1; }
             cd tests && exec /workspace/source/chart.test -test.v
 
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/preview/clear-stuck-release.yaml@main
+          name: ""
+          resources: {}
+
         - image: ghcr.io/jenkins-x-plugins/jx-preview:0.6.0
           name: promote-jx-preview
           resources: {}

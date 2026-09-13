@@ -1,0 +1,148 @@
+# Language-agnostic: clear a preview helm release stuck in a pending state,
+# before `jx preview create` tries to upgrade it.
+#
+# WHY THIS EXISTS. leartech-maestro-service #11 had az/pr failing with
+#
+#   Error: UPGRADE FAILED: another operation (install/upgrade/rollback) is in progress
+#
+# for nineteen hours. The cause was one revision that never finished:
+#
+#   $ helm -n jx-mikelear-leartech-maestro-service-pr-11 history preview-infrastructure
+#   REVISION  UPDATED                   STATUS           CHART
+#   1         Sat Sep 12 16:39:42 2026  pending-install  leartech-preview-infrastructure-0.0.1
+#
+# 0.0.1 of that chart ran its Hydra migration as a helm hook, and hooks run to
+# completion BEFORE normal resources — so `hydra migrate sql` looked up
+# preview-hydra-postgresql, which did not exist yet, and the install stalled
+# there permanently (eleven Error pods, one per retry). The chart fixed that in
+# 0.0.4 by moving the migration to an initContainer, but helm could never get
+# to 0.0.4: a pending revision holds a lock, and helm has no unlock command.
+# Every later run failed on the lock rather than on anything in the commit.
+#
+# A pending release is indistinguishable from a healthy one in a green build
+# log: the promote step fails with a message about concurrency, which reads
+# like a transient race to be retried. Retrying is exactly what does not work.
+#
+# WHAT IT DOES. In the PREVIEW namespace only, any release whose live revision
+# has been pending for longer than PREVIEW_LOCK_MAX_AGE (default 900s) is
+# cleared: uninstalled if it never completed a first install, rolled back to
+# the previous revision otherwise.
+#
+# The age threshold is the safety property. `helm upgrade` in these pipelines
+# runs with --timeout 600s, so an operation still holding a lock after 900s
+# cannot be alive — it either timed out or its pod was killed. Anything
+# younger is left alone, because a concurrent run of the same PR legitimately
+# mid-install must not be interrupted.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: clear-stuck-release
+spec:
+  pipelineSpec:
+    tasks:
+    - name: clear-stuck-release
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          name: ""
+          resources: {}
+          workingDir: /workspace/source
+        steps:
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: clear-stuck-release
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -e
+
+            if [ -z "${PULL_NUMBER:-}" ]; then
+              echo "==> no PULL_NUMBER — not a PR build, so there is no preview namespace"
+              exit 0
+            fi
+
+            NS="jx-${REPO_OWNER}-${REPO_NAME}-pr-${PULL_NUMBER}"
+
+            # Guard the blast radius by shape, not by trust. This step deletes
+            # and rolls back helm releases, and the only namespaces where that
+            # is acceptable are per-PR previews, which are recreated by the
+            # very run that follows.
+            case "$NS" in
+              jx-*-pr-[0-9]*) ;;
+              *) echo "FAIL: $NS does not look like a preview namespace; refusing to touch it" >&2
+                 exit 1 ;;
+            esac
+
+            if ! kubectl get ns "$NS" >/dev/null 2>&1; then
+              echo "==> $NS does not exist yet — nothing to clear"
+              exit 0
+            fi
+
+            MAX_AGE="${PREVIEW_LOCK_MAX_AGE:-900}"
+            NOW=$(date +%s)
+            FOUND=0
+
+            # Helm stores each revision as a Secret labelled with the release
+            # name, its status and its revision number, so the live state is
+            # readable without helm itself. Superseded revisions keep status
+            # "superseded", so filtering on pending-* selects only the
+            # revision actually holding the lock.
+            kubectl -n "$NS" get secret -l owner=helm \
+              -o go-template='{{range .items}}{{.metadata.labels.name}} {{.metadata.labels.status}} {{.metadata.labels.version}} {{.metadata.creationTimestamp}}{{"\n"}}{{end}}' \
+              2>/dev/null > /tmp/helm-revisions || true
+
+            while read -r NAME STATUS REV TS; do
+              [ -n "$NAME" ] || continue
+              case "$STATUS" in
+                pending-install|pending-upgrade|pending-rollback) ;;
+                *) continue ;;
+              esac
+              FOUND=1
+
+              SECS=$(date -D "%Y-%m-%dT%H:%M:%SZ" -d "$TS" +%s 2>/dev/null || echo 0)
+              if [ "$SECS" = "0" ]; then
+                echo "==> $NAME is $STATUS but its timestamp ($TS) did not parse."
+                echo "    Leaving it alone: clearing a release whose age is unknown could"
+                echo "    interrupt a live deploy."
+                continue
+              fi
+              AGE=$(( NOW - SECS ))
+
+              if [ "$AGE" -lt "$MAX_AGE" ]; then
+                echo "==> $NAME is $STATUS and only ${AGE}s old (< ${MAX_AGE}s)."
+                echo "    Another run of this PR may be mid-deploy, so leaving it."
+                continue
+              fi
+
+              echo "==> $NAME has been $STATUS at revision $REV for ${AGE}s."
+              echo "    An upgrade here runs with --timeout 600s, so a lock older than"
+              echo "    ${MAX_AGE}s is not held by anything still alive."
+              if [ "$REV" = "1" ]; then
+                echo "==> revision 1 never completed; uninstalling so the next install is clean"
+                helm -n "$NS" uninstall "$NAME" --wait --timeout 5m || {
+                  echo "==> uninstall did not succeed; the promote step below will report why"
+                }
+              else
+                PREV=$(( REV - 1 ))
+                echo "==> rolling back to revision $PREV"
+                helm -n "$NS" rollback "$NAME" "$PREV" --wait --timeout 5m || {
+                  echo "==> rollback did not succeed; the promote step below will report why"
+                }
+              fi
+            done < /tmp/helm-revisions
+
+            [ "$FOUND" = "0" ] && echo "==> no pending releases in $NS"
+            exit 0
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 15m0s
+status: {}
