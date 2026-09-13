@@ -293,7 +293,20 @@ spec:
 
             # ── branch 2: wait for preview ─────────────────────────────
             MAX_WAIT="${END2END_HEALTH_TIMEOUT:-600}"
-            HEALTH_PATH="${END2END_HEALTH_PATH:-/health/live}"
+            # Candidate health paths, tried in order until one answers 200.
+            #
+            # This was a single default of /health/live, and three services do
+            # not serve it: maestro registers GET "" on /health, mcp-servers
+            # serves /healthz. Both reported
+            #   FAIL: preview never reached stable ready state
+            # while every pod was Running and their helm releases were
+            # deployed — a healthy preview declared dead by a probe looking in
+            # the wrong place, and the message blamed the deploy.
+            #
+            # END2END_HEALTH_PATH still wins when set, so a service with an
+            # unusual path can be explicit. When unset, the probe discovers the
+            # path instead of assuming it.
+            HEALTH_CANDIDATES="${END2END_HEALTH_PATH:-/health/live /health/ready /health /healthz}"
             DEADLINE=$(( $(date +%s) + MAX_WAIT ))
 
             # Try preview-gate first (deployed as part of preview helmfile).
@@ -355,6 +368,77 @@ spec:
               done
             else
               # Fallback: direct health probe (3 consecutive 200s)
+              # ASK KUBERNETES. The chart already declares the health path as
+              # the Deployment's readiness probe, and that is the path K8s
+              # itself uses to decide the pod is serving — so it is the only
+              # authoritative answer, and guessing beside it is how a healthy
+              # preview came to be reported as dead.
+              #
+              # Verified on the three services that failed: maestro's chart
+              # sets probePath /health, mcp-servers sets /healthz, and both
+              # match the routes their code registers. The charts were right
+              # the whole time; this task was not reading them.
+              HEALTH_PATH=""
+              if command -v kubectl >/dev/null 2>&1 && [ -n "${PREVIEW_NAMESPACE:-}" ]; then
+                # Must be the Deployment for the SERVICE UNDER TEST, not the
+                # first one in the namespace. A preview also contains its
+                # infrastructure: leartech-preview-infrastructure's hydra
+                # Deployment probes /health/alive, and taking items[0] picked
+                # THAT — so the probe would have used Hydra's path against the
+                # service's URL and 404'd, reproducing the very failure this
+                # change fixes, but confidently.
+                HEALTH_PATH=$(kubectl -n "$PREVIEW_NAMESPACE" get deploy \
+                  -o jsonpath="{range .items[?(@.metadata.name==\"$APP_NAME\")]}{.spec.template.spec.containers[0].readinessProbe.httpGet.path}{\"\n\"}{end}" \
+                  2>/dev/null | grep -v '^$' | head -1 || true)
+                if [ -z "$HEALTH_PATH" ]; then
+                  # Release-qualified name (helm prefixes the release), so match
+                  # on the app label instead of an exact name.
+                  HEALTH_PATH=$(kubectl -n "$PREVIEW_NAMESPACE" get deploy \
+                    -l "app.kubernetes.io/name=$APP_NAME" \
+                    -o jsonpath='{range .items[*]}{.spec.template.spec.containers[0].readinessProbe.httpGet.path}{"\n"}{end}' \
+                    2>/dev/null | grep -v '^$' | head -1 || true)
+                fi
+                if [ -z "$HEALTH_PATH" ]; then
+                  # Last resort before candidates: the deployment whose NAME
+                  # contains the app name. Helm prefixes the release, so this is
+                  # usually the tier that hits. Still scoped to the service —
+                  # never to whatever sorts first.
+                  dep=$(kubectl -n "$PREVIEW_NAMESPACE" get deploy -o name 2>/dev/null \
+                        | grep -- "$APP_NAME" | head -1 || true)
+                  if [ -n "$dep" ]; then
+                    HEALTH_PATH=$(kubectl -n "$PREVIEW_NAMESPACE" get "$dep" \
+                      -o jsonpath='{.spec.template.spec.containers[0].readinessProbe.httpGet.path}' \
+                      2>/dev/null || true)
+                  fi
+                fi
+                if [ -n "$HEALTH_PATH" ]; then
+                  echo "==> health path from the deployed readinessProbe: $HEALTH_PATH"
+                else
+                  echo "==> no readinessProbe path readable in $PREVIEW_NAMESPACE; falling back to candidates"
+                fi
+              fi
+
+              # Fallback only. A service with no readiness probe, or a
+              # namespace this task cannot read, still gets a probe rather
+              # than an immediate failure.
+              RESOLVE_DEADLINE=$(( $(date +%s) + 120 ))
+              while [ -z "$HEALTH_PATH" ] && [ "$(date +%s)" -lt "$RESOLVE_DEADLINE" ]; do
+                for cand in $HEALTH_CANDIDATES; do
+                  if curl -sSf -o /dev/null -m 5 "$PREVIEW_URL$cand" 2>/dev/null; then
+                    HEALTH_PATH="$cand"
+                    echo "==> health path resolved: $HEALTH_PATH"
+                    break
+                  fi
+                done
+                [ -z "$HEALTH_PATH" ] && sleep 5
+              done
+              if [ -z "$HEALTH_PATH" ]; then
+                echo "==> no candidate health path answered 200 in 120s; tried: $HEALTH_CANDIDATES"
+                echo "==> continuing with the first candidate so the wait below reports a real"
+                echo "    timeout rather than a resolution failure"
+                HEALTH_PATH="$(printf '%s\n' $HEALTH_CANDIDATES | head -1)"
+              fi
+
               echo "==> waiting up to $((MAX_WAIT / 60)) min for $PREVIEW_URL$HEALTH_PATH (3 consecutive 200s)"
               STREAK=0
               REQUIRED=3
@@ -372,6 +456,9 @@ spec:
                       ":x: **End-to-end: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" \
                       "" \
                       "\`$PREVIEW_URL$HEALTH_PATH\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." \
+                      "" \
+                      "Candidates tried: \`$HEALTH_CANDIDATES\`. If this service serves a different" \
+                      "path, set \`END2END_HEALTH_PATH\` in its \`.lighthouse/jenkins-x/end2end.yaml\`." \
                       "" \
                       "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
                     post_sticky "$body"
