@@ -175,3 +175,83 @@ func TestForgeProducesAnUnverifiableTokenWithIntactClaims(t *testing.T) {
 		t.Error("forge accepted non-JSON claims")
 	}
 }
+
+func TestCount(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, want string
+		wantErr        bool
+	}{
+		{name: "a bare array", in: `[{"a":1},{"a":2},{"a":3}]`, want: "3"},
+		{name: "an empty array is 0, not an error", in: `[]`, want: "0"},
+		{name: "an array under a key", in: `{"users":[{"id":"1"},{"id":"2"}]}`, want: "2"},
+		// The distinction that matters: a request that failed must not read as
+		// "there are none". A suite asserting "0 sessions remain" after logout
+		// would otherwise pass against an error page.
+		{name: "an HTML error page is an error, not 0", in: `<html>502</html>`, wantErr: true},
+		{name: "an object with no array is an error, not 0", in: `{"error":"nope"}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := count([]byte(tc.in))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("count(%s) = %q with no error; a payload that could not be read "+
+						"must not report a count", tc.in, got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Errorf("count(%s) = %q, %v; want %q", tc.in, got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPick(t *testing.T) {
+	const users = `{"users":[
+		{"id":"u1","email":"a@x.com","role":"admin"},
+		{"id":"u2","email":"noperm@leartech.com","role":"none"}
+	]}`
+
+	got, err := pick([]byte(users), "users", "email=noperm@leartech.com", "id")
+	if err != nil || got != "u2" {
+		t.Errorf(`pick(users, email=noperm@leartech.com, id) = %q, %v; want "u2"`, got, err)
+	}
+
+	// Absence is an answer, not a failure: a suite asserts "the deleted user is
+	// gone" by picking and expecting empty. An error there would be
+	// indistinguishable from the request failing.
+	got, err = pick([]byte(users), "users", "email=deleted@x.com", "id")
+	if err != nil || got != "" {
+		t.Errorf("a non-matching pick returned %q, %v; want empty and no error", got, err)
+	}
+
+	// A bare array, no wrapping key.
+	got, err = pick([]byte(`[{"n":"a","v":"1"},{"n":"b","v":"2"}]`), ".", "n=b", "v")
+	if err != nil || got != "2" {
+		t.Errorf(`pick(".", n=b, v) = %q, %v; want "2"`, got, err)
+	}
+
+	// These must ERROR rather than return empty, because empty means "no such
+	// entry" and these mean "I could not look".
+	for _, tc := range []struct{ name, in, key, match string }{
+		{"not JSON at all", `<html>500</html>`, "users", "email=a"},
+		{"no such array field", `{"people":[]}`, "users", "email=a"},
+		{"the field is not an array", `{"users":"nope"}`, "users", "email=a"},
+		{"match is not key=value", users, "users", "email"},
+	} {
+		if _, err := pick([]byte(tc.in), tc.key, tc.match, "id"); err == nil {
+			t.Errorf("%s: pick returned no error; empty would then mean both 'no match' and "+
+				"'could not read'", tc.name)
+		}
+	}
+}
+
+func TestURLDecode(t *testing.T) {
+	got, err := urldecode([]byte("https%3A%2F%2Fx.example%2Fcb%3Fcode%3Dabc+123"))
+	if err != nil || got != "https://x.example/cb?code=abc 123" {
+		t.Errorf("urldecode = %q, %v", got, err)
+	}
+	if _, err := urldecode([]byte("%zz")); err == nil {
+		t.Error("malformed encoding was accepted; a half-decoded value is worse than an error")
+	}
+}

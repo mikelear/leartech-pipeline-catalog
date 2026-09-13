@@ -172,6 +172,9 @@ spec:
             //	authtoken claim scp            # from a JWT
             //	authtoken payload              # a JWT's whole payload, as JSON
             //	authtoken forge                # claims JSON in, an unverifiable JWT out
+            //	authtoken count                # how many entries a JSON array has
+            //	authtoken pick users email=x id  # one object's field, found by another
+            //	authtoken urldecode            # form-encoded text in, plain text out
             //
             // A claim that is a JSON array prints space-separated, a string prints as
             // is, and anything absent prints nothing — matching what the shell callers
@@ -186,13 +189,16 @@ spec:
             	"encoding/json"
             	"fmt"
             	"io"
+            	"net/url"
             	"os"
+            	"strconv"
             	"strings"
             )
 
             func main() {
-            	if len(os.Args) < 2 || len(os.Args) > 3 {
-            		fmt.Fprintln(os.Stderr, "usage: authtoken field <name> | claim <name> | payload | forge  (reads stdin)")
+            	if len(os.Args) < 2 || len(os.Args) > 5 {
+            		fmt.Fprintln(os.Stderr, "usage: authtoken field <name> | claim <name> | payload | forge | "+
+            			"count | pick <array> <key>=<value> <field> | urldecode  (reads stdin)")
             		os.Exit(2)
             	}
             	in, err := io.ReadAll(os.Stdin)
@@ -211,6 +217,12 @@ spec:
             		out, err = payload(in)
             	case "forge":
             		out, err = forge(in)
+            	case "count":
+            		out, err = count(in)
+            	case "pick":
+            		out, err = pick(in, arg(2), arg(3), arg(4))
+            	case "urldecode":
+            		out, err = urldecode(in)
             	default:
             		fmt.Fprintf(os.Stderr, "authtoken: unknown subcommand %q\n", os.Args[1])
             		os.Exit(2)
@@ -351,6 +363,86 @@ spec:
             		return nil, fmt.Errorf("payload is not base64url: %w", err)
             	}
             	return b, nil
+            }
+
+            // count returns the length of a JSON array, or of the array under a single
+            // top-level key. Used where a suite asserts "how many sessions/users exist"
+            // and must tell an empty list from a failed request: an error here is not 0.
+            func count(in []byte) (string, error) {
+            	var arr []any
+            	if err := json.Unmarshal(in, &arr); err == nil {
+            		return strconv.Itoa(len(arr)), nil
+            	}
+            	var obj map[string]any
+            	if err := json.Unmarshal(in, &obj); err != nil {
+            		return "", fmt.Errorf("input is neither a JSON array nor an object: %w", err)
+            	}
+            	for _, v := range obj {
+            		if a, ok := v.([]any); ok {
+            			return strconv.Itoa(len(a)), nil
+            		}
+            	}
+            	return "", fmt.Errorf("object has no array field to count")
+            }
+
+            // pick finds one object in an array and returns a field of it: the shape of
+            // "the user whose email is X, give me its id".
+            //
+            // arrayKey is the field holding the array ("users"), or "." when the payload
+            // IS the array. match is key=value. Returns empty with no error when nothing
+            // matches, because absence is a legitimate answer a caller asserts on —
+            // distinct from an error, which means the payload could not be read at all.
+            func pick(in []byte, arrayKey, match, field string) (string, error) {
+            	k, want, ok := strings.Cut(match, "=")
+            	if !ok {
+            		return "", fmt.Errorf("match %q is not key=value", match)
+            	}
+
+            	var items []any
+            	if arrayKey == "." || arrayKey == "" {
+            		if err := json.Unmarshal(in, &items); err != nil {
+            			return "", fmt.Errorf("input is not a JSON array: %w", err)
+            		}
+            	} else {
+            		var obj map[string]any
+            		if err := json.Unmarshal(in, &obj); err != nil {
+            			return "", fmt.Errorf("input is not a JSON object: %w", err)
+            		}
+            		raw, present := obj[arrayKey]
+            		if !present {
+            			return "", fmt.Errorf("no field %q in the payload", arrayKey)
+            		}
+            		items, ok = raw.([]any)
+            		if !ok {
+            			return "", fmt.Errorf("field %q is %T, not an array", arrayKey, raw)
+            		}
+            	}
+
+            	for _, it := range items {
+            		m, ok := it.(map[string]any)
+            		if !ok {
+            			continue
+            		}
+            		if fmt.Sprint(m[k]) != want {
+            			continue
+            		}
+            		v, present := m[field]
+            		if !present {
+            			return "", nil
+            		}
+            		return fmt.Sprint(v), nil
+            	}
+            	return "", nil
+            }
+
+            // urldecode reverses form encoding, for reading a value back out of a
+            // redirect's query string.
+            func urldecode(in []byte) (string, error) {
+            	s, err := url.QueryUnescape(strings.TrimSpace(string(in)))
+            	if err != nil {
+            		return "", fmt.Errorf("input is not form-encoded: %w", err)
+            	}
+            	return s, nil
             }
             AUTHTOKEN_GO
             ( cd "$work" && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go build -o /workspace/source/authtoken . )
