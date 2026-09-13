@@ -291,6 +291,103 @@ spec:
               exit 1
             fi
 
+            # ── the preview must be THIS commit ────────────────────────
+            # Measured on leartech-artifact-api PR #17, 2026-09-13. This task
+            # started at 10:37:49, three seconds after the `pr` pipeline that
+            # deploys the preview. The pod carrying the commit under test
+            # became ready at 10:42:06 — four minutes later. In between, the
+            # health probe collected its three consecutive 200s from the
+            # PREVIOUS build's pod (PR-17-1, running since 09:55) and the suite
+            # ran against that, reporting "PER-ROUTE SCOPE ENFORCEMENT BROKEN"
+            # for a gate the commit under test had already fixed. Twice, on
+            # both clusters, and the run before it too.
+            #
+            # A health probe cannot tell a fresh pod from a stale one: both
+            # answer 200. preview-gate does check version, which is why the
+            # services that deploy it never hit this — but the fallback for
+            # services that do not deploy it silently tests the last build.
+            #
+            # So ask the component that knows. The `pr` run for this commit
+            # carries the same lighthouse lastCommitSHA label, and it is the
+            # run that deploys, so its completion is the signal.
+            if command -v kubectl >/dev/null 2>&1 && [ -n "${PULL_PULL_SHA:-}" ]; then
+              SEL="lighthouse.jenkins-x.io/lastCommitSHA=${PULL_PULL_SHA},lighthouse.jenkins-x.io/context=pr"
+              # Lighthouse creates both runs from one webhook event, but not
+              # in a guaranteed order, so an empty first lookup means "not yet"
+              # far more often than "absent". Concluding absence early would
+              # take the silent path below and test the previous build, which
+              # is the failure this block exists to stop.
+              SIB=""
+              SIB_DEADLINE=$(( $(date +%s) + ${END2END_SIBLING_DETECT:-120} ))
+              while :; do
+                SIB=$(kubectl -n jx get pipelineruns -l "$SEL" \
+                        --sort-by=.metadata.creationTimestamp \
+                        -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null || true)
+                [ -n "$SIB" ] && break
+                [ "$(date +%s)" -ge "$SIB_DEADLINE" ] && break
+                sleep 5
+              done
+              if [ -z "$SIB" ]; then
+                echo "==> no \`pr\` PipelineRun for ${PULL_PULL_SHA:0:8} after ${END2END_SIBLING_DETECT:-120}s."
+                echo "    Nothing here deploys the preview, so this suite will run against"
+                echo "    whatever is already in $PREVIEW_NAMESPACE — possibly the previous"
+                echo "    build. Continuing, but a result from here is about that pod."
+              else
+                echo "==> waiting for the deploy of ${PULL_PULL_SHA:0:8}: pipelinerun/$SIB"
+                DEPLOY_DEADLINE=$(( $(date +%s) + ${END2END_DEPLOY_TIMEOUT:-1200} ))
+                while :; do
+                  REASON=$(kubectl -n jx get pipelinerun "$SIB" \
+                             -o jsonpath='{.status.conditions[0].reason}' 2>/dev/null || echo "")
+                  case "$REASON" in
+                    Succeeded|Completed)
+                      echo "==> deploy run $SIB: $REASON"
+                      break ;;
+                    Failed|PipelineRunTimeout|CouldntGetTask|Cancelled|PipelineRunCancelled|StoppedRunFinally|CancelledRunFinally)
+                      body=$(printf '%s\n' \
+                        "$MARKER" \
+                        ":x: **End-to-end: not run (the deploy of this commit did not finish)** \`[$CLUSTER_TAG]\`" \
+                        "" \
+                        "\`pipelinerun/$SIB\` — the \`pr\` run that deploys the preview for" \
+                        "\`${PULL_PULL_SHA:0:8}\` — ended as **$REASON**, so the namespace holds" \
+                        "either nothing or the previous build." \
+                        "" \
+                        "This refuses rather than probing, because a health probe cannot tell a" \
+                        "fresh pod from a stale one — both answer 200. Testing the last build and" \
+                        "reporting it against this commit is worse than not testing: on" \
+                        "\`leartech-artifact-api\` #17 it failed a scope gate that the commit under" \
+                        "test had already fixed." \
+                        "" \
+                        "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
+                      post_sticky "$body"
+                      echo "FAIL: deploy run $SIB ended as $REASON — refusing to test the previous build" >&2
+                      exit 1 ;;
+                  esac
+                  if [ "$(date +%s)" -ge "$DEPLOY_DEADLINE" ]; then
+                    echo "FAIL: deploy run $SIB still $REASON after $(( ${END2END_DEPLOY_TIMEOUT:-1200} / 60 )) min" >&2
+                    exit 1
+                  fi
+                  sleep 10
+                done
+
+                # The deploy run is finished, so helm has applied the new spec.
+                # `rollout status` is what says the OLD pods are gone: it waits
+                # for updatedReplicas == replicas and the previous ReplicaSet
+                # scaled to zero. Until then the Service still balances onto
+                # the pod this check exists to avoid.
+                for obj in $(kubectl -n "$PREVIEW_NAMESPACE" get deploy,statefulset -o name 2>/dev/null); do
+                  echo "==> rollout status $obj"
+                  kubectl -n "$PREVIEW_NAMESPACE" rollout status "$obj" --timeout=5m || {
+                    echo "FAIL: $obj did not roll out; the preview is not serving this commit" >&2
+                    exit 1
+                  }
+                done
+              fi
+            else
+              echo "==> kubectl or PULL_PULL_SHA unavailable, so this run cannot confirm the"
+              echo "    preview carries the commit under test. Results may describe the"
+              echo "    previous build."
+            fi
+
             # ── branch 2: wait for preview ─────────────────────────────
             MAX_WAIT="${END2END_HEALTH_TIMEOUT:-600}"
             # Candidate health paths, tried in order until one answers 200.
