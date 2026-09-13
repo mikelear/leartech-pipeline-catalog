@@ -92,18 +92,53 @@ spec:
             #!/bin/sh
             set -e
             sh test/go/config_schema_test.sh
-        - image: golang:1.24
-          name: auth-conformance-selftest
+        - image: golang:1.26
+          name: go-selftests
           resources: {}
           script: |
             #!/bin/sh
             set -e
-            # The auth-conformance checker fails OTHER repos' builds, so it
-            # gets the same treatment it hands out: every rule has a fixture
-            # violating exactly one thing, and a control violating nothing.
-            # Two of these rules were wrong on first contact with the estate;
-            # the controls are what caught that.
-            cd go/authconformance && go test ./...
+            # These tools fail OTHER repos' builds, so they get the same
+            # treatment they hand out: every rule has a fixture violating
+            # exactly one thing, and a control violating nothing. Two of
+            # authconformance's rules were wrong on first contact with the
+            # estate; the controls are what caught that.
+            #
+            # Every module is tested here, not just the one this step used to
+            # name. authcoverage and commentgate had tests and no runner.
+            # authtoken's drift test in particular only means anything if it
+            # runs: it compares the copy inlined in
+            # tasks/end2end/pullrequest.yaml against its source, and a drift
+            # test that never executes is exactly how the two come apart.
+            #
+            # -count=1 because some of these read files through exec, which go
+            # test does not cache on -- a cached PASS can describe a different
+            # tree than the one in the PR.
+            rc=0
+            found=0
+            untested=""
+            for mod in go/*/go.mod; do
+              d=$(dirname "$mod")
+              if ls "$d"/*_test.go >/dev/null 2>&1; then
+                found=$((found + 1))
+                echo "==> go test $d"
+                ( cd "$d" && go test ./... -count=1 ) || rc=1
+              else
+                untested="$untested $d"
+              fi
+            done
+            if [ "$found" = "0" ]; then
+              echo "FAIL: no go module under go/ has tests, so this step ran nothing." >&2
+              echo "      A green tick here would mean the opposite of what it says." >&2
+              exit 1
+            fi
+            if [ -n "$untested" ]; then
+              echo "==> NO TESTS:$untested"
+              echo "    These tools gate other repos' pipelines and nothing here"
+              echo "    exercises them -- the same gap this repo fails others for."
+            fi
+            echo "==> tested $found module(s)"
+            exit "$rc"
         - image: cytopia/yamllint:latest
           name: yamllint
           resources: {}
