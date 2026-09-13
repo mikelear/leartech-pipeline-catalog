@@ -75,6 +75,10 @@ spec:
               --context=/workspace/source \
               --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
               --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/preview/clear-stuck-release.yaml@main
+          name: ""
+          resources: {}
+
         - image: ghcr.io/jenkins-x/jx-boot:3.16.59
           name: promote-jx-preview
           resources: {}

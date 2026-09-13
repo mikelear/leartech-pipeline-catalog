@@ -142,6 +142,10 @@ spec:
             command -v helm >/dev/null || { echo "FAIL: helm missing from this image"; exit 1; }
             cd tests && exec /workspace/source/chart.test -test.v
 
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/preview/clear-stuck-release.yaml@main
+          name: ""
+          resources: {}
+
         - image: ghcr.io/jenkins-x-plugins/jx-preview:0.6.0
           name: promote-jx-preview
           resources: {}
@@ -153,6 +157,17 @@ spec:
               echo "==> a chart that never deploys in CI is only render-tested"
               exit 0
             fi
+            # `jx preview create` needs DOCKER_REGISTRY and DOCKER_REGISTRY_ORG
+            # even for a chart repo that builds no image. jx-variables wrote
+            # both to .jx/variables.sh two steps ago; without sourcing it this
+            # step ends as
+            #
+            #   error: failed to create env vars: missing $DOCKER_REGISTRY environment variable
+            #
+            # which is what the umbrella's own PR did on its first green
+            # chart-tests run. The go task has always sourced it; this one was
+            # written without that line.
+            . ./.jx/variables.sh
             jx preview create
       podTemplate:
         tolerations:
