@@ -63,6 +63,17 @@ GOLANGCI_MERGED ?= .golangci.merged.yml
 AUTHCONF_URL ?= https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/authconformance/main.go
 AUTHCONF_FILE ?=
 
+# comment-gate: challenges added prose. Same curl-or-local shape.
+#
+# COMMENTGATE_BASE is the ref the diff is taken against. Lighthouse sets
+# PULL_BASE_REF on a PR build; locally it falls back to main. The gate examines
+# CHANGED LINES ONLY, so existing comments in a repo are never a blocker —
+# a ratchet demanding an estate-wide cleanup before anything could merge would
+# stall every repo, and the gap closes as files are touched.
+COMMENTGATE_URL ?= https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/commentgate/main.go
+COMMENTGATE_FILE ?=
+COMMENTGATE_BASE ?= origin/$(if $(PULL_BASE_REF),$(PULL_BASE_REF),main)
+
 # ── Coverage knobs (mirror tasks/go-test/pullrequest.yaml defaults) ──────
 #
 # The *_DEFAULT copies below are the SAME literals, held as non-overridable
@@ -227,7 +238,34 @@ auth-conformance: ## Enforce the estate auth standard (code + chart)
 # --timeout 15m matches the task; see task comment (Azure builder nodes hit
 # 10m on cold-cache package-load). Locally the timeout is generous, not
 # tight — matching the CI value keeps the two runs comparable.
-lint: lint-config file-size swag-check auth-conformance ## Run golangci-lint against the merged config (+ swagger freshness + auth standard)
+# ── comment-gate: prose must earn its place ──────────────────────────────────
+#
+# Two rules, both on CHANGED LINES only:
+#
+#   1. a change may not add more prose comment lines than test lines
+#   2. an added comment asserting behaviour must name the test proving it,
+#      as `proven-by: TestName`, and that test must exist in THIS repo
+#
+# Functional directives are exempt: they instruct a tool rather than asserting
+# anything, so they cannot be false the way prose can.
+comment-gate: ## Challenge added prose: ratchet, and claims must name a proof
+	@set -eu; \
+	work=$$(mktemp -d); \
+	trap 'rm -rf "$$work"' EXIT; \
+	if [ -n "$(COMMENTGATE_FILE)" ] && [ -f "$(COMMENTGATE_FILE)" ]; then \
+	  echo "==> using local comment gate $(COMMENTGATE_FILE)"; \
+	  cp "$(COMMENTGATE_FILE)" "$$work/main.go"; \
+	else \
+	  echo "==> fetching comment gate from $(COMMENTGATE_URL)"; \
+	  curl -fsSL -o "$$work/main.go" "$(COMMENTGATE_URL)"; \
+	fi; \
+	printf 'module commentgate\n\ngo 1.24\n' > "$$work/go.mod"; \
+	( cd "$$work" && go build -o "$$work/commentgate" . ); \
+	git fetch -q origin "$(if $(PULL_BASE_REF),$(PULL_BASE_REF),main)" 2>/dev/null || true; \
+	"$$work/commentgate" -base "$(COMMENTGATE_BASE)"
+
+
+lint: lint-config file-size swag-check auth-conformance comment-gate ## Run golangci-lint against the merged config (+ swagger freshness + auth standard + prose gate)
 	@set -eu; \
 	if ! command -v golangci-lint >/dev/null 2>&1; then \
 	  echo "==> golangci-lint not found on PATH"; \
