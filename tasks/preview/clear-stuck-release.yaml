@@ -28,11 +28,19 @@
 # cleared: uninstalled if it never completed a first install, rolled back to
 # the previous revision otherwise.
 #
-# The age threshold is the safety property. `helm upgrade` in these pipelines
-# runs with --timeout 600s, so an operation still holding a lock after 900s
-# cannot be alive — it either timed out or its pod was killed. Anything
-# younger is left alone, because a concurrent run of the same PR legitimately
-# mid-install must not be interrupted.
+# Two independent reasons to call a lock dead, because one was not enough:
+#
+#   AGE. `helm upgrade` in these pipelines runs with --timeout 600s, so an
+#   operation still holding a lock after 900s cannot be alive.
+#
+#   NO OWNER. A younger lock is cleared only when no other `pr` PipelineRun
+#   for this PR is still running. Lighthouse cancels the previous run on every
+#   push and a cancelled run abandons its lock at once —
+#   leartech-go-service-template #148 failed on a lock 586s old, left alone by
+#   the age rule, whose owner had been cancelled five minutes earlier.
+#
+# Our own run is one of the Running ones, so more than one Running means a
+# genuinely concurrent deploy and the lock is left alone.
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
@@ -113,14 +121,47 @@ spec:
               AGE=$(( NOW - SECS ))
 
               if [ "$AGE" -lt "$MAX_AGE" ]; then
-                echo "==> $NAME is $STATUS and only ${AGE}s old (< ${MAX_AGE}s)."
-                echo "    Another run of this PR may be mid-deploy, so leaving it."
-                continue
+                # Age alone cannot tell a lock held by a LIVE install from one
+                # abandoned by a run Lighthouse cancelled seconds earlier --
+                # and cancellation is routine, since every new push supersedes
+                # the run before it.
+                #
+                # Measured on leartech-go-service-template #148: a run was
+                # cancelled at 13:39 mid-install, the next started at 13:44,
+                # found the lock 586s old, left it alone by this very branch,
+                # and failed on
+                #
+                #   Error: UPGRADE FAILED: another operation is in progress
+                #
+                # So ask whether anything still owns it. Lighthouse labels
+                # every run with the repo, the pull number and the context, and
+                # a lock whose owner has gone is dead however new it is.
+                #
+                # Our own run is one of the Running ones, so MORE than one
+                # means a genuinely concurrent deploy and the lock stays.
+                LIVE=""
+                if [ -n "${REPO_NAME:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
+                  LIVE=$(kubectl -n jx get pipelineruns \
+                           -l "lighthouse.jenkins-x.io/refs.repo=${REPO_NAME},lighthouse.jenkins-x.io/refs.pull=${PULL_NUMBER},lighthouse.jenkins-x.io/context=pr" \
+                           -o jsonpath='{range .items[*]}{.status.conditions[0].reason}{"\n"}{end}' 2>/dev/null \
+                         | grep -c -E '^(Running|Started|Unknown|)$' || true)
+                fi
+                if [ -z "$LIVE" ] || [ "$LIVE" -gt 1 ]; then
+                  echo "==> $NAME is $STATUS and only ${AGE}s old, and ${LIVE:-?} pr run(s)"
+                  echo "    for this PR are still running. One of those is us, so more than"
+                  echo "    one means a concurrent deploy: leaving the lock alone."
+                  continue
+                fi
+                REASON="this is the only pr run still going, so the lock was abandoned by a cancelled or killed run"
+              else
+                REASON="an upgrade here runs with --timeout 600s, so a lock older than ${MAX_AGE}s is not held by anything alive"
               fi
 
+              # The reason the branch above settled on, not a fixed sentence:
+              # the log said "older than 900s" about a 586s lock in testing,
+              # which reads as a bug in the tool rather than a decision.
               echo "==> $NAME has been $STATUS at revision $REV for ${AGE}s."
-              echo "    An upgrade here runs with --timeout 600s, so a lock older than"
-              echo "    ${MAX_AGE}s is not held by anything still alive."
+              echo "    Clearing it: $REASON."
               if [ "$REV" = "1" ]; then
                 echo "==> revision 1 never completed; uninstalling so the next install is clean"
                 helm -n "$NS" uninstall "$NAME" --wait --timeout 5m || {
