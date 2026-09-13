@@ -58,6 +58,20 @@ var (
 
 	testFileRe = regexp.MustCompile(`(_test\.go|_test\.py|\.spec\.ts|\.test\.ts|/tests?/|end2end/.*\.sh|_test\.rs|Tests?\.cs)$`)
 
+	// Files that are pure pattern lists. Their comments label groups of
+	// globs; there is no behaviour to prove, so counting them means a
+	// hygiene change can never explain itself.
+	//
+	// The rule below fails when prose exceeds test lines, so with zero tests
+	// ANY comment fails -- and a .gitignore commit legitimately has no tests.
+	// leartech-go-service-template #149 and leartech-maestro-service #13 both
+	// stalled on five lines naming which artifacts were being ignored and why.
+	//
+	// Deliberately narrow: three filenames, not a category. The gate exists to
+	// stop narration standing in for tests in code and charts, and widening
+	// that exemption is how it stops meaning anything.
+	patternListRe = regexp.MustCompile(`(^|/)\.(gitignore|dockerignore|gitattributes)$`)
+
 	// A claim inside a TEST file needs no proven-by: the file is the proof.
 	// Documentation-through-tests is the goal, so a test header stating what it
 	// proves is the shape we want, not the shape we are policing.
@@ -146,6 +160,9 @@ func evaluate(added []addedLine, exists func(string) bool) report {
 		}
 		if !commentRe.MatchString(a.text) || functionalRe.MatchString(a.text) {
 			continue
+		}
+		if patternListRe.MatchString(a.file) {
+			continue // a label for a group of globs, not a claim about behaviour
 		}
 		if testFileRe.MatchString(a.file) {
 			continue // sits with its proof; this is the documentation we want

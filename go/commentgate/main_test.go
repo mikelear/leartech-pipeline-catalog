@@ -156,3 +156,42 @@ func TestIndentedBlockQuoteOfOutput_IsNotAClaim(t *testing.T) {
 		}
 	}
 }
+
+// TestPatternListCommentsAreNotProse keeps a hygiene change from being
+// unable to explain itself.
+//
+// The ratio rule fails when prose exceeds test lines, so with zero tests ANY
+// comment fails. A .gitignore commit legitimately has no tests, and
+// leartech-go-service-template #149 and leartech-maestro-service #13 both
+// stalled on five lines naming which artifacts were being ignored and why.
+//
+// The exemption has to stay narrow, so this also pins what is NOT exempt.
+func TestPatternListCommentsAreNotProse(t *testing.T) {
+	exempt := []addedLine{
+		{file: ".gitignore", text: "# end2end run artifacts, written by run.sh"},
+		{file: "some/dir/.gitignore", text: "# vendored deps"},
+		{file: ".dockerignore", text: "# build context noise"},
+		{file: ".gitattributes", text: "# normalise line endings"},
+	}
+	r := evaluate(exempt, func(string) bool { return true })
+	if r.comments != 0 {
+		t.Errorf("counted %d prose line(s) in pattern-list files; a .gitignore comment "+
+			"labels globs and has no behaviour to prove", r.comments)
+	}
+	if len(r.claims) != 0 {
+		t.Errorf("flagged %d claim(s) in pattern-list files", len(r.claims))
+	}
+
+	// Not exempt: anything that describes behaviour.
+	counted := []addedLine{
+		{file: "values.yaml", text: "# the issuer must be reachable"},
+		{file: "main.go", text: "// callers must hold the lock"},
+		{file: "gitignore.md", text: "# not a pattern list at all"},
+		{file: "internal/.gitignore.go", text: "// a go file that merely mentions gitignore"},
+	}
+	r2 := evaluate(counted, func(string) bool { return true })
+	if r2.comments != len(counted) {
+		t.Errorf("counted %d of %d prose lines outside pattern-list files; the exemption "+
+			"has leaked beyond the three filenames it names", r2.comments, len(counted))
+	}
+}
