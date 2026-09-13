@@ -165,3 +165,23 @@ func TestCategoryPatternsMatchRealEstateTestNames(t *testing.T) {
 		_ = want
 	}
 }
+
+// A repo whose own chart deploys hydra is an issuer deployment, so "no
+// umbrella" is not a gap for it. leartech-auth-service is exactly this, and
+// reporting it as missing infrastructure was a false negative on the row
+// anyone reads first.
+func TestRepoThatBringsItsOwnIssuer_IsNotReportedAsMissingInfrastructure(t *testing.T) {
+	dir := mkRepo(t, "issuer", []string{"TestRFC8707_Audience_IsEnforced"},
+		map[string]string{"01-auth.sh": "curl $HYDRA/oauth2/token\n"}, false)
+	must(t, os.MkdirAll(filepath.Join(dir, "charts", "x"), 0o755))
+	must(t, os.WriteFile(filepath.Join(dir, "charts", "x", "Chart.yaml"),
+		[]byte("apiVersion: v2\nname: x\ndependencies:\n  - name: hydra\n    version: 0.60.1\n"), 0o600))
+
+	r := scan(dir)
+	if !r.OwnIssuer {
+		t.Fatal("a chart depending on hydra must be recognised as its own issuer deployment")
+	}
+	if note := umbrellaNote(r); note != "" {
+		t.Fatalf("must not suggest it needs an umbrella; got %q", note)
+	}
+}

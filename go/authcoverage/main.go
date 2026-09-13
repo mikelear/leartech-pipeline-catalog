@@ -64,6 +64,7 @@ type repo struct {
 	E2EScripts  int
 	E2EAuth     []string // scripts that mint or present a token
 	HasUmbrella bool
+	OwnIssuer   bool // deploys Hydra itself, so it needs no umbrella
 	Err         string
 
 	goTestFiles int // anchor: proves the walk actually read something
@@ -121,6 +122,9 @@ func unproven(repos []repo) []repo {
 }
 
 func umbrellaNote(r repo) string {
+	if r.OwnIssuer {
+		return ""
+	}
 	if !r.HasUmbrella {
 		return ", and its preview does not deploy " + umbrella + " so it could not mint one"
 	}
@@ -190,6 +194,15 @@ func scan(dir string) repo {
 			if mintsRe.Match(b) || bearerRe.Match(b) {
 				r.E2EAuth = append(r.E2EAuth, filepath.Base(p))
 			}
+		case filepath.Base(p) == "Chart.yaml":
+			// A repo whose own chart depends on hydra IS an issuer deployment —
+			// leartech-auth-service does, unconditionally. Reporting
+			// "umbrella in preview: no" for it is a false negative on the row
+			// anyone reads first: it needs no umbrella because it brings the
+			// issuer with it.
+			if b, rerr := os.ReadFile(p); rerr == nil && strings.Contains(string(b), "name: hydra") {
+				r.OwnIssuer = true
+			}
 		case strings.HasPrefix(filepath.Base(p), "helmfile") && strings.Contains(p, "preview"):
 			if b, rerr := os.ReadFile(p); rerr == nil && strings.Contains(string(b), umbrella) {
 				r.HasUmbrella = true
@@ -232,8 +245,11 @@ func printMatrix(repos []repo) {
 			deployed = strings.Join(r.E2EAuth, ", ")
 		}
 		umb := "no"
-		if r.HasUmbrella {
+		switch {
+		case r.HasUmbrella:
 			umb = "yes"
+		case r.OwnIssuer:
+			umb = "n/a — own issuer"
 		}
 		prof := r.Profile
 		if prof == "" {
