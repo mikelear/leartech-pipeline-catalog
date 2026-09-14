@@ -1,0 +1,114 @@
+# hadolint over every Dockerfile in the repo.
+#
+# A SEPARATE TASK, not a step inside go-lint, and that distinction was
+# learned the hard way. hadolint is a binary shipped as an image, so the
+# first attempt called `docker run` from the make target that go-lint
+# executes. go-lint runs inside golangci/golangci-lint, which has no docker
+# binary — and a Tekton step has no docker daemon to talk to even if it did.
+# It failed every repo, including repos with no Dockerfile.
+#
+# Running the hadolint IMAGE as the step is the shape that works, and it is
+# what leartech-dockerfiles has been doing all along.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: dockerfile-lint
+spec:
+  pipelineSpec:
+    tasks:
+    - name: dockerfile-lint
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        # renovate: datasource=docker depName=hadolint/hadolint
+        - image: hadolint/hadolint:v2.15.1-alpine
+          name: dockerfile-lint
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -eu
+
+            # error, not hadolint's default of info. Measured across the 46
+            # repos with a Dockerfile on 2026-09-14:
+            #
+            #   --failure-threshold error       1 of 46 repos fail
+            #   --failure-threshold warning    32 of 46
+            #   --failure-threshold info       37 of 46   (the default)
+            #
+            # A gate that reds 37 of 46 repos on the day it ships is not a
+            # gate, it is an outage everyone learns to route around.
+            # Sub-threshold findings are PRINTED and do not block, so the
+            # backlog to clear before raising the bar stays in front of
+            # whoever reads the build.
+            THRESHOLD="${HADOLINT_THRESHOLD:-error}"
+
+            files=$(find . -name 'Dockerfile*' \
+                      -not -path './.git/*' \
+                      -not -path '*/node_modules/*' \
+                      -not -path '*/vendor/*' \
+                      -not -path './versionStream/*' 2>/dev/null | sort)
+
+            if [ -z "$files" ]; then
+              echo "==> dockerfile-lint: no Dockerfile in this repo; skipping"
+              exit 0
+            fi
+
+            echo "==> dockerfile-lint: --failure-threshold $THRESHOLD"
+            rc=0
+            n=0
+            for f in $files; do
+              n=$((n + 1))
+              if out=$(hadolint --failure-threshold "$THRESHOLD" "$f" 2>&1); then
+                [ -n "$out" ] && { echo "  $f"; echo "$out" | sed 's/^/      /'; } \
+                              || echo "  $f  clean"
+              else
+                rc=1
+                echo "  $f"
+                echo "$out" | sed 's/^/      /'
+              fi
+            done
+
+            # A run that examined nothing must not look like a run that found
+            # nothing. The no-Dockerfile case exits above; reaching here with
+            # zero files means the find broke.
+            if [ "$n" = "0" ]; then
+              echo "FAIL: matched no Dockerfile after deciding there was one" >&2
+              exit 1
+            fi
+
+            echo "==> dockerfile-lint: checked $n Dockerfile(s)"
+            if [ "$rc" != "0" ]; then
+              echo "" >&2
+              echo "Findings at or above $THRESHOLD block this build. Anything" >&2
+              echo "lower is printed above and does not: that is the backlog to" >&2
+              echo "clear before HADOLINT_THRESHOLD is raised." >&2
+            fi
+            exit "$rc"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 10m0s
+status: {}
