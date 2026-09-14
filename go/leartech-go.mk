@@ -63,6 +63,32 @@ GOLANGCI_MERGED ?= .golangci.merged.yml
 AUTHCONF_URL ?= https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/authconformance/main.go
 AUTHCONF_FILE ?=
 
+# dockerfile-lint: hadolint over every Dockerfile in the repo.
+#
+# HADOLINT_VERSION is pinned here rather than floating, because a hadolint
+# bump adds RULES -- v2.14.0 -> v2.15.1 introduced DL3066 and turned four
+# leartech-dockerfiles builds red at once with no source change. Pinning in
+# one place means that arrives as one reviewed PR instead of a surprise.
+HADOLINT_VERSION ?= v2.15.1-alpine
+HADOLINT_IMAGE ?= hadolint/hadolint:$(HADOLINT_VERSION)
+#
+# error, not hadolint's default of info. Measured across the 46 repos with a
+# Dockerfile on 2026-09-14:
+#
+#   --failure-threshold error       1 of 46 fail
+#   --failure-threshold warning    32 of 46
+#   --failure-threshold info       37 of 46   (the default)
+#
+# A gate that reds 37 of 46 repos on the day it ships is not a gate, it is an
+# outage everyone learns to route around. `error` can be switched on today;
+# the warning backlog (DL3008 unpinned apt, DL3045 COPY without WORKDIR,
+# DL3018 unpinned apk) gets burned down and the bar raised after.
+#
+# leartech-dockerfiles deliberately runs STRICTER than this in its own
+# pipeline, at hadolint's default. That repo's product IS Dockerfiles, and
+# that strictness is what caught DL3066.
+HADOLINT_THRESHOLD ?= error
+
 # job-reaping: a Job that never expires is a leak with a green tick. Same
 # curl-or-local shape.
 JOBREAP_URL ?= https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/jobreaping/main.go
@@ -223,6 +249,53 @@ auth-standard: ## Print the estate auth standard (what auth-conformance enforces
 	printf 'module authconformance\n\ngo 1.24\n' > "$$work/go.mod"; \
 	( cd "$$work" && go run . --explain )
 
+# ── dockerfile-lint: every repo builds a container before it builds a chart ──
+#
+# 45 of the 46 repos with a Dockerfile did not lint it. The one that did was
+# leartech-dockerfiles, whose product is Dockerfiles -- so the only repo
+# checking its images was the one that makes images for everyone else.
+#
+# Skips loudly rather than silently when there is no Dockerfile: a repo with
+# nothing to check and a repo whose scan failed to find anything must not
+# produce the same output.
+dockerfile-lint: ## hadolint every Dockerfile (threshold: $(HADOLINT_THRESHOLD))
+	@set -eu; \
+	files=$$(find . -name 'Dockerfile*' \
+	           -not -path './.git/*' \
+	           -not -path '*/node_modules/*' \
+	           -not -path '*/vendor/*' \
+	           -not -path './versionStream/*' 2>/dev/null | sort); \
+	if [ -z "$$files" ]; then \
+	  echo "==> dockerfile-lint: no Dockerfile in this repo; skipping"; \
+	  exit 0; \
+	fi; \
+	if ! command -v docker >/dev/null 2>&1; then \
+	  echo "==> dockerfile-lint: docker not on PATH; cannot run $(HADOLINT_IMAGE)" >&2; \
+	  echo "    Refusing to report success for a check that did not run." >&2; \
+	  exit 1; \
+	fi; \
+	echo "==> dockerfile-lint: $(HADOLINT_IMAGE), --failure-threshold $(HADOLINT_THRESHOLD)"; \
+	rc=0; n=0; \
+	for f in $$files; do \
+	  n=$$((n + 1)); \
+	  out=$$(docker run --rm -i $(HADOLINT_IMAGE) \
+	           hadolint --failure-threshold $(HADOLINT_THRESHOLD) - < "$$f" 2>&1) || rc=1; \
+	  if [ -n "$$out" ]; then \
+	    echo "  $$f"; \
+	    echo "$$out" | sed 's/^/      /'; \
+	  else \
+	    echo "  $$f  clean"; \
+	  fi; \
+	done; \
+	echo "==> dockerfile-lint: checked $$n Dockerfile(s)"; \
+	if [ "$$rc" != "0" ]; then \
+	  echo "" >&2; \
+	  echo "Findings at or above $(HADOLINT_THRESHOLD) block this build. Lower-severity" >&2; \
+	  echo "findings are printed above and do not: they are the backlog to clear" >&2; \
+	  echo "before HADOLINT_THRESHOLD is raised." >&2; \
+	fi; \
+	exit "$$rc"
+
 # ── job-reaping: nothing cleans up after a Job unless you say so ─────────────
 #
 # Measured 2026-09-14: the two build clusters held 12,046 Jobs between them and
@@ -300,7 +373,7 @@ comment-gate: ## Challenge added prose: ratchet, and claims must name a proof
 	"$$work/commentgate" -base "$(COMMENTGATE_BASE)"
 
 
-lint: lint-config file-size swag-check auth-conformance job-reaping comment-gate ## Run golangci-lint against the merged config (+ swagger freshness + auth standard + prose gate)
+lint: lint-config file-size swag-check auth-conformance job-reaping dockerfile-lint comment-gate ## Run golangci-lint against the merged config (+ swagger freshness + auth standard + prose gate)
 	@set -eu; \
 	if ! command -v golangci-lint >/dev/null 2>&1; then \
 	  echo "==> golangci-lint not found on PATH"; \
