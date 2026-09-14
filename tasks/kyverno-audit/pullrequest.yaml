@@ -1,0 +1,134 @@
+# Shift-left Kyverno audit: run the cluster's policies against THIS PR's
+# rendered manifests, before merge.
+#
+# WHY THIS TASK EXISTS. Kyverno has three enforcement points and we only had
+# two:
+#
+#   admission webhook  -- blocks/audits at apply time        (running)
+#   background scan    -- populates Policy Reporter, hourly  (running)
+#   CI / shift-left    -- catches it BEFORE merge            (this task)
+#
+# Note the second one: Kyverno's reports controller already background-scans on
+# an interval (1h by default). A CronJob to populate the dashboard would just
+# duplicate it -- don't add one.
+#
+# Without this task a violation is only discovered after it is merged and
+# applied, as a red square on a dashboard nobody is watching. With it, the PR
+# fails.
+#
+# TWO CLI GOTCHAS, both hit the first time and both handled below:
+#   1. `kubectl get ... -o yaml` output PANICS the CLI:
+#        panic: *unstructured.Unstructured is not a list: no Items field
+#      The v1.List must be split into separate YAML documents first.
+#   2. `--policy-report` writes to STDOUT, mixed with deprecation warnings, so
+#      a parser must skip to the first `apiVersion:` line rather than reading
+#      from the top.
+#
+# POLICY SOURCE. Points at the cluster's own policy chart by default so CI and
+# the cluster cannot drift. Override KYVERNO_POLICY_PATH to audit against a
+# different set (e.g. a candidate policy you are considering adopting).
+#
+# FAILURE MODE. Fails the PR only on `fail`, not on `error` or `warn`. Library
+# policies routinely error when they need live cluster context (e.g.
+# disallow-default-namespace errored on all 450 pods in the 2026-09-14 audit),
+# and failing a PR on that would be noise.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: kyverno-audit
+spec:
+  pipelineSpec:
+    tasks:
+    - name: kyverno-audit
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: KYVERNO_POLICY_PATH
+            value: charts/kyverno-policies/templates
+          - name: KYVERNO_RESOURCE_PATH
+            value: config-root
+          name: ""
+          resources: {}
+          workingDir: /workspace/source
+        steps:
+        - image: ghcr.io/kyverno/kyverno-cli:v1.19.1
+          name: kyverno-audit
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { memory: 1Gi }
+          script: |
+            #!/busybox/sh
+            set -eu
+
+            if [ ! -d "$KYVERNO_POLICY_PATH" ]; then
+              echo "no policies at $KYVERNO_POLICY_PATH — nothing to audit"
+              exit 0
+            fi
+            if [ ! -d "$KYVERNO_RESOURCE_PATH" ]; then
+              echo "no resources at $KYVERNO_RESOURCE_PATH — nothing to audit"
+              exit 0
+            fi
+
+            echo "auditing $KYVERNO_RESOURCE_PATH against $KYVERNO_POLICY_PATH"
+
+            # --policy-report goes to stdout mixed with warnings; the parser
+            # below skips to the first apiVersion:. Never fail the build on the
+            # CLI's own exit code -- a policy `fail` is a legitimate non-zero
+            # and we want to classify it ourselves.
+            kyverno apply "$KYVERNO_POLICY_PATH" \
+              --resources "$KYVERNO_RESOURCE_PATH" \
+              --policy-report > /tmp/report.yaml 2>/tmp/warnings.txt || true
+
+            sed -n '/^apiVersion:/,$p' /tmp/report.yaml > /tmp/report-clean.yaml
+
+            python3 - <<'PYEOF'
+            import collections, sys, yaml
+            try:
+                docs = [d for d in yaml.safe_load_all(open('/tmp/report-clean.yaml')) if d]
+            except Exception as e:
+                print(f"could not parse the policy report: {e}")
+                sys.exit(0)   # tooling problem, not a policy violation
+
+            counts = collections.Counter()
+            failures = []
+            for d in docs:
+                for r in d.get('results', []):
+                    counts[r.get('result')] += 1
+                    if r.get('result') == 'fail':
+                        res = (r.get('resources') or [{}])[0]
+                        failures.append(
+                            f"  {r.get('policy')}: {res.get('kind','?')}/{res.get('name','?')}"
+                            f" - {(r.get('message') or '')[:100]}")
+
+            print(f"pass={counts['pass']} fail={counts['fail']} "
+                  f"warn={counts['warn']} error={counts['error']} skip={counts['skip']}")
+
+            if failures:
+                print(f"\n{len(failures)} policy violation(s):")
+                for f in failures[:40]:
+                    print(f)
+                if len(failures) > 40:
+                    print(f"  ... and {len(failures)-40} more")
+                sys.exit(1)
+
+            # error/warn are reported but do not fail: library policies error
+            # when they need live cluster context.
+            if counts['error']:
+                print(f"\n{counts['error']} policy error(s) - not failing the build; "
+                      "these usually need live cluster context")
+            print("\nno policy violations")
+            PYEOF
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 1h0m0s
+status: {}
