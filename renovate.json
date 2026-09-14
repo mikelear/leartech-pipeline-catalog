@@ -92,6 +92,17 @@
         "image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Tool versions pinned as plain strings \u2014 a shell variable in a task's script, and a make variable in the shared mk. Renovate's built-in managers read go.mod, Dockerfile FROM lines and helm versions; they cannot see either of these. That blind spot is why govulncheck sat on v1.1.4 for months after the fleet moved to Go 1.26, with nothing reporting it stale.",
+      "customType": "regex",
+      "fileMatch": [
+        "^tasks/.+\\.yaml$",
+        "^go/leartech-go\\.mk$"
+      ],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)[\\s\\S]*?[:=]\\s*\"?\\$?\\{?[A-Z_]*:?-?(?<currentValue>v[0-9][^\"\\s}]*)"
+      ]
     }
   ]
 }

@@ -51,12 +51,21 @@ spec:
             set -e
             apk add --no-cache git
             go mod download
-            # govulncheck version tracks the minimum Go it supports.
-            # v1.2.0 (current @latest as of 2026-04) requires go >= 1.25.0.
-            # Most leartech Go services are still on go 1.24.x, so pin to
-            # v1.1.4 — the last release compatible with Go 1.24. Bump this
-            # alongside the fleet-wide go.mod upgrade to 1.25.
-            GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION:-v1.1.4}"
+            # renovate: datasource=go depName=golang.org/x/vuln
+            #
+            # Was pinned to v1.1.4 with the note "most leartech Go services
+            # are still on go 1.24.x ... bump alongside the fleet-wide go.mod
+            # upgrade to 1.25". That upgrade happened; the bump did not.
+            # Counted 2026-09-14 across every repo with a go.mod:
+            #
+            #   go 1.26.x   21 repos
+            #   go 1.25.0    4
+            #   go 1.24 or below  3
+            #
+            # 25 of 27 are already past the threshold the old note names, so
+            # its reason had expired. v1.8.0 verified against a go1.24 module
+            # so the three laggards still scan.
+            GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION:-v1.8.0}"
             go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
             govulncheck ./...
   podTemplate:
