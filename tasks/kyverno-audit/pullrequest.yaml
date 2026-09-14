@@ -59,8 +59,11 @@ spec:
         - image: ghcr.io/kyverno/kyverno-cli:v1.19.1
           name: kyverno-audit
           resources:
-            requests: { cpu: 200m, memory: 256Mi }
-            limits: { memory: 1Gi }
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
           script: |
             #!/busybox/sh
             set -eu
