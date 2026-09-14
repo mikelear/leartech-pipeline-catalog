@@ -69,6 +69,7 @@ AUTHCONF_FILE ?=
 # bump adds RULES -- v2.14.0 -> v2.15.1 introduced DL3066 and turned four
 # leartech-dockerfiles builds red at once with no source change. Pinning in
 # one place means that arrives as one reviewed PR instead of a surprise.
+# renovate: datasource=docker depName=hadolint/hadolint
 HADOLINT_VERSION ?= v2.15.1-alpine
 HADOLINT_IMAGE ?= hadolint/hadolint:$(HADOLINT_VERSION)
 #
