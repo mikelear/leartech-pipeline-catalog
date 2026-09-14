@@ -63,6 +63,11 @@ GOLANGCI_MERGED ?= .golangci.merged.yml
 AUTHCONF_URL ?= https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/authconformance/main.go
 AUTHCONF_FILE ?=
 
+# job-reaping: a Job that never expires is a leak with a green tick. Same
+# curl-or-local shape.
+JOBREAP_URL ?= https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/jobreaping/main.go
+JOBREAP_FILE ?=
+
 # comment-gate: challenges added prose. Same curl-or-local shape.
 #
 # COMMENTGATE_BASE is the ref the diff is taken against. Lighthouse sets
@@ -218,6 +223,36 @@ auth-standard: ## Print the estate auth standard (what auth-conformance enforces
 	printf 'module authconformance\n\ngo 1.24\n' > "$$work/go.mod"; \
 	( cd "$$work" && go run . --explain )
 
+# ── job-reaping: nothing cleans up after a Job unless you say so ─────────────
+#
+# Measured 2026-09-14: the two build clusters held 12,046 Jobs between them and
+# 10,674 were a single un-reaped source, the oldest 244 days old. Purging took
+# gcp from 7,000 Jobs to 750 and az from 5,053 to 622. Nothing had reported a
+# problem, because nothing was broken in a way anything watches.
+#
+# Checks three surfaces. The third is the one that matters: a Job created by a
+# SERVICE at runtime has no owner, no helm release and no chart, so a
+# template-only audit cannot see it -- which is exactly how arrivals-observer
+# came to leave 205 completed forensics pods on one cluster and 11 on the other.
+#
+# CronJobs pass on history limits OR a TTL, because history limits genuinely
+# bound them. 15 of the estate's 26 Job templates were already compliant that
+# way; a check that failed them would be wrong, not strict.
+job-reaping: ## Fail Jobs that nothing will ever reap (charts + Go)
+	@set -eu; \
+	work=$$(mktemp -d); \
+	trap 'rm -rf "$$work"' EXIT; \
+	if [ -n "$(JOBREAP_FILE)" ] && [ -f "$(JOBREAP_FILE)" ]; then \
+	  echo "==> using local checker $(JOBREAP_FILE)"; \
+	  cp "$(JOBREAP_FILE)" "$$work/main.go"; \
+	else \
+	  echo "==> fetching job-reaping checker from $(JOBREAP_URL)"; \
+	  curl -fsSL -o "$$work/main.go" "$(JOBREAP_URL)"; \
+	fi; \
+	printf 'module jobreaping\n\ngo 1.24\n' > "$$work/go.mod"; \
+	( cd "$$work" && go build -o "$$work/jobreaping" . ); \
+	"$$work/jobreaping" -root "$$(pwd)"
+
 auth-conformance: ## Enforce the estate auth standard (code + chart)
 	@set -eu; \
 	work=$$(mktemp -d); \
@@ -265,7 +300,7 @@ comment-gate: ## Challenge added prose: ratchet, and claims must name a proof
 	"$$work/commentgate" -base "$(COMMENTGATE_BASE)"
 
 
-lint: lint-config file-size swag-check auth-conformance comment-gate ## Run golangci-lint against the merged config (+ swagger freshness + auth standard + prose gate)
+lint: lint-config file-size swag-check auth-conformance job-reaping comment-gate ## Run golangci-lint against the merged config (+ swagger freshness + auth standard + prose gate)
 	@set -eu; \
 	if ! command -v golangci-lint >/dev/null 2>&1; then \
 	  echo "==> golangci-lint not found on PATH"; \

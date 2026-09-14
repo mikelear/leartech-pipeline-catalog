@@ -1,0 +1,8 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: y
+spec:
+  schedule: "0 1 * * *"
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 1
