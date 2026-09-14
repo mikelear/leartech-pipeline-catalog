@@ -138,6 +138,52 @@ spec:
               echo "    exercises them -- the same gap this repo fails others for."
             fi
             echo "==> tested $found module(s)"
+
+            exit "$rc"
+        - image: debian:12-slim
+          name: runner-selftests
+          resources: {}
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+            # The shared end2end runner is shell, not a Go module, so the Go
+            # loop above cannot see it. It decides what a check's exit code
+            # MEANS and writes the results.json the qa-gate reads, and it
+            # carried two defects this year that each survived because nothing
+            # exercised it.
+            #
+            # This runs in debian:12-slim, not golang, because that is what
+            # tasks/end2end/pullrequest.yaml runs the runner in -- and it
+            # apt-installs the tools it calls "the contract guarantees to
+            # consumer scripts" before invoking it. The runner shells out to
+            # jq to build results.json, so a test image without jq does not
+            # test the runner: run.sh dies at exit 127 and every assertion
+            # fails on a missing file, which is what the first CI run this
+            # repo ever had reported. Test where the contract holds.
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+              ca-certificates jq python3 >/dev/null
+
+            # Assert rather than assume. Both of these are call-outs, so a
+            # missing one does not fail the test it is meant to run -- it
+            # fails it for the wrong reason, or (for a test that swallows the
+            # error) passes it on nothing.
+            for tool in jq python3; do
+              command -v "$tool" >/dev/null || { echo "FAIL: $tool absent after install" >&2; exit 1; }
+            done
+
+            rc=0
+            found=0
+            for t in end2end-runner/*_test.sh; do
+              [ -f "$t" ] || continue
+              found=$((found + 1))
+              echo "==> $t"
+              bash "$t" || rc=1
+            done
+            if [ "$found" = "0" ]; then
+              echo "FAIL: no end2end-runner/*_test.sh ran, so this step proved nothing." >&2
+              exit 1
+            fi
+            echo "==> ran $found runner test file(s)"
             exit "$rc"
         - image: cytopia/yamllint:latest
           name: yamllint
