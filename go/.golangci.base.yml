@@ -10,8 +10,32 @@
 # Linter additions / rule tweaks land HERE first, then propagate to every
 # Go consumer with zero per-repo churn.
 #
-# NOTE: Do NOT put `version: "2"` here. Per-repo .golangci.yml sets it.
-# If the base also sets it, yq merge + viper unmarshal can choke.
+# version is declared HERE. It used to say "do NOT put version: \"2\" here —
+# yq merge + viper unmarshal can choke". That was tested on 2026-09-14 with
+# yq v4 and golangci-lint v2.13.2 and does not reproduce; meanwhile its
+# absence broke the mk's own documented path.
+#
+#   base                merged with a local file   base used AS-IS
+#   -----------------   ------------------------   ---------------
+#   without version     loads fine                 FAILS TO LOAD
+#   with version        loads fine                 loads fine
+#
+# `make lint-config` prints "no local .golangci.yml; using base as-is" and
+# copies this file straight to .golangci.merged.yml. golangci-lint v2 then
+# refuses it:
+#
+#   Error: can't load config: unsupported version of the configuration: ""
+#
+# Every current consumer happens to declare version in its own .golangci.yml,
+# so the merge supplied it by accident and the gap stayed invisible. A NEW
+# repo following the documented path silently cannot lint -- and the mk
+# prints its success line either way. Found by the ba-tool session hitting
+# exactly that on a new repo.
+#
+# Safe for existing repos: yq's ireduce takes the last document, so a local
+# version: "2" overwrites this with the identical value. Both merge outputs
+# were byte-identical at 185 lines.
+version: "2"
 
 run:
   timeout: 5m
