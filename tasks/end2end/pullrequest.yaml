@@ -792,6 +792,70 @@ spec:
                     exit 1
                   }
                 done
+
+                # `rollout status` proves A spec went live. It does not prove
+                # WHICH. If the deploy run pushed a stale chart, or an image
+                # tag stayed pinned to an earlier build, rollout is green on
+                # the wrong version and every check below then certifies the
+                # previous commit -- in the most convincing way available,
+                # because the pod is genuinely healthy and genuinely
+                # answering.
+                #
+                # Across 8 repos and 36 numbered end2end scripts, not one
+                # asserts which build replied. Every VERSION reference in the
+                # estate is metadata stamped into results.json or a
+                # uniqueness seed for a run id. This is the assertion that
+                # was missing, and it goes here rather than in 36 scripts
+                # because it needs nothing service-specific: the image tag is
+                # readable the same way everywhere.
+                if [ -z "${VERSION:-}" ]; then
+                  echo "==> VERSION unset; cannot anchor which build is under test."
+                  echo "    Checks below may describe a previous image."
+                else
+                  echo "==> anchoring: some running image must carry VERSION=$VERSION"
+                  imgs=$(kubectl -n "$PREVIEW_NAMESPACE" get pods \
+                    -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' \
+                    2>/dev/null || true)
+
+                  # A probe that inspected nothing is not a probe that found
+                  # nothing. If no image was readable at all, say so and fail
+                  # rather than fall through to the "no match" message, which
+                  # would blame the version for a kubectl problem.
+                  if [ -z "$imgs" ]; then
+                    echo "FAIL: no container images readable in $PREVIEW_NAMESPACE, so this" >&2
+                    echo "      run cannot tell which build it is about to test." >&2
+                    exit 1
+                  fi
+
+                  # Exact TAG equality, not substring. A substring test
+                  # passes VERSION=0.0.0-PR-7-3 against a pod running
+                  # 0.0.0-PR-7-30 -- iteration 3 matching iteration 30 -- and
+                  # certifies the wrong build with a green tick. Iteration
+                  # counts reach double digits on any PR that gets retested,
+                  # so this is reachable rather than theoretical.
+                  matched=""
+                  for img in $imgs; do
+                    case "$img" in
+                      *:*) tag="${img##*:}" ;;
+                      *)   tag="" ;;
+                    esac
+                    if [ "$tag" = "$VERSION" ]; then
+                      matched="$img"
+                      break
+                    fi
+                  done
+
+                  if [ -n "$matched" ]; then
+                    echo "    ok: $matched"
+                  else
+                    echo "FAIL: no running image carries VERSION=$VERSION." >&2
+                    echo "      The preview is healthy and serving a DIFFERENT build, so every" >&2
+                    echo "      check below would pass or fail about the wrong commit." >&2
+                    echo "      Images running in $PREVIEW_NAMESPACE:" >&2
+                    printf '%s\n' "$imgs" | sed 's|^|        |' >&2
+                    exit 1
+                  fi
+                fi
               fi
             else
               echo "==> kubectl or PULL_PULL_SHA unavailable, so this run cannot confirm the"
