@@ -29,7 +29,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
           name: jx-variables
           resources: {}
           script: |
@@ -87,7 +87,7 @@ spec:
             # stub auth env vars. Runs alongside the build so the spec
             # lands in the same pod before openapi-generation reads it.
             [ -f Makefile ] && grep -q "^openapi:" Makefile && make openapi || true
-        - image: gcr.io/kaniko-project/executor:v1.9.1-debug
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources:
             requests:
@@ -130,7 +130,7 @@ spec:
           name: ""
           resources: {}
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
           name: promote-jx-preview
           resources: {}
           script: |

@@ -92,7 +92,7 @@ spec:
             #!/bin/sh
             set -e
             sh test/go/config_schema_test.sh
-        - image: golang:1.26
+        - image: golang:1.27
           name: go-selftests
           resources: {}
           script: |
