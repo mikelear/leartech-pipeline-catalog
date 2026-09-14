@@ -28,7 +28,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: golang:1.26-alpine
+        - image: golang:1.27-alpine
           name: govulncheck
           resources:
             # govulncheck loads the full module + vuln DB; 512Mi is borderline and

@@ -120,7 +120,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
           name: jx-variables
           resources: {}
           script: |
@@ -139,7 +139,7 @@ spec:
         # Differentially checked against that python on real tokens from a
         # preview Hydra -- read scope, write scope, omitted scope (scp: []) and
         # a refused scope -- identical output on all four.
-        - image: golang:1.26
+        - image: golang:1.27
           name: authtoken-build
           resources: {}
           script: |

@@ -52,14 +52,14 @@ spec:
           name: ""
           resources: {}
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
           name: jx-variables
           resources: {}
           script: |
             #!/usr/bin/env sh
             jx gitops variables
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
           name: chart-lint
           resources: {}
           script: |
@@ -87,7 +87,7 @@ spec:
         # caches on file inputs, and a chart read through exec is not one of
         # them, so a run against a mutated chart replays the previous PASS. A
         # compiled binary cannot do that.
-        - image: golang:1.26
+        - image: golang:1.27
           name: chart-tests-build
           resources: {}
           script: |
@@ -102,7 +102,7 @@ spec:
             CGO_ENABLED=0 go test -c -o /workspace/source/chart.test ./...
             echo "==> built chart.test ($(stat -c%s /workspace/source/chart.test) bytes, static)"
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
           name: chart-tests
           resources: {}
           script: |
@@ -146,7 +146,7 @@ spec:
           name: ""
           resources: {}
 
-        - image: ghcr.io/jenkins-x-plugins/jx-preview:0.6.0
+        - image: ghcr.io/jenkins-x-plugins/jx-preview:0.7.26
           name: promote-jx-preview
           resources: {}
           script: |
