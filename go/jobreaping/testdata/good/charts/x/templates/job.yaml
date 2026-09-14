@@ -1,0 +1,6 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: x
+spec:
+  ttlSecondsAfterFinished: 3600
