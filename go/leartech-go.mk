@@ -259,7 +259,22 @@ auth-standard: ## Print the estate auth standard (what auth-conformance enforces
 # Skips loudly rather than silently when there is no Dockerfile: a repo with
 # nothing to check and a repo whose scan failed to find anything must not
 # produce the same output.
-dockerfile-lint: ## hadolint every Dockerfile (threshold: $(HADOLINT_THRESHOLD))
+# NOT a prerequisite of `lint`, and that was a mistake worth recording.
+#
+# `lint` runs inside golangci/golangci-lint, which has no docker binary --
+# and a Tekton step has no docker daemon to talk to even if it did. Wiring
+# this into `lint` therefore failed EVERY repo with
+# "docker not on PATH; cannot run hadolint", including repos with no
+# Dockerfile at all, because the guard refusing to pass a check that did not
+# run fired before the no-Dockerfile skip.
+#
+# The guard was right; the placement was wrong. hadolint needs its own
+# pipeline step running the hadolint IMAGE, the way leartech-dockerfiles
+# already does it -- not a docker call from inside another tool's container.
+#
+# Kept as a target because it is genuinely useful locally, where docker does
+# exist, and `make dockerfile-lint` before pushing is worth having.
+dockerfile-lint: ## hadolint every Dockerfile locally (threshold: $(HADOLINT_THRESHOLD))
 	@set -eu; \
 	files=$$(find . -name 'Dockerfile*' \
 	           -not -path './.git/*' \
@@ -374,7 +389,7 @@ comment-gate: ## Challenge added prose: ratchet, and claims must name a proof
 	"$$work/commentgate" -base "$(COMMENTGATE_BASE)"
 
 
-lint: lint-config file-size swag-check auth-conformance job-reaping dockerfile-lint comment-gate ## Run golangci-lint against the merged config (+ swagger freshness + auth standard + prose gate)
+lint: lint-config file-size swag-check auth-conformance job-reaping comment-gate ## Run golangci-lint against the merged config (+ swagger freshness + auth standard + prose gate)
 	@set -eu; \
 	if ! command -v golangci-lint >/dev/null 2>&1; then \
 	  echo "==> golangci-lint not found on PATH"; \
