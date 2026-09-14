@@ -808,11 +808,40 @@ spec:
                 # was missing, and it goes here rather than in 36 scripts
                 # because it needs nothing service-specific: the image tag is
                 # readable the same way everywhere.
-                if [ -z "${VERSION:-}" ]; then
-                  echo "==> VERSION unset; cannot anchor which build is under test."
-                  echo "    Checks below may describe a previous image."
+                # WHICH version to anchor on. Not this run's VERSION.
+                #
+                # VERSION is per-PIPELINERUN, not per-commit: every run of any
+                # context gets a fresh iteration. When all contexts are
+                # siblings of one push they share it, which is why comparing
+                # against $VERSION worked at first. `/retest` breaks that --
+                # it creates new runs for the FAILED contexts only, so end2end
+                # gets a new iteration while the preview still legitimately
+                # runs the image the last `pr` run built. Anchoring on
+                # $VERSION then fails a preview that is serving exactly the
+                # right commit, and no amount of retesting can fix it.
+                #
+                # preview-gate is handed expectedVersion at DEPLOY time, so it
+                # records what the deploy intended rather than what this run
+                # happens to be numbered. That is the honest comparison: it
+                # still catches a rollout that did not happen (deploy intended
+                # N, pods serve N-8, which is the defect this anchor was added
+                # for) without failing a partial retest.
+                ANCHOR_VERSION=""
+                GATE_PROBE="http://preview-gate.${PREVIEW_NAMESPACE}.svc.cluster.local:8090/cgi-bin/gate"
+                if command -v curl >/dev/null 2>&1; then
+                  ANCHOR_VERSION=$(curl -fsS -m 10 "$GATE_PROBE" 2>/dev/null \
+                    | sed -n 's/.*"expected_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+                fi
+
+                if [ -z "$ANCHOR_VERSION" ]; then
+                  echo "==> no preview-gate expected_version available; cannot anchor which"
+                  echo "    build is under test. Checks below may describe a previous image."
+                  echo "    (This run's VERSION=${VERSION:-<unset>} is NOT used: it numbers the"
+                  echo "     pipelinerun, not the deploy, so it disagrees on any partial retest.)"
                 else
-                  echo "==> anchoring: some running image must carry VERSION=$VERSION"
+                  echo "==> anchoring: some running image must carry the version the deploy"
+                  echo "    intended, expected_version=$ANCHOR_VERSION (this run is ${VERSION:-<unset>})"
+                  VERSION="$ANCHOR_VERSION"
                   imgs=$(kubectl -n "$PREVIEW_NAMESPACE" get pods \
                     -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' \
                     2>/dev/null || true)
