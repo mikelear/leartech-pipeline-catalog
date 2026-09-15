@@ -7,3 +7,20 @@ spec:
     always_run: true
     optional: false
     source: lint.yaml
+  # Builds the checkers image WITHOUT pushing, so a change that breaks the
+  # build is caught on the PR rather than on main. The image's own build
+  # asserts all five binaries landed and are executable.
+  - name: checkers-image
+    context: "checkers-image"
+    always_run: true
+    optional: false
+    source: checkers-image.yaml
+  postsubmits:
+  # The catalog had no postsubmit at all until now -- it published nothing,
+  # because everything it provided was fetched from raw.githubusercontent at
+  # run time. Shipping the gates as a pinned image is what this adds.
+  - name: release-checkers
+    context: "release-checkers"
+    source: release-checkers.yaml
+    branches:
+    - ^main$

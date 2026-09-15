@@ -155,6 +155,28 @@ FILE_SIZE_FAIL ?= 0
 
 .PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage build vuln pre-push preflight preflight-doctor
 
+# ── how a checker is obtained ────────────────────────────────────────────────
+#
+# Three ways, tried in order, and the order is the point.
+#
+#   1. a local file          *_FILE, when set — lets this repo dogfood its own
+#                            checker source without a round trip
+#   2. a binary on PATH      shipped by ghcr.io/mikelear/leartech-checkers,
+#                            which is the step image in CI and is COPY'd into
+#                            the agent base image
+#   3. curl + go run         the original path, kept as a fallback
+#
+# WHY THE BINARY IS PREFERRED. The curl path costs three things the estate has
+# already paid for: raw.githubusercontent serves cache-control: max-age=300, so
+# a merged change is not live for five minutes and a fix can look like it did
+# not work; it needs a Go toolchain in the running container, which is why only
+# leartech-agent-go can pre-flight these; and it recompiles on every run of
+# every PR in every repo.
+#
+# WHY THE FALLBACK STAYS. Removing it would make every repo depend on the image
+# having rolled out first. A gate that cannot run is worse than a slow one, and
+# this estate has twice turned a delivery change into a fleet-wide stop.
+#
 # ── preflight: run what CI runs, before pushing ──────────────────────────────
 #
 # One command instead of folklore about which targets matter. Intended for a
@@ -388,6 +410,10 @@ job-reaping: ## Fail Jobs that nothing will ever reap (charts + Go)
 	if [ -n "$(JOBREAP_FILE)" ] && [ -f "$(JOBREAP_FILE)" ]; then \
 	  echo "==> using local checker $(JOBREAP_FILE)"; \
 	  cp "$(JOBREAP_FILE)" "$$work/main.go"; \
+	elif command -v jobreaping >/dev/null 2>&1; then \
+	  echo "==> using the jobreaping binary on PATH (leartech-checkers image)"; \
+	  jobreaping -root "$$(pwd)"; \
+	  exit $$?; \
 	else \
 	  echo "==> fetching job-reaping checker from $(JOBREAP_URL)"; \
 	  curl -fsSL -o "$$work/main.go" "$(JOBREAP_URL)"; \
