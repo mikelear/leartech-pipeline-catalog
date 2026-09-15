@@ -1,13 +1,19 @@
 # Publish the catalog's gates as a pinned image.
 #
-# The catalog had NO postsubmit before this: it published nothing, because
-# everything it provided was curled from raw.githubusercontent at run time.
-# That delivery path costs five minutes of CDN staleness on every change, a
-# Go toolchain in every consuming container, and a recompile per run.
+# THE FIRST ATTEMPT FAILED ON BOTH CLUSTERS and the reasons are worth keeping.
 #
-# The tag is the semver from jx's version stream, so consumers pin a version
-# and Renovate proposes the bump -- rather than tracking a moving `main` no
-# reviewer ever sees change.
+#   step-next-version exit=127
+#
+# 127 is "command not found": jx-release-version is not in
+# ghcr.io/jenkins-x/jx-boot, which the step had pinned. build-and-push and
+# trigger-renovate then failed on the missing VERSION file. Three red steps,
+# one cause.
+#
+# The shape below is lifted from leartech-dockerfiles' leartech-agent-go
+# release, which publishes an image from this estate every day. The
+# stepTemplate `uses:` the upstream docker release task and named steps
+# overlay onto it -- so next-version and jx-variables inherit an image that
+# already carries the tooling, rather than this file guessing at one.
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
@@ -16,67 +22,108 @@ metadata:
 spec:
   pipelineSpec:
     tasks:
-    - name: release-checkers
+    - name: from-build-pack
       resources: {}
       taskSpec:
         metadata: {}
         stepTemplate:
-          env:
-          - name: HOME
-            value: /tekton/home
-          envFrom:
-          - secretRef:
-              name: jx-boot-job-env-vars
-              optional: true
+          image: uses:mikelear/jx3-pipeline-catalog/tasks/docker/release.yaml@master
           name: ""
           resources:
-            requests:
-              cpu: 500m
-              memory: 1Gi
+            limits: {}
           workingDir: /workspace/source
+          env:
+          - name: IMAGE_NAME
+            value: leartech-checkers
         steps:
-        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
-          name: next-version
+        - name: next-version
           resources: {}
           script: |
             #!/usr/bin/env sh
-            set -e
             jx-release-version > VERSION
-            echo "==> releasing leartech-checkers $(cat VERSION)"
-        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
-          name: build-and-push
+        - name: jx-variables
           resources: {}
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
+          name: build-container
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+          env:
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
           script: |
             #!/busybox/sh
             set -e
-            VERSION=$(cat VERSION)
-            /kaniko/executor \
+            set -o pipefail
+            source .jx/variables.sh
+            sed 's/"credHelpers":{[^}]*},//' /tekton/creds/.docker/config.json > /workspace/docker-config.json
+            if [ -n "$GIT_TOKEN" ]; then
+              GHCR_AUTH=$(printf "mikelear:%s" "$GIT_TOKEN" | base64)
+              cat /workspace/docker-config.json | sed "s/\"auths\":{/\"auths\":{\"ghcr.io\":{\"auth\":\"${GHCR_AUTH}\"},/" > /kaniko/.docker/config.json
+            else
+              cp /workspace/docker-config.json /kaniko/.docker/config.json
+            fi
+            # Context is the repo root: the Dockerfile COPYs from go/<module>/,
+            # so a narrower context would not see the sources.
+            /kaniko/executor $KANIKO_FLAGS \
+              --cleanup \
               --context=/workspace/source \
               --dockerfile=checkers/Dockerfile \
               --destination="ghcr.io/mikelear/leartech-checkers:${VERSION}" \
               --destination="ghcr.io/mikelear/leartech-checkers:latest"
-        # Bump consumers NOW rather than on Renovate's Monday window.
+        - name: promote-changelog
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            source .jx/variables.sh
+            git add * || true
+            git commit -a -m "chore: release leartech-checkers $VERSION" --allow-empty
+            git tag -fa v$VERSION -m "Release leartech-checkers $VERSION"
+            git push --force origin v$VERSION
+        # Bump consumers now rather than on Renovate's Monday window.
         #
-        # leartech-agent-go/release.yaml learned this the hard way: its
-        # trigger targeted a CronJob that did not exist on the cluster it
-        # released from, swallowed the error with `|| echo ::WARN`, and every
-        # release went green while nothing propagated for up to seven days.
-        # So this does NOT swallow: a missing CronJob is a configuration
-        # error that will fail identically on every future release.
+        # RENOVATE RUNS ON GCP ONLY. Confirmed on 2026-09-15:
+        #
+        #   gcp  cronjob/renovate, renovate-agent-images, renovate-toolsets
+        #   az   none
+        #
+        # leartech-agent-go gets away with an unguarded `create job
+        # --from=cronjob/renovate-toolsets` only because that repo releases
+        # from GCP alone. The catalog is registered on BOTH clusters, so this
+        # step runs on az too -- where the CronJob has never existed.
+        #
+        # Its own history is the warning: that step once targeted a CronJob
+        # absent from the cluster it ran on, hid the failure behind
+        # `|| echo ::WARN`, and every release went green while nothing
+        # propagated for up to seven days.
+        #
+        # So this distinguishes the two cases instead of swallowing both. No
+        # CronJob on a cluster that never had one is a fact about the estate
+        # and is reported, not failed. A dispatch that then fails IS an error
+        # and is left to fail.
         - image: alpine/k8s:1.36.2
           name: trigger-renovate
           resources: {}
           script: |
             #!/bin/sh
             set -eo pipefail
-            VERSION=$(cat VERSION)
+            if ! kubectl -n jx get cronjob renovate-toolsets >/dev/null 2>&1; then
+              echo "==> no cronjob/renovate-toolsets on this cluster."
+              echo "    Renovate runs on GCP only, so there is nothing to dispatch"
+              echo "    here. The GCP release of this same commit does the bump."
+              exit 0
+            fi
             JOB="renovate-after-checkers-$(date +%s)"
-            echo "==> dispatching renovate for leartech-checkers ${VERSION}"
+            echo "==> dispatching renovate: job/$JOB"
             kubectl -n jx create job "$JOB" --from=cronjob/renovate-toolsets
-            echo "==> created job/$JOB"
   podTemplate:
     tolerations:
     - key: sku
