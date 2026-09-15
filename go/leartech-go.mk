@@ -153,7 +153,83 @@ FILE_SIZE_FAIL ?= 0
 # .DEFAULT_GOAL so `make -f leartech-go.mk` (no target) prints help.
 .DEFAULT_GOAL := help
 
-.PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage build vuln pre-push
+.PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage build vuln pre-push preflight preflight-doctor
+
+# ── how a checker is obtained ────────────────────────────────────────────────
+#
+# Three ways, tried in order, and the order is the point.
+#
+#   1. a local file          *_FILE, when set — lets this repo dogfood its own
+#                            checker source without a round trip
+#   2. a binary on PATH      shipped by ghcr.io/mikelear/leartech-checkers,
+#                            which is the step image in CI and is COPY'd into
+#                            the agent base image
+#   3. curl + go run         the original path, kept as a fallback
+#
+# WHY THE BINARY IS PREFERRED. The curl path costs three things the estate has
+# already paid for: raw.githubusercontent serves cache-control: max-age=300, so
+# a merged change is not live for five minutes and a fix can look like it did
+# not work; it needs a Go toolchain in the running container, which is why only
+# leartech-agent-go can pre-flight these; and it recompiles on every run of
+# every PR in every repo.
+#
+# WHY THE FALLBACK STAYS. Removing it would make every repo depend on the image
+# having rolled out first. A gate that cannot run is worse than a slow one, and
+# this estate has twice turned a delivery change into a fleet-wide stop.
+#
+# ── preflight: run what CI runs, before pushing ──────────────────────────────
+#
+# One command instead of folklore about which targets matter. Intended for a
+# person or an agent about to push, and for `make preflight` inside an agent
+# container on the Controller.
+#
+# WHAT IT CANNOT TELL YOU, stated here rather than discovered later. A green
+# preflight is "most things are fine", never "CI will pass". Measured on
+# 2026-09-14/15, every one of these was green locally and red in CI:
+#
+#   the linter    the repo's own .golangci.yml is STRICTER than CI's merged
+#                 config, so it reported three errcheck hits CI excludes --
+#                 work against a rule this estate does not run
+#   the image     a step verified with docker on a laptop failed in CI, where
+#                 the lint container has no docker binary at all
+#   the shell     a script checked without `set -eo pipefail` cannot show that
+#                 a failed command substitution kills the step
+#   the arch      govulncheck panicked on amd64 CI and passed six times on
+#                 local arm64
+#
+# So preflight deliberately runs the SAME fetched checkers CI does, rather
+# than local equivalents, and `preflight-doctor` prints what it still cannot
+# cover. Anything it does catch is a ten-minute CI cycle saved.
+preflight: lint test vuln ## Run the gates CI runs, before pushing (see: preflight-doctor)
+	@echo ""
+	@echo "==> preflight: lint, test and vuln passed"
+	@echo "    This is NOT a guarantee CI will pass. Run 'make preflight-doctor'"
+	@echo "    for what it cannot see."
+
+preflight-doctor: ## Print what preflight does and does NOT cover
+	@echo "==> preflight covers"
+	@echo "    lint          golangci-lint against the MERGED config (base + repo),"
+	@echo "                  plus auth-conformance, job-reaping and the comment gate,"
+	@echo "                  all fetched from the catalog so they are the same code CI runs"
+	@echo "    test          go test ./... -race"
+	@echo "    vuln          govulncheck ./..."
+	@echo ""
+	@echo "==> preflight does NOT cover, and each of these has cost a red CI run"
+	@echo "    container     a step that needs docker, or a specific step image."
+	@echo "                  dockerfile-lint runs as its own Tekton step for exactly"
+	@echo "                  this reason; the go-lint container has no docker binary."
+	@echo "    architecture  CI builds amd64. govulncheck panicked there and passed"
+	@echo "                  six times on local arm64."
+	@echo "    the preview   end2end, end2end-ui and the dynamic scans need a deployed"
+	@echo "                  preview. Nothing local can stand in for one."
+	@echo "    the cluster   image-scan, qa-gate and anything reading a live namespace."
+	@echo "    freshness     the catalog's checkers are fetched from raw.githubusercontent,"
+	@echo "                  which serves cache-control: max-age=300. For five minutes"
+	@echo "                  after a catalog merge, local and CI can legitimately differ."
+	@echo ""
+	@echo "==> the honest summary"
+	@echo "    A green preflight means most classes of failure are ruled out."
+	@echo "    It does not mean the PR will build."
 
 help: ## Print available targets
 	@echo ""
@@ -334,6 +410,10 @@ job-reaping: ## Fail Jobs that nothing will ever reap (charts + Go)
 	if [ -n "$(JOBREAP_FILE)" ] && [ -f "$(JOBREAP_FILE)" ]; then \
 	  echo "==> using local checker $(JOBREAP_FILE)"; \
 	  cp "$(JOBREAP_FILE)" "$$work/main.go"; \
+	elif command -v jobreaping >/dev/null 2>&1; then \
+	  echo "==> using the jobreaping binary on PATH (leartech-checkers image)"; \
+	  jobreaping -root "$$(pwd)"; \
+	  exit $$?; \
 	else \
 	  echo "==> fetching job-reaping checker from $(JOBREAP_URL)"; \
 	  curl -fsSL -o "$$work/main.go" "$(JOBREAP_URL)"; \

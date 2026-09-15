@@ -1,0 +1,51 @@
+# Build the checkers image on every PR, without pushing.
+#
+# The point is that a change to any checker's source fails HERE rather than on
+# main. The Dockerfile's own final stage asserts all five binaries landed and
+# are executable, so a silently-missing checker cannot ship -- a consumer would
+# otherwise fall through to the curl path and never notice.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: checkers-image
+spec:
+  pipelineSpec:
+    tasks:
+    - name: checkers-image
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          name: ""
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
+          name: build-no-push
+          resources: {}
+          script: |
+            #!/busybox/sh
+            set -e
+            /kaniko/executor \
+              --context=/workspace/source \
+              --dockerfile=checkers/Dockerfile \
+              --no-push
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 20m0s
+status: {}
