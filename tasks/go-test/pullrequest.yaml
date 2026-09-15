@@ -34,6 +34,37 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
+        # Chart tests shell out to `helm`. golang:1.27 has none, and alpine
+        # variants of the go-runtime image have neither helm nor gcc, so this
+        # cannot be solved by swapping the test image.
+        #
+        # Left unsolved it is worse than a missing feature. The chart tests
+        # SKIP -- t.Skipf reads as a pass -- and because those packages sit
+        # inside COVERAGE_SCOPE (./internal/...), their statements stop
+        # counting and total coverage silently drops. On 2026-09-15
+        # leartech-maestro-service hit the 60% floor at 56.4% with four
+        # charttests skipping, and the gate reported "not enough tests" rather
+        # than "your tests did not run". Three repos are affected:
+        # leartech-maestro-service, leartech-mcp-servers, leartech-plan-api.
+        #
+        # Copying the binary out of a pinned public helm image beats curling a
+        # release tarball: Renovate already bumps `image:` refs in this
+        # directory (it moved golang 1.26 -> 1.27 here in #109), whereas a
+        # version embedded in a shell string is exactly the pin that rots
+        # unseen.
+        - image: alpine/helm:3.19.0
+          name: provide-helm
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -eu
+            mkdir -p /workspace/bin
+            src=$(command -v helm || echo /usr/bin/helm)
+            [ -x "$src" ] || { echo "FAIL: no helm in the helm image at $src" >&2; exit 1; }
+            cp "$src" /workspace/bin/helm
+            chmod +x /workspace/bin/helm
+            echo "==> provided $(/workspace/bin/helm version --short)"
+
         # Non-alpine golang image: -race needs cgo + gcc which alpine lacks
         # by default. Slightly bigger image, but no apk add build-base.
         - image: golang:1.27
@@ -62,6 +93,18 @@ spec:
           script: |
             #!/bin/bash
             set -eo pipefail
+
+            # helm from the provide-helm step. Asserted, not assumed: without
+            # it the chart tests skip and the only visible symptom is a
+            # coverage number that quietly fell.
+            export PATH="/workspace/bin:$PATH"
+            command -v helm >/dev/null || {
+              echo "FAIL: helm missing despite the provide-helm step." >&2
+              echo "      Chart tests would skip and coverage would drop with no" >&2
+              echo "      failing check to explain it." >&2
+              exit 1
+            }
+            echo "==> helm $(helm version --short)"
 
             # Self-contained: curl the golden mk file and delegate to
             # `make test-coverage`. The mk owns go test invocation, the
