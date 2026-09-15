@@ -864,8 +864,16 @@ spec:
                   # so this is reachable rather than theoretical.
                   matched=""
                   for img in $imgs; do
-                    case "$img" in
-                      *:*) tag="${img##*:}" ;;
+                    # Strip an @sha256:... digest BEFORE taking the tag. jx
+                    # pins images as name:tag@sha256:digest, so ${img##*:} --
+                    # everything after the LAST colon -- yields the digest hex
+                    # and never the tag. Every digest-pinned preview then
+                    # failed this anchor while serving exactly the right
+                    # build, reporting "no running image carries VERSION=X"
+                    # about an image whose tag was X.
+                    img_notag="${img%@*}"
+                    case "$img_notag" in
+                      *:*) tag="${img_notag##*:}" ;;
                       *)   tag="" ;;
                     esac
                     if [ "$tag" = "$VERSION" ]; then
