@@ -153,7 +153,61 @@ FILE_SIZE_FAIL ?= 0
 # .DEFAULT_GOAL so `make -f leartech-go.mk` (no target) prints help.
 .DEFAULT_GOAL := help
 
-.PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage build vuln pre-push
+.PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage build vuln pre-push preflight preflight-doctor
+
+# ── preflight: run what CI runs, before pushing ──────────────────────────────
+#
+# One command instead of folklore about which targets matter. Intended for a
+# person or an agent about to push, and for `make preflight` inside an agent
+# container on the Controller.
+#
+# WHAT IT CANNOT TELL YOU, stated here rather than discovered later. A green
+# preflight is "most things are fine", never "CI will pass". Measured on
+# 2026-09-14/15, every one of these was green locally and red in CI:
+#
+#   the linter    the repo's own .golangci.yml is STRICTER than CI's merged
+#                 config, so it reported three errcheck hits CI excludes --
+#                 work against a rule this estate does not run
+#   the image     a step verified with docker on a laptop failed in CI, where
+#                 the lint container has no docker binary at all
+#   the shell     a script checked without `set -eo pipefail` cannot show that
+#                 a failed command substitution kills the step
+#   the arch      govulncheck panicked on amd64 CI and passed six times on
+#                 local arm64
+#
+# So preflight deliberately runs the SAME fetched checkers CI does, rather
+# than local equivalents, and `preflight-doctor` prints what it still cannot
+# cover. Anything it does catch is a ten-minute CI cycle saved.
+preflight: lint test vuln ## Run the gates CI runs, before pushing (see: preflight-doctor)
+	@echo ""
+	@echo "==> preflight: lint, test and vuln passed"
+	@echo "    This is NOT a guarantee CI will pass. Run 'make preflight-doctor'"
+	@echo "    for what it cannot see."
+
+preflight-doctor: ## Print what preflight does and does NOT cover
+	@echo "==> preflight covers"
+	@echo "    lint          golangci-lint against the MERGED config (base + repo),"
+	@echo "                  plus auth-conformance, job-reaping and the comment gate,"
+	@echo "                  all fetched from the catalog so they are the same code CI runs"
+	@echo "    test          go test ./... -race"
+	@echo "    vuln          govulncheck ./..."
+	@echo ""
+	@echo "==> preflight does NOT cover, and each of these has cost a red CI run"
+	@echo "    container     a step that needs docker, or a specific step image."
+	@echo "                  dockerfile-lint runs as its own Tekton step for exactly"
+	@echo "                  this reason; the go-lint container has no docker binary."
+	@echo "    architecture  CI builds amd64. govulncheck panicked there and passed"
+	@echo "                  six times on local arm64."
+	@echo "    the preview   end2end, end2end-ui and the dynamic scans need a deployed"
+	@echo "                  preview. Nothing local can stand in for one."
+	@echo "    the cluster   image-scan, qa-gate and anything reading a live namespace."
+	@echo "    freshness     the catalog's checkers are fetched from raw.githubusercontent,"
+	@echo "                  which serves cache-control: max-age=300. For five minutes"
+	@echo "                  after a catalog merge, local and CI can legitimately differ."
+	@echo ""
+	@echo "==> the honest summary"
+	@echo "    A green preflight means most classes of failure are ruled out."
+	@echo "    It does not mean the PR will build."
 
 help: ## Print available targets
 	@echo ""
