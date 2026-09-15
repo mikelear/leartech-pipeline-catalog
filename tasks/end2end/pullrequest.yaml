@@ -826,11 +826,24 @@ spec:
                 # still catches a rollout that did not happen (deploy intended
                 # N, pods serve N-8, which is the defect this anchor was added
                 # for) without failing a partial retest.
+                # This step runs under `set -eo pipefail`. A bare
+                #   VAR=$(curl -fsS ...)
+                # therefore KILLS THE STEP when the gate does not answer --
+                # curl -f exits 22 on an HTTP error and the failed assignment
+                # takes the shell with it, before the "cannot anchor" fallback
+                # below is ever reached. Observed on auth-service PR #193's az
+                # preview: 19/19 checks passed and the step still exited 22.
+                #
+                # Guarding the call with `if` keeps the failure local, which is
+                # the whole point: an unreadable gate means this run cannot
+                # anchor, not that the run is over.
                 ANCHOR_VERSION=""
                 GATE_PROBE="http://preview-gate.${PREVIEW_NAMESPACE}.svc.cluster.local:8090/cgi-bin/gate"
                 if command -v curl >/dev/null 2>&1; then
-                  ANCHOR_VERSION=$(curl -fsS -m 10 "$GATE_PROBE" 2>/dev/null \
-                    | sed -n 's/.*"expected_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+                  if gate_body=$(curl -fsS -m 10 "$GATE_PROBE" 2>/dev/null); then
+                    ANCHOR_VERSION=$(printf '%s' "$gate_body" \
+                      | sed -n 's/.*"expected_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+                  fi
                 fi
 
                 if [ -z "$ANCHOR_VERSION" ]; then
