@@ -1,0 +1,9 @@
+releases:
+- chart: dev/leartech-gate
+  name: leartech-gate
+- chart: bitnami-oci/postgresql
+  name: postgresql
+- chart: jxgh/jx-verify
+  name: jx-verify
+- chart: ../../charts/security-scans
+  name: security-scans

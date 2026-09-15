@@ -1,0 +1,7 @@
+releases:
+- chart: dev/leartech-gate
+  version: 0.0.24
+  name: leartech-gate
+- chart: dev/leartech-plan-api
+  version: 0.1.9
+  name: leartech-plan-api

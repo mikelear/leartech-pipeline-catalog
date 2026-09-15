@@ -1,0 +1,7 @@
+renovate:
+  config: |
+    module.exports = {
+      repositories: [
+        "mikelear/leartech-gate",
+      ],
+    };

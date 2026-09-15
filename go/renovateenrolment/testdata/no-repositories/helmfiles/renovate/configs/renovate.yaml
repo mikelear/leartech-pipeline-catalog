@@ -1,0 +1,5 @@
+renovate:
+  config: |
+    module.exports = {
+      repositories: [],
+    };
