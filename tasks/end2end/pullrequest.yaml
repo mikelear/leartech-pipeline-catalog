@@ -1411,11 +1411,114 @@ spec:
               "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
             post_sticky "$body"
 
+            # ── coverage counters, REPORT ONLY ──────────────────────────────
+            #
+            # Opt-in per repo with E2E_COVERAGE=1, and only meaningful when the
+            # PR image was built instrumented (GO_COVER_BUILD=1 -> Dockerfile
+            # ARG COVER=1). The service serves its counters on a port that is
+            # not on the Service and not on the HTTPRoute, so the only way to
+            # reach it is a pod IP from inside the cluster -- which this step
+            # has and nothing outside does.
+            #
+            # Runs BEFORE the verdict on purpose: what the suite exercised is
+            # most interesting when it failed.
+            #
+            # NOTHING HERE FAILS THE STEP. The number is reported, not
+            # enforced, so a repo that cannot collect is no worse off than one
+            # that never tried. It is LOUD about not collecting though, because
+            # a silent miss reads as "end2end covers nothing" rather than
+            # "nothing was collected", and those want different fixes.
+            if [ -n "${E2E_COVERAGE:-}" ]; then
+              echo "==> collecting coverage counters from the preview"
+              cov_tar="/workspace/source/.e2e-coverage.tar"
+              rm -f "$cov_tar"
+
+              # Every pod IP is tried rather than guessing a label: only an
+              # instrumented binary answers on this port, so the probe is the
+              # identification. `if curl`, not a bare assignment, because
+              # curl -f exits 22 and this step runs under `set -eo pipefail` --
+              # the mistake that once killed the step after 19 of 19 passed.
+              cov_ips=$(kubectl -n "$PREVIEW_NAMESPACE" get pods \
+                -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2>/dev/null || true)
+              cov_found=""
+              for cov_ip in $cov_ips; do
+                [ -n "$cov_ip" ] || continue
+                if curl -fsS -m 20 -o "$cov_tar" "http://${cov_ip}:9999/coverage.tar" 2>/dev/null; then
+                  cov_found="$cov_ip"
+                  break
+                fi
+              done
+
+              if [ -z "$cov_found" ]; then
+                rm -f "$cov_tar"
+                echo "==> NOTE: no pod served coverage counters on :9999."
+                echo "    Either this image was not built instrumented"
+                echo "    (GO_COVER_BUILD), or coverage.enabled is off in the"
+                echo "    preview values. Any coverage number for this PR"
+                echo "    therefore describes unit tests ONLY. It is not a"
+                echo "    statement that end2end exercised nothing."
+              else
+                echo "==> collected counters from pod $cov_found ($(wc -c < "$cov_tar") bytes)"
+              fi
+            fi
+
             if [ "$SUCCESS" != "true" ]; then
               echo "FAIL: end2end results.success != true"
               exit 1
             fi
             echo "PASS: end2end complete"
+        # Reports what the suite exercised. Separate step because the one
+        # above runs in debian:12-slim, which has curl and kubectl but no Go,
+        # and covdata is the only thing that can read a counter directory.
+        #
+        # REPORT ONLY, and it never fails: this is the mechanism proving
+        # itself, not a gate. Enforcement is a policy decision about where
+        # the coverage floor lives, and deciding it is not this step's job.
+        - image: golang:1.27
+          name: e2e-coverage-report
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+          script: |
+            #!/usr/bin/env bash
+            set -eo pipefail
+
+            tar_path=".e2e-coverage.tar"
+            if [ ! -f "$tar_path" ]; then
+              echo "==> no counters were collected; nothing to report."
+              echo "    (Set E2E_COVERAGE=1 and build with GO_COVER_BUILD=1 to enable.)"
+              exit 0
+            fi
+
+            dir=".e2ecov"
+            rm -rf "$dir"; mkdir -p "$dir"
+            if ! tar -xf "$tar_path" -C "$dir"; then
+              echo "==> NOTE: the collected tar could not be extracted. Truncated"
+              echo "    stream, most likely; the endpoint logs a mid-stream failure."
+              exit 0
+            fi
+
+            # A covmeta-only directory reads as 0%, which is indistinguishable
+            # from code that never ran. Say which it is rather than printing a
+            # zero that invites the wrong conclusion.
+            if ! ls "$dir"/covcounters.* >/dev/null 2>&1; then
+              echo "==> NOTE: counters are missing from the collected data ("
+              echo "    covmeta present, covcounters absent). That is the shape a"
+              echo "    SIGKILLed process leaves: the flush hook runs on a normal"
+              echo "    return, not on a kill. covdata would report 0% here, which"
+              echo "    would mean the opposite of what it says."
+              ls -la "$dir" || true
+              exit 0
+            fi
+
+            echo "==> what end2end exercised, by package:"
+            go tool covdata percent -i="$dir" 2>&1 | sed 's/^/    /'
+            echo
+            echo "==> This is END2END coverage alone. It is reported, not enforced."
+            echo "    To merge it into the floor, pass the directory to"
+            echo "    make test-coverage E2E_COVERAGE_DIR=... (see go/leartech-go.mk)."
+
   podTemplate:
     tolerations:
     - key: sku
