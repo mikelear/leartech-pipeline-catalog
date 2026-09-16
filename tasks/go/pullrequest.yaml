@@ -74,7 +74,21 @@ spec:
             # Layer cache — see release.yaml for rationale. Same cache repo
             # shared across PR + release builds, so PR snapshots warm the cache
             # for the eventual release build of the merged commit.
+            # GO_COVER_BUILD=1 (set per-repo, like BUILD_TARGET) asks the
+            # Dockerfile for a coverage-instrumented binary via ARG COVER.
+            # Opt-in and PR-only: this task builds the snapshot image that is
+            # deployed to a preview namespace and nowhere else, so an
+            # instrumented binary never reaches staging or production. Repos
+            # that do not set it, or whose Dockerfile has no ARG COVER, are
+            # unaffected.
+            #
+            # The point is E2E_COVERAGE_DIR in leartech-go.mk: the coverage
+            # floor cannot see an end2end suite driving a deployed pod, which
+            # left leartech-maestro-service at 56.4% against a 60% floor with
+            # its Mongo repositories and informer callbacks exercised on every
+            # run and attributed to nothing.
             /kaniko/executor $KANIKO_FLAGS \
+              ${GO_COVER_BUILD:+--build-arg COVER=1} \
               --cache=true \
               --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
               --cache-ttl=168h \
