@@ -56,7 +56,20 @@ var (
 
 	provenByRe = regexp.MustCompile(`proven-by:\s*([A-Za-z0-9_./-]+)`)
 
-	testFileRe = regexp.MustCompile(`(_test\.go|_test\.py|\.spec\.ts|\.test\.ts|/tests?/|end2end/.*\.sh|_test\.rs|Tests?\.cs)$`)
+	// _test.sh and _test.bats are counted, and /tests?/ matches a DIRECTORY
+	// segment rather than only a path ending in one.
+	//
+	// The `$` anchors the whole alternation, so `/tests?/` could only ever
+	// match a path ending in "/tests/" -- which a file path never does. The
+	// effect was that shell tests counted as zero test lines unless they sat
+	// under end2end/, so a repo adding scripts/foo_test.sh saw its ratchet
+	// fail with "0 test lines" against a real test file, and the fix that
+	// looks obvious is to misfile the test to satisfy the regex.
+	//
+	// Hit for real: leartech-ba-service's first-acquisition download script
+	// is shell, because the script IS the artifact a new user runs, and its
+	// 150-line test suite was invisible here.
+	testFileRe = regexp.MustCompile(`(_test\.go|_test\.py|_test\.sh|_test\.bats|\.spec\.ts|\.test\.ts|(^|/)tests?/|end2end/.*\.sh|_test\.rs|Tests?\.cs)`)
 
 	// Files that are pure pattern lists. Their comments label groups of
 	// globs; there is no behaviour to prove, so counting them means a
