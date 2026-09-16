@@ -87,8 +87,18 @@ spec:
             # left leartech-maestro-service at 56.4% against a 60% floor with
             # its Mongo repositories and informer callbacks exercised on every
             # run and attributed to nothing.
+            # PREVIEW_FIXTURES=1 asks the repo's Dockerfile for artefacts that
+            # exist only to be tested against -- leartech-auth-service builds a
+            # scope-gated resource server this way, so its end2end suite has a
+            # callee to demonstrate capability-scope enforcement against. Same
+            # opt-in, PR-only shape as GO_COVER_BUILD above.
+            #
+            # Two explicit flags is the limit of this pattern being clearer than
+            # a generic passthrough. A third should become one, rather than a
+            # third line here.
             /kaniko/executor $KANIKO_FLAGS \
               ${GO_COVER_BUILD:+--build-arg COVER=1} \
+              ${PREVIEW_FIXTURES:+--build-arg PREVIEW_FIXTURES=1} \
               --cache=true \
               --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
               --cache-ttl=168h \
