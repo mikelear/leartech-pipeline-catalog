@@ -233,3 +233,40 @@ func TestVerifiedDeclarationCommentsAreNotProse(t *testing.T) {
 			"has leaked past the two filenames it names", r.comments, len(counted))
 	}
 }
+
+// Shell and directory-based test files are recognised.
+//
+// The pattern once anchored the whole alternation with `$`, so `/tests?/`
+// matched only a path ENDING in "/tests/" -- which no file path does -- and
+// _test.sh was absent entirely. Shell tests therefore counted as zero test
+// lines and the ratchet failed against real test files, whose obvious "fix"
+// is to misfile the test until the regex accepts it.
+func TestTestFileRe_CountsShellAndDirectoryTests(t *testing.T) {
+	for _, want := range []string{
+		"scripts/download-client_test.sh",
+		"scripts/tests/download-client.sh",
+		"tests/smoke.sh",
+		"end2end/15-s2s-audience-semantics.sh",
+		"internal/gateway/api_test.go",
+		"app/thing_test.py",
+		"pkg/x_test.rs",
+		"src/ThingTests.cs",
+		"web/app.spec.ts",
+		"bats/cli_test.bats",
+	} {
+		if !testFileRe.MatchString(want) {
+			t.Errorf("%q is a test file and is not counted as one", want)
+		}
+	}
+	for _, notTest := range []string{
+		"internal/gateway/api.go",
+		"scripts/download-client.sh",
+		"cmd/server/router.go",
+		"charts/values.yaml",
+		"contested/thing.go",
+	} {
+		if testFileRe.MatchString(notTest) {
+			t.Errorf("%q is not a test file and was counted as one", notTest)
+		}
+	}
+}
