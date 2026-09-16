@@ -122,6 +122,45 @@ COMMENTGATE_BASE ?= origin/$(if $(PULL_BASE_REF),$(PULL_BASE_REF),main)
 # against something else that looks like it".
 COVERAGE_SCOPE ?= ./internal/...
 COVERAGE_THRESHOLD ?= 60.0
+# A GOCOVERDIR written by a coverage-instrumented binary (`go build -cover`)
+# while the end2end suite drove it. When set, those counters are merged with
+# the unit-test counters before the floor is computed.
+#
+# WHY. The floor measures statements executed by `go test`. An end2end suite
+# drives a deployed pod over HTTP, so it contributes NOTHING, however thorough
+# it is. leartech-maestro-service measured 56.4% against a 60% floor while its
+# uncovered blocks were precisely the Mongo repositories and informer callbacks
+# that end2end exercises every run. The test effort was real and the metric
+# could not see it.
+#
+# HOW TO PRODUCE ONE. Build the service with
+#
+#     go build -cover -covermode=atomic -o <bin> ./cmd/<service>
+#
+# and set GOCOVERDIR to a writable directory on the pod. Three traps, all
+# measured rather than assumed:
+#
+#   * -covermode=atomic is REQUIRED, not optional. This target runs unit tests
+#     with -race, which forces atomic counters, and `go build -cover` defaults
+#     to set. covdata then refuses the merge outright with "counter mode clash
+#     while reading meta-data file ... previous file had atomic, new file has
+#     set" — a hard error, so at least it is loud.
+#
+#   * Do NOT pass -coverpkg to `go build -cover`. The binary still reports
+#     `-cover=true` under `go version -m`, and writes NOTHING at all. With
+#     -coverpkg the same build produced an empty GOCOVERDIR; without it, the
+#     expected covmeta + covcounters pair. Instrument the whole module and let
+#     the -pkg filter below restrict the output to COVERAGE_SCOPE, so the total
+#     stays comparable to the floor.
+#
+#   * The process must return from main. Counters are flushed by an exit hook,
+#     which runs on a normal return and on os.Exit, but NOT on SIGKILL and not
+#     on a SIGTERM the process does not handle. Either of those leaves a
+#     covmeta-only directory that reads as 0%, so the check below refuses it.
+#
+# Deliberately NOT a default: a repo with no instrumented build must keep
+# measuring exactly what it measures today.
+E2E_COVERAGE_DIR ?=
 COVERAGE_DELTA_TOLERANCE ?= 0.5
 
 COVERAGE_SCOPE_DEFAULT := ./internal/...
@@ -257,6 +296,7 @@ help: ## Print available targets
 	@echo ""
 	@echo "  Coverage knobs (env overridable):"
 	@echo "    COVERAGE_SCOPE            $(COVERAGE_SCOPE)"
+	@echo "    E2E_COVERAGE_DIR          $(if $(E2E_COVERAGE_DIR),$(E2E_COVERAGE_DIR),(unset — unit coverage only))"
 	@echo "    COVERAGE_THRESHOLD        $(COVERAGE_THRESHOLD)%"
 	@echo "    COVERAGE_DELTA_TOLERANCE  $(COVERAGE_DELTA_TOLERANCE)%"
 	@echo ""
@@ -767,8 +807,39 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	  echo "################################################################"; \
 	  echo ""; \
 	fi; \
-	echo "=== go test -race -coverprofile (scope=$$SCOPE, threshold=$$THRESHOLD%) ==="; \
-	go test ./... -v -count=1 -race -coverpkg="$$SCOPE" -coverprofile=cover.out; \
+	echo "=== go test -race -cover (scope=$$SCOPE, threshold=$$THRESHOLD%) ==="; \
+	UNIT_COVERDIR=$$(mktemp -d); \
+	trap 'rm -rf "$$UNIT_COVERDIR"' EXIT; \
+	go test ./... -v -count=1 -race -coverpkg="$$SCOPE" -cover -args -test.gocoverdir="$$UNIT_COVERDIR"; \
+	MODULE=$$(go list -m); \
+	PKG_PATTERN=$$(printf '%s' "$$SCOPE" | sed "s#^\./#$$MODULE/#"); \
+	if [ -n "$(E2E_COVERAGE_DIR)" ]; then \
+	  echo; \
+	  echo "=== merging end2end coverage from $(E2E_COVERAGE_DIR) ==="; \
+	  if [ ! -d "$(E2E_COVERAGE_DIR)" ]; then \
+	    echo "FAIL: E2E_COVERAGE_DIR=$(E2E_COVERAGE_DIR) does not exist." >&2; \
+	    echo "      Unset it, or fix the collection step. Carrying on with unit" >&2; \
+	    echo "      coverage alone would silently lower the number it is meant to raise." >&2; \
+	    exit 1; \
+	  fi; \
+	  if ! ls "$(E2E_COVERAGE_DIR)"/covcounters.* >/dev/null 2>&1; then \
+	    echo "FAIL: $(E2E_COVERAGE_DIR) holds no covcounters.* file." >&2; \
+	    echo "      A covmeta-only directory is what you get when the process was" >&2; \
+	    echo "      SIGKILLed rather than shut down gracefully, and go tool covdata" >&2; \
+	    echo "      reports it as 0%% — indistinguishable from code that never ran." >&2; \
+	    echo "      Check the pod handles SIGTERM and that terminationGracePeriodSeconds" >&2; \
+	    echo "      is long enough for it to return from main." >&2; \
+	    ls -la "$(E2E_COVERAGE_DIR)" >&2 || true; \
+	    exit 1; \
+	  fi; \
+	  MERGED=$$(mktemp -d); \
+	  go tool covdata merge -i="$$UNIT_COVERDIR,$(E2E_COVERAGE_DIR)" -o="$$MERGED"; \
+	  go tool covdata textfmt -i="$$MERGED" -pkg="$$PKG_PATTERN" -o=cover.out; \
+	  rm -rf "$$MERGED"; \
+	  echo "==> merged unit + end2end counters"; \
+	else \
+	  go tool covdata textfmt -i="$$UNIT_COVERDIR" -pkg="$$PKG_PATTERN" -o=cover.out; \
+	fi; \
 	strip_generated() { \
 	  prof="$$1"; root="$${2:-.}"; \
 	  gen=$$(cd "$$root" && { grep -rlE '^// Code generated .* DO NOT EDIT\.$$' --include='*.go' . 2>/dev/null || true; } | sed 's#^\./##'); \
