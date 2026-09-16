@@ -1,0 +1,4 @@
+oauth:
+  cli:
+    scopes:
+      - leartechapi:ba:clients_read

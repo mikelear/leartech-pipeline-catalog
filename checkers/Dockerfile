@@ -35,12 +35,13 @@ COPY go/commentgate/     ./commentgate/
 COPY go/jobreaping/      ./jobreaping/
 COPY go/renovateenrolment/ ./renovateenrolment/
 COPY go/versionanchor/    ./versionanchor/
+COPY go/scopedrift/       ./scopedrift/
 
 # CGO off and -trimpath so the binaries are static and reproducible: an agent
 # and a CI step must be running the same bytes, not merely the same version.
 ENV CGO_ENABLED=0
 RUN set -eu; \
-    for m in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor; do \
+    for m in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift; do \
       cd "/src/$m"; \
       go mod download; \
       go build -trimpath -ldflags="-s -w" -o "/out/$m" .; \
@@ -56,10 +57,10 @@ COPY --from=build /out/ /usr/local/bin/
 # a missing checker would make every consumer skip it silently, which is the
 # exact failure mode these checkers exist to catch.
 RUN set -eu; \
-    for b in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor; do \
+    for b in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift; do \
       test -x "/usr/local/bin/$b" || { echo "FAIL: $b did not build into the image" >&2; exit 1; }; \
     done; \
-    echo "==> leartech-checkers: 7 binaries present and executable"
+    echo "==> leartech-checkers: 8 binaries present and executable"
 
 LABEL org.opencontainers.image.source=https://github.com/mikelear/leartech-pipeline-catalog
 LABEL org.opencontainers.image.description="The leartech pipeline catalog's gates as pinned binaries"

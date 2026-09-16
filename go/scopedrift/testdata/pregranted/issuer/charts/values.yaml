@@ -1,0 +1,5 @@
+oauth:
+  cli:
+    scopes:
+      - leartechapi:ba:clients_read
+      - leartechapi:ba:clients_write
