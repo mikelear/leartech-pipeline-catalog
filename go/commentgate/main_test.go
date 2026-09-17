@@ -270,3 +270,38 @@ func TestTestFileRe_CountsShellAndDirectoryTests(t *testing.T) {
 		}
 	}
 }
+
+// A shell case default arm is code, not prose.
+//
+// commentRe's bare `*` alternative is a C block-comment continuation. Without
+// requiring whitespace, end-of-line or `/` after it, it also matched
+//
+//	*)   echo "FAIL: ..." >&2
+//
+// so three case arms in one Tekton pipeline counted as three prose comment
+// lines, and the gate failed a change that added no prose at all. Observed on
+// leartech-mcp-servers#113, whose diff contained no comment characters.
+func TestShellCaseDefaultArm_IsNotProse(t *testing.T) {
+	r := evaluate(lines(
+		[2]string{".lighthouse/jenkins-x/release.yaml", `                *)   echo "FAIL: CLUSTER_ID is not known" >&2`},
+		[2]string{".lighthouse/jenkins-x/release.yaml", `                gcp) ;;`},
+		[2]string{".lighthouse/jenkins-x/release.yaml", `                az)  echo "az does not publish"; exit 0 ;;`},
+	), allExist)
+	if r.comments != 0 {
+		t.Fatalf("shell case arms counted as %d prose line(s), want 0", r.comments)
+	}
+}
+
+// The control: narrowing the `*` alternative must not stop counting real block
+// comments. A continuation, a bare star and a closer are all still prose; only
+// `*)` is excluded.
+func TestBlockCommentLines_AreStillProse(t *testing.T) {
+	r := evaluate(lines(
+		[2]string{"internal/x.go", " * a continuation line"},
+		[2]string{"internal/x.go", " *"},
+		[2]string{"internal/x.go", " */"},
+	), allExist)
+	if r.comments != 3 {
+		t.Fatalf("block comment lines counted as %d prose line(s), want 3", r.comments)
+	}
+}
