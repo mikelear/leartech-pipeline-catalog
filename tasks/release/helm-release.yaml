@@ -34,7 +34,34 @@ spec:
             #!/usr/bin/env sh
             set -e
             source .jx/variables.sh
-            jx gitops helm release
+
+            # --ignore is matched as a SUBSTRING of each chart directory name,
+            # and it defaults to [preview]. So `jx gitops helm release` with no
+            # flags silently skips any chart whose name merely CONTAINS
+            # "preview" -- it logs "not releasing chart <name>" and exits 0.
+            #
+            # That default is meant to skip a chart directory literally named
+            # `preview`. jx-gitops v1.4.0 (commit 3df787ec, "feat: support
+            # specifying chart to release") changed the check from
+            # StringArrayIndex -- an exact match -- to StringContainsAny, and
+            # the guard became a substring test. jx-boot 3.16.59 carries
+            # jx-gitops 1.1.7 (exact); 3.17.99 carries 1.4.15 (substring), so
+            # bumping this task's image stopped leartech-preview-infrastructure
+            # publishing. Nine releases published, then none, with every
+            # release still reporting success.
+            #
+            # So: neutralise the substring exclude with a sentinel that cannot
+            # appear in a directory name, and pass the chart directories
+            # explicitly as the include list. Neutralising alone is not enough
+            # -- it would start publishing a `preview` chart, which the default
+            # exists to prevent. Both together restore exact-match behaviour.
+            #
+            # Backwards-compatible with jx-gitops 1.1.7, where --ignore exists
+            # and positional arguments are accepted and ignored.
+            CHARTS=$(ls charts 2>/dev/null | grep -vx preview | tr '\n' ' ') || true
+            echo "==> releasing charts: ${CHARTS:-<none>}"
+            # shellcheck disable=SC2086
+            jx gitops helm release --ignore '@no-chart-directory-contains-this' $CHARTS
   podTemplate:
     tolerations:
     - key: sku
