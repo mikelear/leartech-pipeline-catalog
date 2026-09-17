@@ -45,6 +45,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -67,8 +68,6 @@ var runnerHonours = regexp.MustCompile(
 		`|==\s*77`, // (( rc == 77 ))
 )
 
-const scriptGlob = `[0-9][0-9]-*.sh`
-
 func main() {
 	dir := flag.String("dir", "end2end", "directory holding the e2e scripts and run.sh")
 	flag.Parse()
@@ -86,10 +85,24 @@ func main() {
 		os.Exit(0)
 	}
 
-	paths, err := filepath.Glob(filepath.Join(*dir, scriptGlob))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: cannot glob %s: %v\n", *dir, err)
-		os.Exit(64)
+	// EVERY .sh, not just the numbered ones. Scoping this to
+	// [0-9][0-9]-*.sh made the check blind to a suite that names its files
+	// anything else — and a renamed suite is exactly when a contract breaks
+	// unnoticed. run.sh is excluded because it is the runner, not a check.
+	var paths []string
+	walkErr := filepath.WalkDir(*dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(p, ".sh") || filepath.Base(p) == "run.sh" {
+			return nil
+		}
+		paths = append(paths, p)
+		return nil
+	})
+	if walkErr != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: unable to walk %s: %v\n", *dir, walkErr)
+		os.Exit(2)
 	}
 
 	var using77 []string
@@ -106,13 +119,22 @@ func main() {
 		}
 	}
 
-	// A probe that read nothing is not a probe that found nothing. Without
-	// this, a renamed directory or a changed naming convention reports clean.
+	// AN EMPTY SUITE IS NOT A FAILURE, and an earlier version of this checker
+	// got that wrong. It exited 2 on any end2end/ holding no numbered script,
+	// which would have failed the next PR in four repos that simply structure
+	// their suite differently: leartech-helm-library (render_test.sh and a
+	// fixture directory), leartech-infra-agent (a run.sh and nothing yet),
+	// leartech-orchestrator-controller and leartech-sc-event-listener
+	// (placeholders).
+	//
+	// The guard was aimed at the right risk and pointed at the wrong thing.
+	// Without a script that exits 77 there is no contract to violate, so
+	// finding none is a real answer rather than a broken probe. The blindness
+	// it was worried about is now handled by walking every .sh instead of one
+	// naming convention.
 	if examined == 0 {
-		fmt.Fprintf(os.Stderr, "FAIL: %s exists but held no %s scripts. This checker examined "+
-			"nothing, so a clean result would mean nothing. Either the suite moved or the "+
-			"naming convention changed.\n", *dir, scriptGlob)
-		os.Exit(2)
+		fmt.Printf("==> e2eskipcontract: %s holds no shell checks; nothing can disagree.\n", *dir)
+		os.Exit(0)
 	}
 
 	runner := filepath.Join(*dir, "run.sh")
