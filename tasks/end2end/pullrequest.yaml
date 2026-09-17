@@ -459,6 +459,29 @@ spec:
             fi
             echo "==> authtoken built and self-tested (claim scp -> '$got')"
 
+        # THE TWO RUNNERS HAVE TO AGREE BEFORE THE PACK IS WORTH RUNNING.
+        #
+        # This task INLINES its own runner below, and that runner honours
+        # SKIP_EXIT=77. Staging does not use it: arrivals-observer dispatches
+        # the pack and the repo's OWN end2end/run.sh executes it. A repo that
+        # teaches one and not the other gets a green PR and a red staging gate.
+        #
+        # leartech-auth-service#209 moved 16 skip branches to exit 77 for the
+        # benefit of THIS runner. Its run.sh did not handle 77, so staging
+        # recorded every skip as a failure, set Arrival.phase=Failed for
+        # 0.1.130 and 0.1.131, and turned leartech-gate red on the GitOps PRs
+        # of both clusters — for a service that was fine. Every check on that
+        # PR was green, because the PR lane was the half that had been taught.
+        #
+        # Runs BEFORE the pack: this reads two files, and there is no reason to
+        # spend a preview deploy and a 30-minute timeout discovering it after.
+        - image: ghcr.io/mikelear/leartech-checkers:0.5.0
+          name: e2e-skip-contract
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            set -eu
+            e2eskipcontract -dir end2end
         - image: debian:12-slim
           name: end2end
           resources: {}
