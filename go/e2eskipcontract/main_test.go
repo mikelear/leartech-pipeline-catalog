@@ -53,11 +53,23 @@ if bash "$script" >"$log" 2>&1; then status="pass"; else status="fail"; fi
 			want:  0,
 		},
 		{
-			// The guard that stops a renamed suite reporting clean.
-			name:    "a directory with no numbered scripts is not a pass",
-			files:   map[string]string{"run.sh": deafRunner, "helper.sh": plainScript},
-			want:    2,
-			wantOut: "examined\nnothing",
+			// REGRESSION PIN. The first version of this checker exited 2 here,
+			// which would have failed the next PR in leartech-helm-library,
+			// leartech-infra-agent, leartech-orchestrator-controller and
+			// leartech-sc-event-listener — four repos whose end2end/ holds no
+			// numbered script because their suite is shaped differently.
+			// Nothing here exits 77, so there is no contract to violate.
+			name:  "a suite with no script exiting 77 is not a failure",
+			files: map[string]string{"run.sh": deafRunner, "helper.sh": plainScript},
+			want:  0,
+		},
+		{
+			// The blindness the old guard was worried about, handled properly:
+			// a script that does not follow the numbering convention still
+			// counts, because the walk reads every .sh.
+			name:  "an unnumbered script exiting 77 is still caught",
+			files: map[string]string{"run.sh": deafRunner, "smoke-check.sh": skipScript},
+			want:  1,
 		},
 	}
 
