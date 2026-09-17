@@ -172,3 +172,69 @@ func run(t *testing.T, bin string, args ...string) (string, int) {
 	}
 	return string(out), code
 }
+
+// A WRAPPER HIDES THE GATE, and the estate's own template is the proof.
+//
+// leartech-go-service-template does not call Middleware(nil) anywhere. It
+// calls middleware.BearerAuth(cfg.Auth, nil), and BearerAuth passes that
+// straight to auth.Middleware. The first version of this checker reported the
+// template CLEAN — the one repo that seeds the pattern for every new Go
+// service, and the one six repos inherited their nil gate from.
+func TestAWrapperTakingPermissionsIsFollowed(t *testing.T) {
+	// Copied from leartech-go-service-template: internal/middleware/auth.go
+	// declares the wrapper, cmd/server/router.go mounts with nil.
+	const wrapperDecl = `package middleware
+func BearerAuth(cfg auth.VerifierConfig, perms auth.Permissions) (gin.HandlerFunc, error) {
+	verifier, err := auth.NewVerifier(context.Background(), cfg)
+	if err != nil {
+		return nil, fmt.Errorf("bearer middleware: %w", err)
+	}
+	return auth.Middleware(verifier, perms), nil
+}
+`
+	const mountNil = `package main
+func newRouter(cfg Config) (*gin.Engine, error) {
+	authed := router.Group("/api/v1")
+	bearer, err := middleware.BearerAuth(cfg.Auth, nil)
+	_ = authed
+	return nil, err
+}
+`
+	const mountGated = `package main
+func newRouter(cfg Config) (*gin.Engine, error) {
+	bearer, err := middleware.BearerAuth(cfg.Auth, auth.Permissions{auth.PermUser})
+	return nil, err
+}
+`
+	bin := buildOnce(t)
+
+	t.Run("wrapper called with nil is caught", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "mw.go", wrapperDecl)
+		write(t, dir, "router.go", mountNil)
+		out, code := run(t, bin, "-dir", dir)
+		if code != 1 {
+			t.Fatalf("exit %d, want 1 — the wrapper hid the nil gate\n%s", code, out)
+		}
+		if !strings.Contains(out, "wrapper around Middleware") {
+			t.Errorf("the finding does not say it came through a wrapper:\n%s", out)
+		}
+	})
+
+	t.Run("wrapper called with permissions is clean", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "mw.go", wrapperDecl)
+		write(t, dir, "router.go", mountGated)
+		if out, code := run(t, bin, "-dir", dir); code != 0 {
+			t.Fatalf("exit %d, want 0\n%s", code, out)
+		}
+	})
+
+	t.Run("the wrapper declaration alone is not a mount", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, "mw.go", wrapperDecl)
+		if out, code := run(t, bin, "-dir", dir); code != 0 {
+			t.Fatalf("exit %d, want 0 — declaring a wrapper is not mounting a route\n%s", code, out)
+		}
+	})
+}
