@@ -73,6 +73,48 @@ func main() {
 	examined := 0
 	fset := token.NewFileSet()
 
+	// PASS ONE: find functions that TAKE a permission set. A wrapper hides a
+	// nil gate from a direct-call check, and the estate's own template does
+	// exactly that:
+	//
+	//	middleware.BearerAuth(cfg.Auth, nil)   cmd/server/router.go
+	//	  -> auth.Middleware(verifier, perms)  internal/middleware/auth.go
+	//
+	// Checking only `Middleware(...)` reported leartech-go-service-template as
+	// clean while its /api/v1 group authorised nothing — and that template is
+	// where six repos inherited the shape from.
+	wrappers := map[string]int{}
+	_ = filepath.WalkDir(*dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !isScannableGo(p) {
+			if d != nil && d.IsDir() && skipDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		f, perr := parser.ParseFile(fset, p, nil, 0)
+		if perr != nil {
+			return nil // pass two reports parse errors
+		}
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Type.Params == nil {
+				continue
+			}
+			idx := 0
+			for _, fld := range fn.Type.Params.List {
+				n := len(fld.Names)
+				if n == 0 {
+					n = 1
+				}
+				if isPermissionsType(fld.Type) {
+					wrappers[fn.Name.Name] = idx
+				}
+				idx += n
+			}
+		}
+		return nil
+	})
+
 	walkErr := filepath.WalkDir(*dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -100,6 +142,20 @@ func main() {
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
+				return true
+			}
+			// A call to a wrapper that takes a permission set.
+			if name, pos2, ok := wrapperCall(call, wrappers); ok {
+				if pos2 < len(call.Args) {
+					examined++
+					if isEmptyPerms(call.Args[pos2]) {
+						pp := fset.Position(call.Pos())
+						found = append(found, finding{
+							file: pp.Filename, line: pp.Line,
+							call: fmt.Sprintf("%s(… nil …)  [wrapper around Middleware]", name),
+						})
+					}
+				}
 				return true
 			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
@@ -198,4 +254,52 @@ func render(sel *ast.SelectorExpr, call *ast.CallExpr) string {
 		}
 	}
 	return fmt.Sprintf("%s.Middleware(%s)", recv, strings.Join(args, ", "))
+}
+
+// isPermissionsType reports whether a parameter type is a go-common
+// permission set, qualified (auth.Permissions) or not (Permissions).
+func isPermissionsType(e ast.Expr) bool {
+	switch t := e.(type) {
+	case *ast.Ident:
+		return t.Name == "Permissions"
+	case *ast.SelectorExpr:
+		return t.Sel.Name == "Permissions"
+	}
+	return false
+}
+
+// wrapperCall reports whether a call targets a known permission-taking
+// function, and at which argument the permission set sits.
+func wrapperCall(call *ast.CallExpr, wrappers map[string]int) (string, int, bool) {
+	var name string
+	switch fn := call.Fun.(type) {
+	case *ast.Ident:
+		name = fn.Name
+	case *ast.SelectorExpr:
+		name = fn.Sel.Name
+	default:
+		return "", 0, false
+	}
+	// Middleware is handled directly; do not double-count it.
+	if name == "Middleware" {
+		return "", 0, false
+	}
+	idx, ok := wrappers[name]
+	return name, idx, ok
+}
+
+func isScannableGo(p string) bool {
+	if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+		return false
+	}
+	b := filepath.Base(p)
+	return !strings.Contains(b, "_mock") && !strings.Contains(b, "mock_")
+}
+
+func skipDir(n string) bool {
+	switch n {
+	case "vendor", ".git", "node_modules", "testdata":
+		return true
+	}
+	return false
 }
