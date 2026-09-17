@@ -46,7 +46,17 @@ import (
 var (
 	// Comment openers per language. Keyed loosely: the gate cares that a line
 	// is prose, not which dialect it is.
-	commentRe = regexp.MustCompile(`^\s*(//|#|--|\{\{/\*|\*)`)
+	//
+	// The bare `*` alternative is a C block-comment continuation, so it must be
+	// followed by whitespace, end of line, or `/`. Without that it also matched
+	// a shell case default arm:
+	//
+	//	*)   echo "FAIL: CLUSTER_ID is not a known cluster" >&2
+	//
+	// which counted three `*)` arms in one Tekton pipeline as three prose
+	// comment lines and failed the gate on a change that added no prose.
+	// Observed on leartech-mcp-servers#113.
+	commentRe = regexp.MustCompile(`^\s*(//|#|--|\{\{/\*|\*(\s|$|/))`)
 
 	// Instructs a tool. Cannot be a false claim about behaviour.
 	functionalRe = regexp.MustCompile(`(?i)go:build|\+build|nolint|Code generated|^#!|renovate:|SPDX|yamllint|checkov:|gosec:|eslint-|prettier-|swagger:|@Success|@Failure|@Param|@Router|@Summary|@Description|@Tags|@Accept|@Produce|@Security|\+goose|proven-by:`)
