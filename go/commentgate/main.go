@@ -113,6 +113,34 @@ var (
 	// the file is itself verified. A .yaml or .go comment is not.
 	verifiedDeclarationRe = regexp.MustCompile(`(^|/)\.(authprofile|authconformance)$`)
 
+	// Documentation. Markdown is where prose is SUPPOSED to live, so counting it
+	// inverts the gate: it makes writing a doc cost test lines.
+	//
+	// The gate's rationale is that a comment cannot fail, so it cannot be relied
+	// on. That is an argument about prose asserting behaviour in SOURCE, next to
+	// the code it describes and read as authoritative. A .md file is not next to
+	// anything and is not compiled; the estate keeps docs on purpose, and
+	// docs/authorization.md is generated and checked precisely so documentation
+	// can be trusted.
+	//
+	// Three concrete failures, all one root cause -- `#` opens a comment in the
+	// languages the gate knows, and opens a HEADING in markdown:
+	//
+	//   - headings, `---` rules and `*` bullets all counted as prose, so a
+	//     147-line ledger scored +10 against the ratchet
+	//   - `### D5 — a supplier that cannot cache` was flagged as an unproven
+	//     claim and asked for a proven-by on a HEADING, because claimRe matches
+	//     "cannot"
+	//   - a doc-only follow-up commit scores prose with no offsetting tests, so
+	//     it can never pass: +5 prose / +0 test. Editing a decision ledger twice
+	//     was impossible.
+	//
+	// Wider than the two exemptions above, and deliberately so. Those are narrow
+	// because a .gitignore comment sits with code and could smuggle in a claim.
+	// This is a category, because the category is "the file whose entire purpose
+	// is prose".
+	documentationRe = regexp.MustCompile(`(?i)\.(md|markdown)$`)
+
 	// A claim inside a TEST file needs no proven-by: the file is the proof.
 	// Documentation-through-tests is the goal, so a test header stating what it
 	// proves is the shape we want, not the shape we are policing.
@@ -207,6 +235,9 @@ func evaluate(added []addedLine, exists func(string) bool) report {
 		}
 		if verifiedDeclarationRe.MatchString(a.file) {
 			continue // a declaration a checker cross-checks against the code
+		}
+		if documentationRe.MatchString(a.file) {
+			continue // a file whose purpose is prose; counting it inverts the gate
 		}
 		if testFileRe.MatchString(a.file) {
 			continue // sits with its proof; this is the documentation we want

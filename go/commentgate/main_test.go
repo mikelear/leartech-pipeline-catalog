@@ -186,7 +186,7 @@ func TestPatternListCommentsAreNotProse(t *testing.T) {
 	counted := []addedLine{
 		{file: "values.yaml", text: "# the issuer must be reachable"},
 		{file: "main.go", text: "// callers must hold the lock"},
-		{file: "gitignore.md", text: "# not a pattern list at all"},
+		{file: "gitignore.yaml", text: "# not a pattern list at all"},
 		{file: "internal/.gitignore.go", text: "// a go file that merely mentions gitignore"},
 	}
 	r2 := evaluate(counted, func(string) bool { return true })
@@ -225,7 +225,7 @@ func TestVerifiedDeclarationCommentsAreNotProse(t *testing.T) {
 	counted := []addedLine{
 		{file: "values.yaml", text: "# the issuer must be reachable"},
 		{file: "internal/auth/profile.go", text: "// the profile must say inbound"},
-		{file: "docs/authprofile.md", text: "# what .authprofile means"},
+		{file: "docs/authprofile.yaml", text: "# what .authprofile means"},
 		{file: ".authprofile.example", text: "# a sample, not a declaration"},
 	}
 	if r := evaluate(counted, func(string) bool { return true }); r.comments != len(counted) {
@@ -303,5 +303,67 @@ func TestBlockCommentLines_AreStillProse(t *testing.T) {
 	), allExist)
 	if r.comments != 3 {
 		t.Fatalf("block comment lines counted as %d prose line(s), want 3", r.comments)
+	}
+}
+
+// Markdown is documentation, not code.
+//
+// `#` opens a comment in every language the gate knows and opens a HEADING in
+// markdown, so a doc scored against the ratchet. Three real failures came from
+// that one collision, on a 147-line caching decision ledger:
+//
+//   - headings, `---` rules and `*` bullets counted as prose (+10)
+//   - "### D5 — a supplier that cannot cache" was flagged as an unproven claim
+//     and asked for a proven-by on a heading, because claimRe matches "cannot"
+//   - a doc-only follow-up commit scored +5 prose / +0 test, which cannot pass
+//
+// The last is the one that mattered: it made editing a shared document twice
+// impossible, which is the opposite of what a gate about documentation should
+// do.
+func TestMarkdown_IsNotCountedAsProse(t *testing.T) {
+	r := evaluate(lines(
+		[2]string{"docs/caching-decisions.md", "# A heading"},
+		[2]string{"docs/caching-decisions.md", "## Another heading"},
+		[2]string{"docs/caching-decisions.md", "---"},
+		[2]string{"docs/caching-decisions.md", "* a star bullet"},
+		[2]string{"README.md", "# Top level"},
+	), allExist)
+	if r.comments != 0 {
+		t.Fatalf("markdown scored %d prose line(s), want 0. A doc-only commit can "+
+			"never carry offsetting test lines, so any number above zero makes a "+
+			"shared document uneditable.", r.comments)
+	}
+}
+
+// A claim in a markdown heading is not an unproven code claim.
+//
+// Separate from the count because it is a separate mechanism: claimRe fires on
+// words like "cannot" and demands a proven-by. On a heading there is nothing to
+// prove and nowhere sensible to put the reference.
+func TestMarkdown_ClaimWordsInHeadingsAreNotFlagged(t *testing.T) {
+	r := evaluate(lines(
+		[2]string{"docs/caching-decisions.md", "### D5 — a supplier that cannot cache"},
+		[2]string{"docs/caching-decisions.md", "## What this must never do"},
+	), allExist)
+	if len(r.claims) != 0 {
+		t.Fatalf("markdown headings raised %d claim(s): %v. claimRe is for prose in "+
+			"source that asserts behaviour next to the code it describes.",
+			len(r.claims), r.claims)
+	}
+}
+
+// The control, and the reason the exemption is by extension rather than by
+// content: prose in SOURCE still counts, including in a file that sits beside a
+// document. Widening this to "anything that looks like prose" is how the gate
+// stops meaning anything.
+func TestSourceProse_StillCountsAlongsideMarkdown(t *testing.T) {
+	r := evaluate(lines(
+		[2]string{"docs/caching-decisions.md", "# a heading, exempt"},
+		[2]string{"internal/x.go", "// this explains a thing, counted"},
+		[2]string{"charts/x/templates/y.yaml", "# a chart comment, counted"},
+	), allExist)
+	if r.comments != 2 {
+		t.Fatalf("counted %d prose line(s), want 2 — the .go and the .yaml. "+
+			"The markdown exemption must not leak to source.", r.comments)
 	}
 }
