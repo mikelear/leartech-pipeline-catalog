@@ -192,7 +192,7 @@ FILE_SIZE_FAIL ?= 0
 # .DEFAULT_GOAL so `make -f leartech-go.mk` (no target) prints help.
 .DEFAULT_GOAL := help
 
-.PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage build vuln pre-push preflight preflight-doctor
+.PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage test-integration build vuln pre-push preflight preflight-doctor
 
 # ── how a checker is obtained ────────────────────────────────────────────────
 #
@@ -774,6 +774,83 @@ vuln: ## Run govulncheck ./...
 # reasons. Task behaviour is preserved in CI because Tekton always sets
 # REPO_OWNER / REPO_NAME / PULL_BASE_REF and has network to github.com.
 # test-coverage uses bash (process substitution + set -o pipefail); the go-test
+# ── test-integration: tests that need a real datastore ───────────────────
+#
+# WHY THIS IS HERE AND NOT IN A SERVICE MAKEFILE. leartech-auth-service has had
+# a testcontainers Postgres harness for months (internal/store/postgres_test.go,
+# //go:build integration) and CI has never run it: the go-test task invokes
+# `test-coverage` from THIS file, which passes no `-tags`, so a tagged file is
+# not compiled. Its `make integration-local` fires only when a developer types
+# it. leartech-ai-gateway has just grown the same harness with the same problem.
+#
+# That is the swag-check failure exactly, recorded above: a gate that existed
+# only in service Makefiles, which CI never invoked, so the thing it protected
+# was unprotected. The fix is the same — put it where the Tekton tasks already
+# look.
+#
+# OPT-IN BY DETECTION, NOT BY FLAG. The target discovers whether the repo has
+# any INTEGRATION_TAG-tagged test files. A repo with none passes with a stated
+# reason; a repo that adds one is covered without editing a variable someone
+# has to remember. A flag would reproduce the failure this target exists to fix.
+#
+# AND IT DOES NOT SKIP WHEN IT CANNOT RUN. If a repo declares integration tests
+# and no datastore is reachable, this FAILS. The estate's own rule, from
+# end2end/run.sh: "a green tick from an unconfigured run says the opposite of
+# what it means."
+#
+# TWO WAYS TO GET A DATASTORE, and the pipeline needs the second one:
+#
+#   TEST_DATABASE_URL set  -> the tests use it and start nothing. This is the
+#                             CI path: a Tekton SIDECAR runs Postgres and the
+#                             task exports the DSN. No Docker socket required.
+#   unset                  -> the tests start a container themselves
+#                             (testcontainers). This is the local path.
+#
+# THE PIPELINE CANNOT USE THE CONTAINER PATH TODAY, and it is worth being exact
+# about why rather than assuming envtest is a precedent: the go-test task runs
+# envtest, but envtest is a real apiserver and etcd as PROCESSES inside
+# golang:1.27 — no Docker socket, no DinD. So container-backed tests have no
+# existing path in these pipelines, and wiring one would mean either a
+# privileged DinD step (against the posture the kyverno registry policy
+# implies) or a sidecar. A sidecar is the cheap answer and needs no new trust.
+#
+# COVERAGE IS DELIBERATELY NOT COLLECTED HERE. test-coverage enforces a floor
+# and a +/-0.5 delta against base; integration tests would move store-layer
+# coverage by far more than that and turn a real improvement into a gate
+# failure. auth-service already hit this and solved it the same way — its
+# validate_test.go says so: a unit companion "so the guard contributes to the
+# coverage gate without requiring testcontainers". Two separate signals.
+INTEGRATION_TAG ?= integration
+INTEGRATION_SCOPE ?= ./...
+
+test-integration: SHELL := /bin/bash
+test-integration: .SHELLFLAGS := -ec
+test-integration: ## Run INTEGRATION_TAG-tagged tests against a real datastore
+	@tagged=$$(grep -rl --include='*_test.go' -E '^//go:build ($(INTEGRATION_TAG)$$|.*[[:space:]]$(INTEGRATION_TAG)([[:space:]]|$$))' . 2>/dev/null | head -20); \
+	if [ -z "$$tagged" ]; then \
+	  echo "==> test-integration: no *_test.go carries //go:build $(INTEGRATION_TAG) — nothing to run"; \
+	  echo "    (this is a pass: the repo declares no datastore-backed tests)"; \
+	  exit 0; \
+	fi; \
+	echo "==> test-integration: $(INTEGRATION_TAG)-tagged files:"; echo "$$tagged" | sed 's/^/      /'; \
+	if [ -n "$${TEST_DATABASE_URL:-}" ]; then \
+	  echo "==> using TEST_DATABASE_URL (no container started)"; \
+	elif docker info >/dev/null 2>&1; then \
+	  sock=$$(docker context inspect 2>/dev/null | sed -n 's/.*"Host": "\(unix:[^"]*\)".*/\1/p' | head -1); \
+	  if [ -n "$$sock" ]; then \
+	    echo "==> starting containers via $$sock"; \
+	    export DOCKER_HOST="$$sock"; \
+	    export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=$${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}; \
+	  fi; \
+	else \
+	  echo "FAIL: this repo declares $(INTEGRATION_TAG)-tagged tests and no datastore is reachable." >&2; \
+	  echo "  Set TEST_DATABASE_URL (the CI path — a Postgres sidecar), or start docker/colima" >&2; \
+	  echo "  locally. NOT skipped: a green tick from an unconfigured run says the opposite" >&2; \
+	  echo "  of what it means." >&2; \
+	  exit 1; \
+	fi; \
+	$(GO) test -tags $(INTEGRATION_TAG) -count=1 $(INTEGRATION_SCOPE)
+
 # image (golang:1.26) has bash. Target-specific so `lint` stays /bin/sh-safe
 # (golangci-lint image is alpine, no bash). Fixes "Syntax error: ( unexpected".
 test-coverage: SHELL := /bin/bash
