@@ -92,6 +92,21 @@ spec:
             #!/bin/sh
             set -e
             sh test/go/config_schema_test.sh
+        # The target this guards exists BECAUSE a gate that CI never invoked
+        # went unrun for months. Wiring its own test into CI in the same change
+        # rather than trusting the next person to do it.
+        #
+        # golang image, not the linter image: the test runs `make` against the
+        # golden mk, which shells out to `go`. It starts no database — it
+        # asserts the gate's decision, and the no-backend case is the one that
+        # must not silently pass.
+        - image: golang:1.27
+          name: test-integration-gate
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            sh test/go/test_integration_gate_test.sh
         - image: golang:1.27
           name: go-selftests
           resources: {}
