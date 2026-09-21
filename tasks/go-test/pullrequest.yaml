@@ -171,6 +171,19 @@ spec:
               fi
             fi
 
+            # Why the baseline was unavailable, if the mk said. Without this
+            # the comment reads "couldn't fetch/run baseline" for a denied
+            # clone, a failing base branch and a broken profile alike, and the
+            # step log shows only the header line before the abort.
+            # Backticks and newlines stripped: this is interpolated into
+            # markdown and git puts a URL in it.
+            BASE_WHY=""
+            if grep -q '^base-unavailable-reason=' /tmp/test-coverage.log; then
+              BASE_WHY=$(grep -m1 '^base-unavailable-reason=' /tmp/test-coverage.log \
+                | sed 's/^base-unavailable-reason=//' \
+                | tr -d '`' | tr '\n' ' ' | cut -c1-240)
+            fi
+
             STATUS="pass"
             if [ "$MAKE_RC" -ne 0 ]; then STATUS="fail"; fi
 
@@ -202,7 +215,7 @@ spec:
 
               BASE_REF="${PULL_BASE_REF:-main}"
               if [ "$BASE_STATUS" = "UNAVAILABLE" ]; then
-                DELTA_LINE="_Delta vs \`${BASE_REF}\`: unavailable (couldn't fetch/run baseline)_"
+                DELTA_LINE="_Delta vs \`${BASE_REF}\`: unavailable — ${BASE_WHY:-reason not reported}_"
               elif [ "$BASE_STATUS" = "REGRESSED" ]; then
                 DELTA_LINE=":warning: **Delta vs \`${BASE_REF}\`**: ${BASE_TOTAL}% → ${TOTAL}% (\`${BASE_DELTA}%\` — exceeds tolerance \`-${DELTA_TOL}%\`)"
               else

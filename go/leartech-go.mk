@@ -938,7 +938,7 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	  STATUS="fail"; STATUS_REASON="below floor $${THRESHOLD}%"; \
 	fi; \
 	BASE_REF="$${PULL_BASE_REF:-$(PULL_BASE_REF)}"; \
-	BASE_TOTAL=""; BASE_DELTA=""; BASE_STATUS=""; \
+	BASE_TOTAL=""; BASE_DELTA=""; BASE_STATUS=""; BASE_WHY=""; \
 	echo; \
 	echo "=== delta-coverage check vs origin/$${BASE_REF} ==="; \
 	OWNER="$${REPO_OWNER:-}"; NAME="$${REPO_NAME:-}"; \
@@ -950,17 +950,25 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	  fi; \
 	fi; \
 	if [ -n "$$OWNER" ] && [ -n "$$NAME" ]; then \
-	  BASE_CLONE_DIR=$$(mktemp -d /tmp/go-test-base-XXXXXX); \
 	  REPO_URL="https://github.com/$${OWNER}/$${NAME}.git"; \
-	  if git clone --depth=1 --branch="$${BASE_REF}" --quiet "$$REPO_URL" "$$BASE_CLONE_DIR" 2>/dev/null; then \
-	    if (cd "$$BASE_CLONE_DIR" && go test ./... -count=1 -coverpkg="$$SCOPE" -coverprofile=cover-base.out) >/tmp/base-test.log 2>&1; then \
-	      strip_generated "$${BASE_CLONE_DIR}/cover-base.out" "$$BASE_CLONE_DIR"; \
-	      BASE_TOTAL=$$(go tool cover -func="$${BASE_CLONE_DIR}/cover-base.out" 2>/dev/null | awk '/^total:/ {print $$3}' | sed 's/%//'); \
-	    fi; \
-	    rm -rf "$$BASE_CLONE_DIR"; \
+	  BASE_CLONE_DIR=""; \
+	  if ! BASE_CLONE_DIR=$$(mktemp -d /tmp/go-test-base-XXXXXX 2>/tmp/base-step.log); then \
+	    BASE_WHY="mktemp: $$(tr '\n' ' ' </tmp/base-step.log)"; \
+	  elif ! git clone --depth=1 --branch="$${BASE_REF}" --quiet "$$REPO_URL" "$$BASE_CLONE_DIR" 2>/tmp/base-step.log; then \
+	    BASE_WHY="clone of $${REPO_URL}@$${BASE_REF}: $$(tr '\n' ' ' </tmp/base-step.log)"; \
+	  elif ! (cd "$$BASE_CLONE_DIR" && go test ./... -count=1 -coverpkg="$$SCOPE" -coverprofile=cover-base.out) >/tmp/base-test.log 2>&1; then \
+	    BASE_WHY="base-branch tests failed: $$(tail -3 /tmp/base-test.log | tr '\n' ' ')"; \
+	  elif ! strip_generated "$${BASE_CLONE_DIR}/cover-base.out" "$$BASE_CLONE_DIR"; then \
+	    BASE_WHY="strip_generated on the base profile failed"; \
+	  elif ! BASE_TOTAL=$$(go tool cover -func="$${BASE_CLONE_DIR}/cover-base.out" 2>/tmp/base-step.log | awk '/^total:/ {print $$3}' | sed 's/%//'); then \
+	    BASE_TOTAL=""; \
+	    BASE_WHY="go tool cover on the base profile: $$(tr '\n' ' ' </tmp/base-step.log)"; \
+	  elif [ -z "$$BASE_TOTAL" ]; then \
+	    BASE_WHY="the base profile reported no total: line"; \
 	  fi; \
+	  if [ -n "$$BASE_CLONE_DIR" ]; then rm -rf "$$BASE_CLONE_DIR"; fi; \
 	else \
-	  echo "REPO_OWNER/REPO_NAME unset and origin remote absent — skipping delta check"; \
+	  BASE_WHY="REPO_OWNER/REPO_NAME unset and origin remote absent"; \
 	fi; \
 	if [ -n "$$BASE_TOTAL" ]; then \
 	  BASE_DELTA=$$(awk -v pr="$$TOTAL" -v base="$$BASE_TOTAL" 'BEGIN {printf "%.2f", pr - base}'); \
@@ -973,7 +981,8 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	    BASE_STATUS="OK"; \
 	  fi; \
 	else \
-	  echo "base-branch coverage unavailable (new repo, base test failure, fetch denied, or offline); skipping delta check"; \
+	  echo "base-branch coverage unavailable; skipping delta check"; \
+	  echo "base-unavailable-reason=$${BASE_WHY:-unknown}"; \
 	  BASE_STATUS="UNAVAILABLE"; \
 	fi; \
 	if [ "$$STATUS" = "fail" ]; then \
