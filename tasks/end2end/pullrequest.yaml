@@ -475,7 +475,7 @@ spec:
         #
         # Runs BEFORE the pack: this reads two files, and there is no reason to
         # spend a preview deploy and a 30-minute timeout discovering it after.
-        - image: ghcr.io/mikelear/leartech-checkers:0.6.2
+        - image: ghcr.io/mikelear/leartech-checkers:0.8.0
           name: e2e-skip-contract
           resources: {}
           script: |

@@ -52,7 +52,7 @@ spec:
         # directory (it moved golang 1.26 -> 1.27 here in #109), whereas a
         # version embedded in a shell string is exactly the pin that rots
         # unseen.
-        - image: alpine/helm:3.19.0
+        - image: alpine/helm:3.22.0
           name: provide-helm
           resources: {}
           script: |

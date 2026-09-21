@@ -109,7 +109,7 @@ spec:
         # CronJob on a cluster that never had one is a fact about the estate
         # and is reported, not failed. A dispatch that then fails IS an error
         # and is left to fail.
-        - image: alpine/k8s:1.36.2
+        - image: alpine/k8s:1.37.0
           name: trigger-renovate
           resources: {}
           script: |
