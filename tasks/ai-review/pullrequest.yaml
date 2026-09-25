@@ -24,30 +24,6 @@ spec:
         - image: ghcr.io/mikelear/ai-review-worker:0.51.16
           name: ai-review
           env:
-            - name: CLAUDE_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ai-review-api-keys
-                  key: CLAUDE_API_KEY
-                  optional: true
-            - name: DEEPSEEK_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ai-review-api-keys
-                  key: DEEPSEEK_API_KEY
-                  optional: true
-            - name: AZURE_OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ai-review-api-keys
-                  key: AZURE_OPENAI_API_KEY
-                  optional: true
-            - name: AZURE_OPENAI_ENDPOINT
-              valueFrom:
-                secretKeyRef:
-                  name: ai-review-api-keys
-                  key: AZURE_OPENAI_ENDPOINT
-                  optional: true
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -66,9 +42,10 @@ spec:
                   name: tekton-git
                   key: password
                   optional: true
-            # S13: route every reviewer through leartech-ai-gateway. When both are
-            # set, review() funnels all providers through the gateway's OpenAI seam
-            # (metered + centrally controlled); unset → direct per-provider calls.
+            # Every reviewer call goes through leartech-ai-gateway — there is no
+            # longer a direct-to-supplier path to fall back to, which is why no
+            # supplier API keys appear in this task. The gateway holds them, so a
+            # rotation is one place and spend is attributable per virtual key.
             # NOTE the :8080 — the gateway Service listens on 8080, not 80. Without
             # the explicit port the URL defaults to :80 (no listener) and every
             # reviewer call hangs ~131s on a TCP connect timeout before failing.
@@ -82,8 +59,6 @@ spec:
                   optional: true
             - name: CLASSIFIER_ENDPOINT
               value: "http://leartech-ai-classifier.jx-staging.svc.cluster.local:8080"
-            - name: OLLAMA_ENDPOINT
-              value: "http://ollama.ai-inference.svc.cluster.local:11434"
             - name: CHROMADB_ENDPOINT
               value: "http://ai-inference-resources-chromadb.ai-inference.svc.cluster.local:8000"
             # llama3.1:8b (not qwen2.5-coder:14b): on the 16GB T4 the 14B
@@ -93,12 +68,6 @@ spec:
             # full #77 diff 90/PASS (bake-off + large-diff reproduction).
             - name: OLLAMA_MODEL
               value: "llama3.1:8b"
-            # Context window for the self-hosted reviewer. 32K fits the 8B
-            # model on the T4 and covers large diffs. The worker reads this
-            # (OLLAMA_NUM_CTX) and caps the diff to fit so ollama never
-            # silently truncates.
-            - name: OLLAMA_NUM_CTX
-              value: "32768"
             - name: CLUSTER_ID
               valueFrom:
                 configMapKeyRef:
@@ -141,8 +110,8 @@ spec:
           script: |
             #!/bin/sh
             set -e
-            # Optional API-key env vars (CLAUDE_API_KEY, DEEPSEEK_API_KEY) may be unset — `set -u` would
-            # break the `[ -n "$VAR" ]` guards, so we use `set -e` only.
+            # Optional env vars (OLLAMA_ENABLED, the reviewer-v2 ConfigMap keys) may be
+            # unset — `set -u` would break the `[ -n "$VAR" ]` guards, so `set -e` only.
             # Steps that are intentionally non-blocking use `|| true` (RAG, auto-capture).
             echo "AI Code Review for $REPO_OWNER/$REPO_NAME PR #$PULL_NUMBER"
 
@@ -191,8 +160,8 @@ spec:
               --output /tmp/rag-context.txt || true
 
             # Build the review prompt from the standards repo + diff (per-language
-            # standards selection — Python prep, reuses review.load_standards_dir).
-            # Writes /tmp/prompt/{system-prompt.txt,standards.txt,languages.json}.
+            # standards selection). Writes
+            # /tmp/prompt/{system-prompt.txt,standards.txt,languages.json}.
             python3 /app/build_prompt.py \
               --diff /tmp/diff.txt \
               --standards-dir /tmp/standards \
@@ -201,7 +170,7 @@ spec:
             # Run the config-driven reviewer set + mechanical aggregate + optional
             # LLM judge — ONE Go entrypoint (reviewer-v2), all via the gateway,
             # metered, with structured JSON logs. Replaces the former per-provider
-            # shell blocks + collect loop + aggregate.py. Which reviewers / strategy /
+            # shell blocks + collect loop + the Python aggregate. Which reviewers / strategy /
             # judge come from ai-review-cluster-config (REVIEWERS / AGGREGATION_STRATEGY
             # / JUDGE_MODEL); OLLAMA_ENABLED drops the self-hosted reviewer where
             # there's no GPU. Writes the same post_review.py-compatible aggregate JSON.
