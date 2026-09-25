@@ -24,38 +24,12 @@ spec:
         - image: ghcr.io/mikelear/ai-review-worker:0.51.16
           name: handle-feedback
           env:
-            - name: CLAUDE_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ai-review-api-keys
-                  key: CLAUDE_API_KEY
-                  optional: true
-            - name: DEEPSEEK_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ai-review-api-keys
-                  key: DEEPSEEK_API_KEY
-                  optional: true
-            - name: AZURE_OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ai-review-api-keys
-                  key: AZURE_OPENAI_API_KEY
-                  optional: true
-            - name: AZURE_OPENAI_ENDPOINT
-              valueFrom:
-                secretKeyRef:
-                  name: ai-review-api-keys
-                  key: AZURE_OPENAI_ENDPOINT
-                  optional: true
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: ai-review-api-keys
                   key: GITHUB_TOKEN
                   optional: true
-            - name: OLLAMA_ENDPOINT
-              value: "http://ollama.ai-inference.svc.cluster.local:11434"
             - name: CHROMADB_ENDPOINT
               value: "http://ai-inference-resources-chromadb.ai-inference.svc.cluster.local:8000"
             - name: OLLAMA_MODEL
