@@ -21,7 +21,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/mikelear/ai-review-worker:0.51.16
+        - image: ghcr.io/mikelear/ai-review-worker:0.52.1
           name: handle-feedback
           env:
             - name: GITHUB_TOKEN
