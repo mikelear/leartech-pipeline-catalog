@@ -22,7 +22,7 @@
 #
 # Built from this repo so the source and the artefact cannot drift apart.
 
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -51,7 +51,7 @@ RUN set -eu; \
 
 # A shell is required: these run as Tekton step images, and a Tekton `script:`
 # block needs an interpreter. scratch would be smaller and unusable.
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates git
 COPY --from=build /out/ /usr/local/bin/
 
