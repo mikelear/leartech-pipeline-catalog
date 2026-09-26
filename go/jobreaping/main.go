@@ -49,9 +49,33 @@ var (
 	ttlYAML     = regexp.MustCompile(`ttlSecondsAfterFinished`)
 	histYAML    = regexp.MustCompile(`successfulJobsHistoryLimit|failedJobsHistoryLimit`)
 
-	// Go: a composite literal for a Job or its spec. Matches batchv1.Job{,
-	// batchv1.JobSpec{ and the dot-imported forms.
-	goJobLit = regexp.MustCompile(`\b(batchv1|batch)\.Job(Spec)?\{`)
+	// Go: a POPULATED composite literal for a Job or its spec. Matches
+	// batchv1.Job{, batchv1.JobSpec{ and the dot-imported forms.
+	//
+	// The trailing `\s*[^}\s]` is load-bearing: it requires at least one field
+	// inside the braces, so an EMPTY literal is not a construction. An empty
+	// literal is a TYPE WITNESS, and controller-runtime is full of them:
+	//
+	//     ctrl.NewControllerManagedBy(mgr).Owns(&batchv1.Job{})
+	//     r.Get(ctx, key, &batchv1.Job{})
+	//
+	// `Owns(&batchv1.Job{})` in particular is the opposite of this checker's
+	// complaint. It declares that the Jobs ARE owned, which is what makes
+	// Kubernetes garbage-collect them. Flagging it told
+	// leartech-orchestrator-controller to add a TTL to a watch registration,
+	// while the real construction (internal/controller/jobspawn.go) had set
+	// TTLSecondsAfterFinished all along. The per-FILE check made it worse: the
+	// watch and the construction live in different files of the same package,
+	// so the file with the TTL passed and the file without it failed.
+	//
+	// Nothing is weakened by this. You cannot set a TTL on a literal you pass
+	// no fields to, and the case that motivated the checker
+	// (leartech-arrivals-observer) was a populated literal.
+	//
+	// Residual gap, stated rather than hidden: `j := &batchv1.Job{}` followed
+	// by field assignment on later lines now passes. Catching that needs an AST
+	// pass, not a regex; it has not been seen in the estate.
+	goJobLit = regexp.MustCompile(`\b(batchv1|batch)\.Job(Spec)?\{\s*[^}\s]`)
 	ttlGo    = regexp.MustCompile(`TTLSecondsAfterFinished`)
 )
 

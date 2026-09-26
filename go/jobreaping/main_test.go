@@ -33,6 +33,14 @@ func TestJobReaping(t *testing.T) {
 		// that way when this was written.
 		{"testdata/good", false, "job-reaping: ok"},
 
+		// The second control, and the one the first draft was missing. A
+		// controller file that WATCHES Jobs and constructs none must pass.
+		// `Owns(&batchv1.Job{})` is the declaration that makes Kubernetes
+		// garbage-collect them — the opposite of this checker's complaint —
+		// and it was failing every leartech-orchestrator-controller PR while
+		// the real construction in jobspawn.go had a TTL all along.
+		{"testdata/watch-only", false, "job-reaping: ok"},
+
 		// A scan that examined nothing is not a scan that found nothing.
 		{"testdata/empty", true, "examined 0 template YAML files and 0 Go files"},
 	} {
