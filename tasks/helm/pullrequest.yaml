@@ -52,14 +52,14 @@ spec:
           name: ""
           resources: {}
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.112
           name: jx-variables
           resources: {}
           script: |
             #!/usr/bin/env sh
             jx gitops variables
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.112
           name: chart-lint
           resources: {}
           script: |
@@ -102,7 +102,7 @@ spec:
             CGO_ENABLED=0 go test -c -o /workspace/source/chart.test ./...
             echo "==> built chart.test ($(stat -c%s /workspace/source/chart.test) bytes, static)"
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.112
           name: chart-tests
           resources: {}
           script: |
@@ -146,7 +146,7 @@ spec:
           name: ""
           resources: {}
 
-        - image: ghcr.io/jenkins-x-plugins/jx-preview:0.7.26
+        - image: ghcr.io/jenkins-x-plugins/jx-preview:0.7.27
           name: promote-jx-preview
           resources: {}
           script: |

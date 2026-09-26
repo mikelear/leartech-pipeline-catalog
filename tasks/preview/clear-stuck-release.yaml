@@ -61,7 +61,7 @@ spec:
           resources: {}
           workingDir: /workspace/source
         steps:
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.112
           name: clear-stuck-release
           resources: {}
           script: |

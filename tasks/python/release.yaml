@@ -50,7 +50,7 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.112
           name: jx-variables
           resources: {}
           script: |
