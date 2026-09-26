@@ -40,7 +40,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             jx-release-version --tag > VERSION
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.112
           name: jx-variables
           resources:
             requests:
@@ -49,7 +49,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.112
           name: promote-changelog
           resources: {}
           script: |
@@ -70,7 +70,7 @@ spec:
             git push --force origin v$VERSION
 
             jx changelog create --version v${VERSION} --output-markdown ../changelog.md
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.99
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.112
           name: promote-helm-release
           resources: {}
           script: |
@@ -98,7 +98,7 @@ spec:
             echo "Signing $IMAGE"
             cosign sign --key /tmp/cosign.key --yes "$IMAGE"
             rm -f /tmp/cosign.key
-        - image: ghcr.io/jenkins-x-plugins/jx-promote:0.6.31
+        - image: ghcr.io/jenkins-x-plugins/jx-promote:0.6.54
           name: promote-jx-promote
           resources: {}
           script: |
