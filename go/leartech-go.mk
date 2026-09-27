@@ -270,6 +270,54 @@ preflight-doctor: ## Print what preflight does and does NOT cover
 	@echo "    A green preflight means most classes of failure are ruled out."
 	@echo "    It does not mean the PR will build."
 
+# preflight-tools — what the gates in this file NEED, and how each is reached.
+#
+# MACHINE-READABLE, WHERE preflight-doctor IS FOR A PERSON. The doctor's prose
+# is the better read and stays; this is the same knowledge in a form something
+# can reconcile against an image.
+#
+# Three tab-separated columns: the tool, HOW it is reached, and the gates that
+# stop working without it.
+#
+#   path           expected on $$PATH, already installed
+#   path-or-docker prefers a binary on $$PATH, falls back to a container
+#   docker         invoked as a container — needs a docker daemon
+#   curl        fetched from the catalog at run time — needs egress
+#   go-install  installed on demand by `go install` — needs egress AND a
+#               writable module cache
+#
+# WHY THE `via` COLUMN IS THE POINT. A pre-built agent image has no docker
+# daemon and, in a sandboxed pod, no egress. So `path` tools work and the other
+# three classes do not — and the failure is not always loud: govulncheck's
+# on-demand `go install` silently no-opped in an agent pod and the vulnerability
+# escaped to CI (leartech-arrivals-observer #25), which is why agent-go now
+# bakes it.
+#
+# Three consumers, one declaration:
+#   - an image build asserts every `path` tool is present, so the image and
+#     this file cannot drift;
+#   - an unattended agent reconciles this against `command -v` and reports the
+#     delta, so a red CI run is attributable to a missing tool rather than to
+#     the agent skipping the step;
+#   - a person runs it to see why a gate will not work where they are.
+#
+# NOTHING HERE INSTALLS ANYTHING. Reporting the gap is the job; closing it is
+# the image's, which is the whole reason the images are pre-built.
+preflight-tools: ## Print the tools the gates need, one per line: tool<TAB>via<TAB>gates
+	@printf '%s\t%s\t%s\n' \
+	  go             path        test,vuln,build,swag \
+	  golangci-lint  path        lint \
+	  govulncheck    path        vuln \
+	  yq             path        lint \
+	  git            path        test-coverage,comment-gate \
+	  make           path        all \
+	  hadolint       path-or-docker dockerfile-lint \
+	  authconformance curl       lint \
+	  jobreaping     curl        lint \
+	  commentgate    curl        lint \
+	  golangci-base  curl        lint \
+	  swag           go-install  swag,swag-check
+
 help: ## Print available targets
 	@echo ""
 	@echo "  leartech-go.mk — Go build/test/lint (canonical)"
@@ -390,6 +438,19 @@ auth-standard: ## Print the estate auth standard (what auth-conformance enforces
 #
 # Kept as a target because it is genuinely useful locally, where docker does
 # exist, and `make dockerfile-lint` before pushing is worth having.
+# THE PINNED IMAGE FIRST, A LOCAL BINARY ONLY AS A FALLBACK.
+#
+# HADOLINT_VERSION is pinned because a version change moves the findings, and
+# the pin is worth nothing if an unpinned binary on $$PATH takes precedence.
+# Measured 2026-09-27 on one real file: hadolint 2.14.0 reports NOTHING at any
+# threshold where v2.15.1 reports DL3066. A developer with the older Homebrew
+# build got a clean run and CI rejected the same file.
+#
+# The fallback exists for a pre-built agent image, which has no docker daemon
+# and does have a baked hadolint — and it announces the version difference
+# rather than passing quietly, because "clean here" is not "clean in CI". Note
+# that leartech-agent-base currently bakes 2.14.0 against this pin's v2.15.1,
+# which is exactly the drift the warning is for.
 dockerfile-lint: ## hadolint every Dockerfile locally (threshold: $(HADOLINT_THRESHOLD))
 	@set -eu; \
 	files=$$(find . -name 'Dockerfile*' \
@@ -401,17 +462,35 @@ dockerfile-lint: ## hadolint every Dockerfile locally (threshold: $(HADOLINT_THR
 	  echo "==> dockerfile-lint: no Dockerfile in this repo; skipping"; \
 	  exit 0; \
 	fi; \
-	if ! command -v docker >/dev/null 2>&1; then \
-	  echo "==> dockerfile-lint: docker not on PATH; cannot run $(HADOLINT_IMAGE)" >&2; \
+	if command -v docker >/dev/null 2>&1; then \
+	  runner="docker"; \
+	elif command -v hadolint >/dev/null 2>&1; then \
+	  runner="binary"; \
+	else \
+	  echo "==> dockerfile-lint: no docker daemon and no hadolint on PATH" >&2; \
 	  echo "    Refusing to report success for a check that did not run." >&2; \
 	  exit 1; \
 	fi; \
-	echo "==> dockerfile-lint: $(HADOLINT_IMAGE), --failure-threshold $(HADOLINT_THRESHOLD)"; \
+	echo "==> dockerfile-lint: via $$runner, --failure-threshold $(HADOLINT_THRESHOLD)"; \
+	if [ "$$runner" = "binary" ]; then \
+	  have=$$(hadolint --version 2>/dev/null | awk '{print $$NF}'); \
+	  want=$$(printf '%s' "$(HADOLINT_VERSION)" | sed 's/^v//; s/-alpine$$//'); \
+	  echo "    the PINNED image is $(HADOLINT_VERSION); this binary is $${have:-unknown}"; \
+	  if [ "$$have" != "$$want" ]; then \
+	    echo "    VERSIONS DIFFER — findings may not match CI. hadolint 2.14.0" >&2; \
+	    echo "    reports nothing on a file v2.15.1 flags DL3066 on, so a clean" >&2; \
+	    echo "    run here does not mean a clean run in the pipeline." >&2; \
+	  fi; \
+	fi; \
 	rc=0; n=0; \
 	for f in $$files; do \
 	  n=$$((n + 1)); \
-	  out=$$(docker run --rm -i $(HADOLINT_IMAGE) \
-	           hadolint --failure-threshold $(HADOLINT_THRESHOLD) - < "$$f" 2>&1) || rc=1; \
+	  if [ "$$runner" = "binary" ]; then \
+	    out=$$(hadolint --failure-threshold $(HADOLINT_THRESHOLD) - < "$$f" 2>&1) || rc=1; \
+	  else \
+	    out=$$(docker run --rm -i $(HADOLINT_IMAGE) \
+	             hadolint --failure-threshold $(HADOLINT_THRESHOLD) - < "$$f" 2>&1) || rc=1; \
+	  fi; \
 	  if [ -n "$$out" ]; then \
 	    echo "  $$f"; \
 	    echo "$$out" | sed 's/^/      /'; \
