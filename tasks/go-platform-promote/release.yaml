@@ -54,7 +54,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: ghcr.io/mikelear/leartech-go-runtime:0.51.10
+        - image: ghcr.io/mikelear/leartech-go-runtime:0.53.4
           name: build-make-build
           resources:
             requests:
@@ -100,7 +100,7 @@ spec:
           resources: {}
         # Platform-namespace promote (replaces jx-promote). Opens a GitOps PR
         # bumping the pin in the service's own helmfile, per-cluster (CLUSTER_ID).
-        - image: ghcr.io/mikelear/platform-promote:0.51.11
+        - image: ghcr.io/mikelear/platform-promote:0.53.4
           name: platform-promote
           resources: {}
           env:

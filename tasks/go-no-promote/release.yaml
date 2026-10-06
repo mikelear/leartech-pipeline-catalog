@@ -48,7 +48,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: ghcr.io/mikelear/leartech-go-runtime:0.51.10
+        - image: ghcr.io/mikelear/leartech-go-runtime:0.53.4
           name: build-make-build
           resources:
             requests:

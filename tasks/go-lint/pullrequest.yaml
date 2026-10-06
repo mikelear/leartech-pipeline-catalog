@@ -28,7 +28,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: golangci/golangci-lint:v2.13.2
+        - image: golangci/golangci-lint:v2.14.0
           name: golangci-lint
           # golangci-lint loads the whole type-checked module graph — memory-heavy
           # on real modules; the inherited 512Mi under-reserves it (Burstable pod
