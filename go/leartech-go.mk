@@ -51,7 +51,7 @@
 #                          check no-ops cleanly — pass, not fail.
 
 # ── Canonical toolchain versions ─────────────────────────────────────────
-GOLANGCI_VERSION ?= 2.13.2
+GOLANGCI_VERSION ?= 2.14.0
 
 # ── Config paths ─────────────────────────────────────────────────────────
 GOLANGCI_BASE_URL ?= https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/.golangci.base.yml
