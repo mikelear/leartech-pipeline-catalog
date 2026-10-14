@@ -48,7 +48,7 @@ spec:
           script: |
             #!/bin/sh
             set -e
-            apk add --no-cache git make curl
+            apk add --no-cache git make curl bash
             # Populate module cache. If the repo has private deps via
             # leartech-go-common or similar, make the dep repo public
             # (preferred) or inline an override step that sets GIT_TOKEN +
