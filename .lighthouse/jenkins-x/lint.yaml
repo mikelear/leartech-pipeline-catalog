@@ -85,7 +85,7 @@ spec:
             #!/bin/sh
             set -e
             sh test/go/version_pin_test.sh
-        - image: golangci/golangci-lint:v2.13.2
+        - image: golangci/golangci-lint:v2.14.0
           name: config-schema
           resources: {}
           script: |
