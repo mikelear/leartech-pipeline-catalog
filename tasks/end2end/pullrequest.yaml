@@ -139,7 +139,7 @@ spec:
         # Differentially checked against that python on real tokens from a
         # preview Hydra -- read scope, write scope, omitted scope (scp: []) and
         # a refused scope -- identical output on all four.
-        - image: golang:1.27
+        - image: golang:1.27.2
           name: authtoken-build
           resources: {}
           script: |
@@ -1497,7 +1497,7 @@ spec:
         # REPORT ONLY, and it never fails: this is the mechanism proving
         # itself, not a gate. Enforcement is a policy decision about where
         # the coverage floor lives, and deciding it is not this step's job.
-        - image: golang:1.27
+        - image: golang:1.27.2
           name: e2e-coverage-report
           resources:
             requests:
