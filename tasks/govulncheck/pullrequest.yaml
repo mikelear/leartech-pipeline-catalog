@@ -49,7 +49,7 @@ spec:
           script: |
             #!/bin/sh
             set -e
-            apk add --no-cache git
+            apk add --no-cache git curl
             go mod download
             # renovate: datasource=go depName=golang.org/x/vuln
             #
