@@ -87,7 +87,7 @@ spec:
         # caches on file inputs, and a chart read through exec is not one of
         # them, so a run against a mutated chart replays the previous PASS. A
         # compiled binary cannot do that.
-        - image: golang:1.27
+        - image: golang:1.27.2
           name: chart-tests-build
           resources: {}
           script: |

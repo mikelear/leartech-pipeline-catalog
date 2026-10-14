@@ -34,7 +34,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        # Chart tests shell out to `helm`. golang:1.27 has none, and alpine
+        # Chart tests shell out to `helm`. golang:1.27.2 has none, and alpine
         # variants of the go-runtime image have neither helm nor gcc, so this
         # cannot be solved by swapping the test image.
         #
@@ -67,7 +67,7 @@ spec:
 
         # Non-alpine golang image: -race needs cgo + gcc which alpine lacks
         # by default. Slightly bigger image, but no apk add build-base.
-        - image: golang:1.27
+        - image: golang:1.27.2
           name: go-test
           resources:
             # `go test ./... -race` + envtest (real apiserver+etcd) is memory-heavy;
