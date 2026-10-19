@@ -192,7 +192,7 @@ FILE_SIZE_FAIL ?= 0
 # .DEFAULT_GOAL so `make -f leartech-go.mk` (no target) prints help.
 .DEFAULT_GOAL := help
 
-.PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage test-integration build vuln pre-push preflight preflight-doctor
+.PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage test-integration build vuln pre-push ci preflight preflight-doctor
 
 # ── how a checker is obtained ────────────────────────────────────────────────
 #
@@ -1074,3 +1074,5 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 # checks fail fast:  vet → tidy-check → build → test-coverage → lint → vuln.
 pre-push: vet tidy-check build test-coverage lint vuln ## Full pre-push gate (vet tidy-check build test-coverage lint[+swag-check] vuln)
 	@echo "==> pre-push gate: all checks passed"
+
+ci: pre-push ## CI-equivalent gate — alias of pre-push, the shared contract name a language-neutral dev agent runs (matches ng.mk's ci)
