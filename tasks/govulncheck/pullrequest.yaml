@@ -63,9 +63,9 @@ spec:
             #   go 1.24 or below  3
             #
             # 25 of 27 are already past the threshold the old note names, so
-            # its reason had expired. v1.8.0 verified against a go1.24 module
+            # its reason had expired. v1.9.0 verified against a go1.24 module
             # so the three laggards still scan.
-            GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION:-v1.8.0}"
+            GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION:-v1.9.0}"
             go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
             govulncheck ./...
   podTemplate:
