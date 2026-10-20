@@ -18,8 +18,12 @@ func TestRenovateEnrolment(t *testing.T) {
 		wantFail bool
 		wantText string
 	}{
-		// The defect this exists for: deployed, and Renovate was never told.
-		{"testdata/missing-enrolment", true, "absent from Renovate's repositories list"},
+		// Deployed-but-not-enrolled is now a WARNING, not a failure: a freshly
+		// bootstrapped service deploys before it is enrolled, and failing the
+		// GitOps PR for that blocks unrelated promotes. Reported (so it lands on
+		// the PR), exit 0.
+		// proven-by: TestMain_UnenrolledDeployIsAWarningNotAFailure
+		{"testdata/missing-enrolment", false, "absent from Renovate's repositories list"},
 
 		// An exemption with no stated reason is indistinguishable from an
 		// omission, which is the thing being checked for.
@@ -105,4 +109,22 @@ func build(t *testing.T) string {
 		t.Fatalf("build failed: %v\n%s", err, out)
 	}
 	return bin
+}
+
+// A deployed-but-unenrolled service is a WARNING (reported, exit 0), not a
+// build failure — so a bootstrapped service's own transient gap, or an
+// unrelated promote PR, is not blocked by it. (The hard failures — an
+// exemption with no reason, an unreadable input — still exit non-zero.)
+func TestMain_UnenrolledDeployIsAWarningNotAFailure(t *testing.T) {
+	bin := build(t)
+	out, err := exec.Command(bin, "-gitops-root", "testdata/missing-enrolment").CombinedOutput()
+	if err != nil {
+		t.Errorf("an unenrolled deploy exited non-zero (should warn, not fail):\n%s", out)
+	}
+	if !strings.Contains(string(out), "WARNING") {
+		t.Errorf("the unenrolled deploy is not reported as a WARNING:\n%s", out)
+	}
+	if !strings.Contains(string(out), "absent from Renovate's repositories list") {
+		t.Errorf("the warning does not name the gap:\n%s", out)
+	}
 }

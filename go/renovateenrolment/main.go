@@ -145,19 +145,32 @@ func main() {
 		os.Exit(1)
 	}
 
-	var findings []finding
+	// HARD failures — a defect in the enrolment data itself. An exemption with no
+	// reason is indistinguishable from the omission this check exists to catch, so
+	// it stays a build-stopping FAIL.
+	var hard []finding
 	for _, r := range badExempt {
-		findings = append(findings, finding{
+		hard = append(hard, finding{
 			release: r,
 			why:     "exempt from Renovate enrolment with no reason given",
 			fix:     fmt.Sprintf("in %s, write `%s: <why this repo needs no dependency updates>`", *exemptPath, r),
 		})
 	}
+
+	// SOFT findings — a deployed service not yet in Renovate's list. This is
+	// EXPECTED transiently: a freshly bootstrapped service deploys before anything
+	// enrols it, so failing the GitOps PR here blocks an unrelated promote for a
+	// gap that will be closed (by the register action or the pr-stuck BA
+	// shepherd). Report it loudly on the PR, but do NOT fail the build — missing
+	// enrolment is a follow-up, not a reason to stop every unrelated change.
+	//
+	// proven-by: TestMain_UnenrolledDeployIsAWarningNotAFailure
+	var soft []finding
 	for _, rel := range deployed {
 		if enrolled[rel] || exempt[rel] {
 			continue
 		}
-		findings = append(findings, finding{
+		soft = append(soft, finding{
 			release: rel,
 			why:     "deployed to a cluster but absent from Renovate's repositories list, so it gets no dependency updates and no CVE alerts",
 			fix:     fmt.Sprintf("add \"mikelear/%s\" to the repositories list in %s, or exempt it with a reason in %s", rel, *configPath, *exemptPath),
@@ -167,20 +180,31 @@ func main() {
 	fmt.Printf("==> renovate-enrolment: examined %d helmfile(s); %d deployed release(s) of ours, %d enrolled, %d exempt\n",
 		filesScanned, len(deployed), len(enrolled), len(exempt))
 
-	if len(findings) == 0 {
+	// The soft findings are WARNINGS: printed to stdout (so they land on the PR
+	// comment), never exit-failing.
+	if len(soft) > 0 {
+		sort.Slice(soft, func(i, j int) bool { return soft[i].release < soft[j].release })
+		fmt.Printf("\nWARNING: %d deployed repo(s) not yet in Renovate's scope (enrol to silence):\n\n", len(soft))
+		for _, f := range soft {
+			fmt.Printf("  %s\n      %s\n      fix: %s\n\n", f.release, f.why, f.fix)
+		}
+		fmt.Println("A repo Renovate never visits still looks configured but gets no CVE alerts.")
+		fmt.Println("A freshly bootstrapped service lands here until it is enrolled — the register")
+		fmt.Println("action or a pr-stuck BA shepherd closes the gap; this warning tracks it.")
+	}
+
+	// Only the HARD findings fail the build.
+	if len(hard) == 0 {
 		fmt.Println("==> renovate-enrolment: ok")
 		return
 	}
-
-	sort.Slice(findings, func(i, j int) bool { return findings[i].release < findings[j].release })
-	fmt.Fprintf(os.Stderr, "\nFAIL: %d deployed repo(s) outside Renovate's scope:\n\n", len(findings))
-	for _, f := range findings {
+	sort.Slice(hard, func(i, j int) bool { return hard[i].release < hard[j].release })
+	fmt.Fprintf(os.Stderr, "\nFAIL: %d exemption(s) without a reason:\n\n", len(hard))
+	for _, f := range hard {
 		fmt.Fprintf(os.Stderr, "  %s\n      %s\n      fix: %s\n\n", f.release, f.why, f.fix)
 	}
-	fmt.Fprintln(os.Stderr, "A repo Renovate never visits still has a renovate.json, still extends the")
-	fmt.Fprintln(os.Stderr, "shared preset, and still looks configured. On 2026-09-15 that described 26 of")
-	fmt.Fprintln(os.Stderr, "the estate's 34 deployed services; 24 of them carried an automerge rule for")
-	fmt.Fprintln(os.Stderr, "go-common that had never once fired.")
+	fmt.Fprintln(os.Stderr, "An exemption nobody justified is indistinguishable from the omission this")
+	fmt.Fprintln(os.Stderr, "check exists to catch, so it must carry a reason.")
 	os.Exit(1)
 }
 
