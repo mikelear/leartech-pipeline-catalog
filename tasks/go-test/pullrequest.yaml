@@ -84,6 +84,13 @@ spec:
               cpu: "1"
               memory: 2Gi
           env:
+            # Honour go.mod's `toolchain` directive by auto-downloading it,
+            # like govulncheck. The baked golang:1.27.2 image trails a go.mod
+            # that pins a newer toolchain (e.g. go1.27.3 for GO-2026-6809), and
+            # without this `go test` uses the baked version regardless — so a
+            # module built on a newer toolchain would be TESTED on an older one.
+            - name: GOTOOLCHAIN
+              value: auto
             - name: GIT_TOKEN
               valueFrom:
                 secretKeyRef:

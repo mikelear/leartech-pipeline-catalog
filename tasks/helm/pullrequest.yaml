@@ -90,6 +90,12 @@ spec:
         - image: golang:1.27.2
           name: chart-tests-build
           resources: {}
+          env:
+          # Honour tests/go.mod's `toolchain` directive, like govulncheck and
+          # go-test: the baked image trails a module pinning a newer toolchain,
+          # and without this the chart tests compile on the wrong Go version.
+          - name: GOTOOLCHAIN
+            value: auto
           script: |
             #!/usr/bin/env bash
             set -euo pipefail
