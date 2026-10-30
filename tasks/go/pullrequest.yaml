@@ -45,6 +45,15 @@ spec:
             requests:
               cpu: 500m
               memory: 1Gi
+          env:
+          # Honour go.mod's `toolchain` directive by auto-downloading it, the
+          # same reason govulncheck sets this: the baked golang:1.27.2 image is
+          # one patch behind a go.mod that pins a newer toolchain, and without
+          # this `go build` silently uses the baked version regardless. A
+          # go-common toolchain bump (e.g. go1.27.3 for GO-2026-6809) then
+          # builds here against the version the module actually asked for.
+          - name: GOTOOLCHAIN
+            value: auto
           script: |
             #!/bin/sh
             set -e
