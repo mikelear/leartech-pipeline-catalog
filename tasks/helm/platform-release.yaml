@@ -100,6 +100,25 @@ spec:
               --owner "${REPO_OWNER:-mikelear}" \
               $MIG \
               --release-url "https://github.com/${REPO_OWNER:-mikelear}/${REPO_NAME}/releases/tag/v${VERSION}-${CLUSTER_ID}"
+        # Kick the Renovate cronjob so the UMBRELLAS pinning this chart get a bump
+        # PR within minutes (not next Monday) — the go-common pattern. Idempotent;
+        # non-fatal (the weekly cron still picks it up). A service/umbrella that
+        # sits under an umbrella RELIES on this to close the release loop fast.
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: trigger-renovate
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            JOB="renovate-after-${REPO_NAME:-release}-$(date +%s)"
+            echo "==> creating one-shot ${JOB} from cronjob/renovate"
+            rc=0
+            kubectl -n jx create job --from=cronjob/renovate "${JOB}" || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "::WARN renovate trigger exited ${rc}; the Monday cron will pick up the bump"
+            else
+              echo "==> ${JOB} created"
+            fi
   podTemplate:
     tolerations:
     - key: sku
