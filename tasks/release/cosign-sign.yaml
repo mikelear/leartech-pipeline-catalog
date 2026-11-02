@@ -94,16 +94,39 @@ spec:
             echo "$COSIGN_PUB" > /tmp/cosign.pub
             IMAGE="$DOCKER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
 
-            # Skip-if-already-signed: cosign verify hits the OCI registry's
-            # signature tag (no Rekor lookup with --insecure-ignore-tlog),
-            # so this is a registry-only idempotency check. If the
-            # signature is present and verifies with our pubkey, the sign
-            # step is unnecessary and would 409 against Rekor anyway.
-            if cosign verify --key /tmp/cosign.pub --insecure-ignore-tlog=true "$IMAGE" >/dev/null 2>&1; then
-              echo "$IMAGE already signed — skipping (retry-safe)"
+            # Skip-if-already-signed: consult REKOR, not the registry.
+            #
+            # cosign v3 pushes the signature as a transparency-log bundle and
+            # attaches NOTHING discoverable to the registry — `cosign tree`
+            # shows no artifact and the old <repo>:sha256-<digest>.sig tag is
+            # absent. A registry-only guard (--insecure-ignore-tlog) therefore
+            # finds nothing on a retry, re-signs, and Rekor rejects the
+            # duplicate log entry with HTTP 409 — which is exactly the failure
+            # this guard exists to prevent. So the guard must look where v3
+            # actually wrote: the transparency log. A plain `cosign verify`
+            # (no --insecure-ignore-tlog) does the Rekor lookup, so an existing
+            # entry counts as already-signed and the sign is skipped.
+            if cosign verify --key /tmp/cosign.pub "$IMAGE" >/dev/null 2>&1; then
+              echo "$IMAGE already signed (verified via Rekor) — skipping (retry-safe)"
             else
+              # BELT AND BRACES: even with the guard above, a race or a
+              # partially-recorded prior run can still make `sign` hit a 409
+              # ("an equivalent entry already exists in the transparency log").
+              # That 409 means the signature IS in Rekor — the desired end
+              # state — so it is a SUCCESS for our purposes, not a failure that
+              # should abort the release before upload-clients and the brew
+              # bump run. Capture the sign output and treat a transparency-log
+              # conflict as already-signed.
               echo "Signing $IMAGE"
-              cosign sign --key /tmp/cosign.key --yes "$IMAGE"
+              if ! out=$(cosign sign --key /tmp/cosign.key --yes "$IMAGE" 2>&1); then
+                echo "$out"
+                if echo "$out" | grep -q "equivalent entry already exists in the transparency log"; then
+                  echo "$IMAGE already recorded in Rekor (409 on duplicate) — treating as signed"
+                else
+                  rm -f /tmp/cosign.key /tmp/cosign.pub
+                  exit 1
+                fi
+              fi
             fi
             rm -f /tmp/cosign.key /tmp/cosign.pub
   podTemplate:
