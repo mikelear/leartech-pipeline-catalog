@@ -1,0 +1,111 @@
+# Umbrella / chart-only platform release to an OWN NAMESPACE.
+#
+# The no-image sibling of tasks/go-platform-promote: a repo with NO Dockerfile
+# (an umbrella chart, or any helmfile-deployed chart bundle) releases its chart
+# to the per-cluster OCI registry AND opens a GitOps PR bumping the pinned
+# version in helmfiles/<ns>/helmfile.yaml — the same platform-promote step the
+# Go task uses, minus the go build + kaniko image steps.
+#
+# Consumer release.yaml sets, via stepTemplate env:
+#   PLATFORM_PROMOTE_NAMESPACE  — target namespace (e.g. gateway)          [required]
+#   PLATFORM_PROMOTE_HELMFILE   — helmfiles/<ns>/helmfile.yaml             [required]
+#   PLATFORM_PROMOTE_CHART      — pinned chart name (default: $APP_NAME)   [optional]
+#   PLATFORM_PROMOTE_MIGRATION  — "true" → PR carries a migration caution  [optional]
+#
+# Why a bump PR and not auto-merge: a platform-namespace deploy is a human
+# decision (same as jx-promote's PR into staging, but namespace-aware). Tide
+# does not auto-merge GitOps PRs here; the operator merges on green.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: release
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 400m
+              memory: 512Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        # Bump charts/*/Chart.yaml to the clean VERSION + create the cluster-
+        # suffixed tag. No image, so the image-injection sub-step no-ops.
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/promote-cluster-suffixed.yaml@main
+          name: ""
+          resources: {}
+        # Publish the chart to the per-cluster OCI registry (clean semver).
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/helm-release.yaml@main
+          name: ""
+          resources: {}
+        # Namespace-aware promote: open a GitOps PR bumping the pin in
+        # helmfiles/<ns>/helmfile.yaml. Same step/image as go-platform-promote.
+        - image: ghcr.io/mikelear/platform-promote:0.51.11
+          name: platform-promote
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          script: |
+            #!/bin/sh
+            set -e
+            source .jx/variables.sh
+            if [ -z "$PLATFORM_PROMOTE_NAMESPACE" ] || [ -z "$PLATFORM_PROMOTE_HELMFILE" ]; then
+              echo "platform-release: PLATFORM_PROMOTE_NAMESPACE and PLATFORM_PROMOTE_HELMFILE must be set by the consumer release.yaml" >&2
+              exit 1
+            fi
+            MIG=""
+            [ "$PLATFORM_PROMOTE_MIGRATION" = "true" ] && MIG="--migration"
+            platform-promote \
+              --chart "${PLATFORM_PROMOTE_CHART:-$APP_NAME}" \
+              --namespace "$PLATFORM_PROMOTE_NAMESPACE" \
+              --helmfile "$PLATFORM_PROMOTE_HELMFILE" \
+              --version "$VERSION" \
+              --cluster "$CLUSTER_ID" \
+              --owner "${REPO_OWNER:-mikelear}" \
+              $MIG \
+              --release-url "https://github.com/${REPO_OWNER:-mikelear}/${REPO_NAME}/releases/tag/v${VERSION}-${CLUSTER_ID}"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 1h0m0s
+status: {}
