@@ -48,7 +48,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             jx gitops variables
-        - image: ghcr.io/mikelear/leartech-go-runtime:0.51.10
+        - image: ghcr.io/mikelear/leartech-go-runtime:0.53.60
           name: build-make-build
           resources:
             requests:
@@ -94,7 +94,7 @@ spec:
         # deployment is owned by an umbrella publishes its chart and nothing
         # else; the umbrella's pin bump IS the deploy trigger, so this kick is
         # what closes the loop fast.
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.121
           name: trigger-renovate
           resources: {}
           script: |
