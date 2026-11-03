@@ -1,0 +1,108 @@
+# Umbrella promote-ONLY: open a namespace-aware GitOps bump PR for a SECOND
+# namespace an umbrella serves, WITHOUT releasing the chart again.
+#
+# WHY THIS EXISTS. An umbrella can own more than one namespace —
+# leartech-infra-umbrella deploys into both sp-infra and sp-plan-infra. Running
+# the full release task once per namespace publishes the chart twice: every
+# pipeline run produced two versions (v0.0.38 and v0.0.39 for one commit), each
+# with its own tag, OCI push and Renovate kick. Only ONE chart version should
+# exist per commit; the extra namespaces need only the pin bumped.
+#
+# So: one `platform-release` task (next-version -> tag -> OCI -> promote ->
+# renovate kick) for the FIRST namespace, then this task for each additional
+# one. VERSION is read from the cluster-suffixed tag the release just pushed onto
+# HEAD — NOT recomputed, because next-version walks the tag lineage and would
+# return the NEXT version, not the one that was published.
+#
+# Consumer release.yaml sets, via stepTemplate env:
+#   PLATFORM_PROMOTE_NAMESPACE  — target namespace (e.g. sp-plan-infra)   [required]
+#   PLATFORM_PROMOTE_HELMFILE   — helmfiles/<ns>/helmfile.yaml            [required]
+#   PLATFORM_PROMOTE_CHART      — pinned chart name (default: $APP_NAME)  [optional]
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: release
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        - image: ghcr.io/mikelear/platform-promote:0.51.11
+          name: platform-promote
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          script: |
+            #!/bin/sh
+            set -e
+            source .jx/variables.sh
+            if [ -z "$PLATFORM_PROMOTE_NAMESPACE" ] || [ -z "$PLATFORM_PROMOTE_HELMFILE" ]; then
+              echo "platform-promote: PLATFORM_PROMOTE_NAMESPACE and PLATFORM_PROMOTE_HELMFILE must be set by the consumer release.yaml" >&2
+              exit 1
+            fi
+            # The version the release task PUBLISHED, taken from the cluster-
+            # suffixed tag it pushed onto THIS commit. Recomputing would return
+            # the next version, and pinning that would reference a chart that
+            # does not exist.
+            VERSION=$(git tag --points-at HEAD | sed -n "s/^v\(.*\)-${CLUSTER_ID}$/\1/p" | head -1)
+            if [ -z "$VERSION" ]; then
+              echo "platform-promote: no v*-${CLUSTER_ID} tag on HEAD — run the release task first" >&2
+              exit 1
+            fi
+            CHART="${PLATFORM_PROMOTE_CHART:-$APP_NAME}"
+            echo "==> promoting ${CHART} v${VERSION} to ${PLATFORM_PROMOTE_NAMESPACE}"
+            platform-promote \
+              --chart "${PLATFORM_PROMOTE_CHART:-$APP_NAME}" \
+              --namespace "$PLATFORM_PROMOTE_NAMESPACE" \
+              --helmfile "$PLATFORM_PROMOTE_HELMFILE" \
+              --version "$VERSION" \
+              --cluster "$CLUSTER_ID" \
+              --owner "${REPO_OWNER:-mikelear}" \
+              --release-url "https://github.com/${REPO_OWNER:-mikelear}/${REPO_NAME}/releases/tag/v${VERSION}-${CLUSTER_ID}"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}
