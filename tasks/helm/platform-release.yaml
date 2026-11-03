@@ -65,7 +65,7 @@ spec:
           resources: {}
         # Namespace-aware promote: open a GitOps PR bumping the pin in
         # helmfiles/<ns>/helmfile.yaml. Same step/image as go-platform-promote.
-        - image: ghcr.io/mikelear/platform-promote:0.51.11
+        - image: ghcr.io/mikelear/platform-promote:0.54.49
           name: platform-promote
           resources: {}
           env:
