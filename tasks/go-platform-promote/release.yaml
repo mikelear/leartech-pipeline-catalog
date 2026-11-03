@@ -144,14 +144,35 @@ spec:
           script: |
             #!/bin/sh
             set -e
-            JOB="renovate-after-${REPO_NAME:-release}-$(date +%s)"
-            echo "==> creating one-shot ${JOB} from cronjob/renovate"
-            rc=0
-            kubectl -n jx create job --from=cronjob/renovate "${JOB}" || rc=$?
-            if [ "$rc" -ne 0 ]; then
-              echo "::WARN renovate trigger exited ${rc}; the Monday cron will pick up the bump"
+            # ONE RUN PER REPO, NOT PER SECOND. The name used to carry a
+            # timestamp, so every release stacked another Job — and Renovate is
+            # not built to run twice over the same repositories. Observed live
+            # after switching eight services to go-no-promote in one go: four
+            # Jobs for the SAME repo sat Running for 4-6 hours (a normal run is
+            # minutes), because concurrent runs over one repo deadlock on their
+            # shared git/cache state.
+            #
+            # A stable per-repo name gives natural de-duplication: a release
+            # while a run is in flight does not stack another, and the finished
+            # one is cleared by the next release.
+            JOB="renovate-after-${REPO_NAME:-release}"
+            if kubectl -n jx get job "${JOB}" >/dev/null 2>&1; then
+              done_=$(kubectl -n jx get job "${JOB}" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}')
+              fail_=$(kubectl -n jx get job "${JOB}" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}')
+              if [ "$done_" = "True" ] || [ "$fail_" = "True" ]; then
+                kubectl -n jx delete job "${JOB}" --ignore-not-found >/dev/null 2>&1
+              fi
+            fi
+            if kubectl -n jx get job "${JOB}" >/dev/null 2>&1; then
+              echo "==> ${JOB} is still running for this repo — not stacking another (it will pick the tag up)"
             else
-              echo "==> ${JOB} created"
+              rc=0
+              kubectl -n jx create job --from=cronjob/renovate "${JOB}" || rc=$?
+              if [ "$rc" -ne 0 ]; then
+                echo "::WARN renovate trigger exited ${rc}; the Monday cron will pick up the bump"
+              else
+                echo "==> ${JOB} created"
+              fi
             fi
   podTemplate:
     tolerations:
