@@ -78,20 +78,21 @@ spec:
               echo "platform-promote: PLATFORM_PROMOTE_NAMESPACE and PLATFORM_PROMOTE_HELMFILE must be set by the consumer release.yaml" >&2
               exit 1
             fi
-            # The version the release task PUBLISHED. Two traps, both hit live:
-            #   * the tag is NOT on HEAD — the release pushes its own
-            #     "chore: release X" commit and tags THAT, so `--points-at HEAD`
-            #     finds nothing;
-            #   * this task's clone predates that commit, so the tag is missing
-            #     locally until it is fetched.
-            # So fetch the tags, then take the newest cluster-suffixed tag whose
-            # commit has HEAD as an ancestor — i.e. a tag this pipeline created.
-            # Recomputing next-version instead would return the version AFTER the
-            # one published, and pin a chart that does not exist.
-            git fetch --tags --quiet origin 2>/dev/null || true
-            VERSION=$(git tag --list "v*-${CLUSTER_ID}" --contains HEAD --sort=-v:refname | head -1 | sed "s/^v\(.*\)-${CLUSTER_ID}$/\1/")
+            # The version the release task PUBLISHED. Three attempts got here;
+            # the first two failed live on leartech-infra-umbrella:
+            #   1. `git tag --points-at HEAD` — the release pushes its own
+            #      "chore: release X" commit and tags THAT, never HEAD.
+            #   2. `git tag --contains HEAD` — this task's clone is SHALLOW, so
+            #      the tagged commit is not in it and the traversal finds nothing.
+            # So ask the REMOTE, which is the only party that reliably knows:
+            # the highest cluster-suffixed tag. Recomputing next-version instead
+            # would return the version AFTER the published one and pin a chart
+            # that does not exist.
+            VERSION=$(git ls-remote --tags origin "v*-${CLUSTER_ID}" \
+              | awk '{print $2}' | sed 's#refs/tags/##' \
+              | sort -V | tail -1 | sed "s/^v\(.*\)-${CLUSTER_ID}$/\1/")
             if [ -z "$VERSION" ]; then
-              echo "platform-promote: no v*-${CLUSTER_ID} tag contains HEAD — run the release task first" >&2
+              echo "platform-promote: no v*-${CLUSTER_ID} tag on origin — run the release task first" >&2
               exit 1
             fi
             CHART="${PLATFORM_PROMOTE_CHART:-$APP_NAME}"
