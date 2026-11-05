@@ -50,7 +50,7 @@ spec:
             # the explicit port the URL defaults to :80 (no listener) and every
             # reviewer call hangs ~131s on a TCP connect timeout before failing.
             - name: AI_GATEWAY_URL
-              value: "http://leartech-ai-gateway.ai-gateway.svc:8080"
+              value: "http://leartech-ai-gateway-umbrella.gateway.svc:8080"
             - name: AI_GATEWAY_API_KEY
               valueFrom:
                 secretKeyRef:
