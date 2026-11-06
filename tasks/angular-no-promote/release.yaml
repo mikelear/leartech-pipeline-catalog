@@ -1,0 +1,133 @@
+# Angular release orchestrator, NO-PROMOTE variant. Identical to
+# tasks/angular/release.yaml but WITHOUT the `jx-promote` step — the chart is
+# published and Renovate is kicked, and deployment is owned by an umbrella that
+# pins the chart (the go-no-promote pattern, for Angular SPAs). Use this for an
+# Angular service whose namespace is managed by an umbrella (e.g. the Ship
+# Proven web console in the ship-proven umbrella), NOT jx environment promotion.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: release
+spec:
+  pipelineSpec:
+    tasks:
+    - name: from-build-pack
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          # Pod-level scheduling = sum of all step containers. Keep modest
+          # so the pod fits on a standard AKS/GKE node.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
+          name: ""
+          resources: {}
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.116
+          name: jx-variables
+          resources: {}
+          script: |
+            #!/usr/bin/env sh
+            jx gitops variables
+        - image: node:22-alpine
+          name: build-npm-install
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          script: |
+            #!/bin/sh
+            set -e
+            apk add --no-cache git
+            npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+            # `ng build` is invoked inside the Dockerfile (runs in kaniko),
+            # so this step just proves deps resolve + exits. Keeps the
+            # fail-fast benefit without duplicating the build work.
+        - image: gcr.io/kaniko-project/executor:v1.24.0-debug
+          name: build-container-build
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+          script: |
+            #!/busybox/sh
+            source .jx/variables.sh
+            cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
+            # Layer cache — see go/release.yaml for rationale. Angular's
+            # multi-stage Dockerfile (npm-install → ng-build → nginx) benefits
+            # particularly: the heavy npm-install + node_modules layers cache
+            # cleanly between builds when package-lock.json is unchanged.
+            /kaniko/executor $KANIKO_FLAGS \
+              --cache=true \
+              --cache-repo="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/kaniko-cache" \
+              --cache-ttl=168h \
+              --context=/workspace/source \
+              --dockerfile="${DOCKERFILE_PATH:-Dockerfile}" \
+              --destination="$PUSH_CONTAINER_REGISTRY/$DOCKER_REGISTRY_ORG/$APP_NAME:$VERSION"
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/promote-cluster-suffixed.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/helm-release.yaml@main
+          name: ""
+          resources: {}
+        - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/cosign-sign.yaml@main
+          name: ""
+          resources: {}
+        # NOTE: tasks/release/jx-promote.yaml is intentionally OMITTED here — no
+        # `jx promote --all` to jx-staging. Deploy is via the umbrella that pins
+        # this chart. Kick the Renovate cronjob so the umbrella gets a bump PR
+        # within minutes — the go-no-promote pattern.
+        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+          name: trigger-renovate
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -e
+            # ONE RUN PER REPO, NOT PER SECOND. A stable per-repo name
+            # de-duplicates: a release while a run is in flight does not stack
+            # another. (See tasks/go-no-promote/release.yaml for the incident
+            # this guards against.)
+            JOB="renovate-after-${REPO_NAME:-release}"
+            if kubectl -n jx get job "${JOB}" >/dev/null 2>&1; then
+              done_=$(kubectl -n jx get job "${JOB}" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}')
+              fail_=$(kubectl -n jx get job "${JOB}" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}')
+              if [ "$done_" = "True" ] || [ "$fail_" = "True" ]; then
+                kubectl -n jx delete job "${JOB}" --ignore-not-found >/dev/null 2>&1
+              fi
+            fi
+            if kubectl -n jx get job "${JOB}" >/dev/null 2>&1; then
+              echo "==> ${JOB} is still running for this repo — not stacking another (it will pick the tag up)"
+            else
+              rc=0
+              kubectl -n jx create job --from=cronjob/renovate "${JOB}" || rc=$?
+              if [ "$rc" -ne 0 ]; then
+                echo "::WARN renovate trigger exited ${rc}; the Monday cron will pick up the bump"
+              else
+                echo "==> ${JOB} created"
+              fi
+            fi
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 12h0m0s
+status: {}
