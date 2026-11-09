@@ -250,6 +250,13 @@ spec:
               # appends the machine-readable leartech-report block for agents.
               # Same sticky key per cluster as the old marker, so existing
               # comments are adopted, not duplicated.
+              VISUAL_FILE=/tmp/coverage-visual.md
+              {
+                printf '### :%s: Coverage: %s%% (threshold %s%%) \`[%s]\` — %s\n\n' "$ICON" "$TOTAL" "$THRESHOLD" "$CLUSTER_TAG" "$VERDICT"
+                printf '%s\n\n' "$DELTA_LINE"
+                printf '**Lowest-covered functions**\n\n| File | Function | Coverage |\n|---|---|---|\n%s\n' "${LOWEST}"
+              } > "$VISUAL_FILE"
+
               PRPOST_URL="https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/prpost/main.go"
               curl -fsSL "$PRPOST_URL" -o /tmp/prpost.go
               go run /tmp/prpost.go \
@@ -258,7 +265,7 @@ spec:
                 -cluster "$CLUSTER_TAG" \
                 -summary "Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) — ${VERDICT}" \
                 -metrics "coverage=${TOTAL}%,base=${BASE_TOTAL:-?},delta=${BASE_DELTA:-?}%,scope=${SCOPE}" \
-                -body-file <(printf '%s\n' "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) `[${CLUSTER_TAG}]` — ${VERDICT}" "" "${DELTA_LINE}" ""  "**Lowest-covered functions**" "" "| File | Function | Coverage |" "|---|---|---|" "${LOWEST}")
+                -body-file "$VISUAL_FILE"
             else
               echo "==> FORGE_API_URL or PULL_NUMBER unset; skipping PR coverage comment"
             fi
