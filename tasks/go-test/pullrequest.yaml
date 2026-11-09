@@ -91,6 +91,22 @@ spec:
             # module built on a newer toolchain would be TESTED on an older one.
             - name: GOTOOLCHAIN
               value: auto
+            - name: FORGE_API_URL
+              value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+            - name: LEARTECH_AUTH_SERVER_URL
+              value: https://hydra-sp-infra.jx.leartech.com
+            - name: LEARTECH_AUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_ID
+                  optional: true
+            - name: LEARTECH_AUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_SECRET
+                  optional: true
             - name: GIT_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -198,7 +214,7 @@ spec:
             # Per-cluster marker <!-- leartech-coverage-<cluster> --> so GCP
             # and Azure coexist instead of clobbering each other (mirrors
             # security-scan + ai-review conventions).
-            if [ -n "${GIT_TOKEN:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
+            if [ -n "${FORGE_API_URL:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
               apt-get update -qq && apt-get install -y -qq --no-install-recommends jq curl >/dev/null
 
               CLUSTER_TAG="${CLUSTER_ID:-unknown}"
@@ -229,52 +245,22 @@ spec:
                 DELTA_LINE=":information_source: Delta vs \`${BASE_REF}\`: ${BASE_TOTAL}% → ${TOTAL}% (\`${BASE_DELTA}%\`)"
               fi
 
-              # Build body via printf rather than HEREDOC — YAML `script: |`
-              # treats any line with less indentation than the first content
-              # line as the end of the block, so an un-indented heredoc body
-              # silently truncates the script at the catalog-parse layer
-              # (Lighthouse then skips creating the LighthouseJob — seen
-              # 2026-04-17 on PR #4 where the `test` trigger never fired).
-              BODY=$(printf '%s\n' \
-                "$MARKER" \
-                "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) \`[${CLUSTER_TAG}]\` — ${VERDICT}" \
-                "" \
-                "${DELTA_LINE}" \
-                "" \
-                "Scope: \`${SCOPE}\`" \
-                "" \
-                "**Lowest-covered functions**" \
-                "" \
-                "| File | Function | Coverage |" \
-                "|---|---|---|" \
-                "${LOWEST}" \
-                "" \
-                "_Posted by \`tasks/go-test/pullrequest.yaml\` (delegates to \`go/leartech-go.mk::test-coverage\`)._")
-
-              # ?per_page=100 so the marker search sees older comments on
-              # long-lived PRs. Without it, GitHub defaults to 30 and the
-              # sticky-patch lookup misses — duplicate comments posted.
-              API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments?per_page=100"
-              AUTH="Authorization: token ${GIT_TOKEN}"
-              ACCEPT="Accept: application/vnd.github+json"
-
-              # Find existing sticky comment (by per-cluster marker)
-              EXISTING_ID=$(curl -fsSL -H "$AUTH" -H "$ACCEPT" "$API" \
-                | jq -r --arg marker "$MARKER" '.[] | select(.body | startswith($marker)) | .id' \
-                | head -1)
-
-              PAYLOAD=$(jq -cn --arg body "$BODY" '{body: $body}')
-
-              if [ -n "$EXISTING_ID" ]; then
-                echo "==> updating existing coverage [$CLUSTER_TAG] comment $EXISTING_ID"
-                curl -fsSL -X PATCH -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" \
-                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${EXISTING_ID}" >/dev/null
-              else
-                echo "==> posting new coverage [$CLUSTER_TAG] comment"
-                curl -fsSL -X POST  -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" "$API" >/dev/null
-              fi
+              # ONE poster, not eight curl blocks: go/prpost (the catalog's Go
+              # tool) upserts the sticky comment through leartech-forge-api and
+              # appends the machine-readable leartech-report block for agents.
+              # Same sticky key per cluster as the old marker, so existing
+              # comments are adopted, not duplicated.
+              PRPOST_URL="https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/prpost/main.go"
+              curl -fsSL "$PRPOST_URL" -o /tmp/prpost.go
+              go run /tmp/prpost.go \
+                -tool coverage -check test \
+                -outcome "$([ "$MAKE_RC" -eq 0 ] && echo success || echo failure)" \
+                -cluster "$CLUSTER_TAG" \
+                -summary "Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) — ${VERDICT}" \
+                -metrics "coverage=${TOTAL}%,base=${BASE_TOTAL:-?},delta=${BASE_DELTA:-?}%,scope=${SCOPE}" \
+                -body-file <(printf '%s\n' "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) \\`[${CLUSTER_TAG}]\\` — ${VERDICT}" "" "${DELTA_LINE}" "" "Scope: \\`${SCOPE}\\`" "" "**Lowest-covered functions**" "" "| File | Function | Coverage |" "|---|---|---|" "${LOWEST}")
             else
-              echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR coverage comment"
+              echo "==> FORGE_API_URL or PULL_NUMBER unset; skipping PR coverage comment"
             fi
 
             # Propagate the make verdict — task fails iff the mk's test-coverage
