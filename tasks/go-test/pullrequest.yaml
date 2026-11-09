@@ -271,15 +271,16 @@ spec:
                 printf '**Lowest-covered functions**\n\n| File | Function | Coverage |\n|---|---|---|\n%s\n' "${LOWEST}"
               } > "$VISUAL_FILE"
 
-              PRPOST_URL="https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/prpost/main.go"
-              curl -fsSL "$PRPOST_URL" -o /tmp/prpost.go
-              go run /tmp/prpost.go \
+              mkdir -p /tmp/pp
+              curl -fsSL "https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/prpost/main.go" -o /tmp/pp/prpost.go
+              printf 'module pp\ngo 1.27\n' > /tmp/pp/go.mod
+              (cd /tmp/pp && go run prpost.go \
                 -tool coverage -check test \
                 -outcome "$([ "$MAKE_RC" -eq 0 ] && echo success || echo failure)" \
                 -cluster "$CLUSTER_TAG" \
                 -summary "Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) — ${VERDICT}" \
                 -metrics "coverage=${TOTAL}%,base=${BASE_TOTAL:-?},delta=${BASE_DELTA:-?}%,scope=${SCOPE}" \
-                -body-file "$VISUAL_FILE"
+                -body-file "$VISUAL_FILE")
             else
               echo "==> FORGE_API_URL or PULL_NUMBER unset; skipping PR coverage comment"
             fi
