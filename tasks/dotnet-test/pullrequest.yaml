@@ -41,6 +41,22 @@ spec:
               cpu: 400m
               memory: 1Gi
           env:
+            - name: FORGE_API_URL
+              value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+            - name: LEARTECH_AUTH_SERVER_URL
+              value: https://hydra-sp-infra.jx.leartech.com
+            - name: LEARTECH_AUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_ID
+                  optional: true
+            - name: LEARTECH_AUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_SECRET
+                  optional: true
             - name: GIT_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -142,27 +158,10 @@ spec:
                 "" \
                 "_Posted by \`tasks/dotnet-test/pullrequest.yaml\`._")
 
-              API="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments?per_page=100"
-              AUTH="Authorization: token ${GIT_TOKEN}"
-              ACCEPT="Accept: application/vnd.github+json"
-
-              EXISTING_ID=$(curl -fsSL -H "$AUTH" -H "$ACCEPT" "$API" \
-                | jq -r --arg marker "$MARKER" '.[] | select(.body | startswith($marker)) | .id' \
-                | head -1)
-              PAYLOAD=$(jq -cn --arg body "$BODY" '{body: $body}')
-
-              if [ -n "$EXISTING_ID" ]; then
-                echo "==> updating existing coverage [$CLUSTER_TAG] comment $EXISTING_ID"
-                curl -fsSL -X PATCH -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" \
-                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${EXISTING_ID}" >/dev/null
-              else
-                echo "==> posting new coverage [$CLUSTER_TAG] comment"
-                curl -fsSL -X POST -H "$AUTH" -H "$ACCEPT" -d "$PAYLOAD" "$API" >/dev/null
-              fi
-            else
-              echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR coverage comment"
-            fi
-
+              # One Go poster (go/prpost) via leartech-forge-api: sticky key adopts the
+              # old marker and the body gains the machine-readable leartech-report block.
+              mkdir -p /tmp/pp && curl -fsSL "https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/prpost/main.go" -o /tmp/pp/prpost.go && printf 'module pp\ngo 1.27\n' > /tmp/pp/go.mod
+              (cd /tmp/pp && go run prpost.go -tool coverage -check test -cluster "$CLUSTER_TAG" -outcome "$( [ "$STATUS" = "fail" ] && echo failure || echo success )" -summary "Coverage: ${TOTAL}% — ${STATUS}" -body-file /dev/stdin <<<"$BODY")
             if [ "$STATUS" = "fail" ]; then
               echo "FAIL: coverage ${TOTAL}% is below threshold ${THRESHOLD}%"
               exit 1

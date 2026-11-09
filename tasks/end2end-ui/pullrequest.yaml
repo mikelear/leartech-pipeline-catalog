@@ -45,6 +45,22 @@ spec:
           env:
           - name: HOME
             value: /tekton/home
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
           - name: GIT_TOKEN
             valueFrom:
               secretKeyRef:
@@ -126,23 +142,9 @@ spec:
 
             # ── Helper: post/update sticky PR comment ───────────────────
             post_sticky_once() {
-              local body="$1"
-              local api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments"
-              local existing
-              existing=$(curl -sS -H "Authorization: token ${GIT_TOKEN}" "$api" \
-                | jq -r ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -1)
-              if [ -n "$existing" ]; then
-                curl -sS -X PATCH -H "Authorization: token ${GIT_TOKEN}" \
-                  -H "Content-Type: application/json" \
-                  -d "$(jq -n --arg b "$body" '{body: $b}')" \
-                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${existing}" >/dev/null
-                echo "==> updating existing end2end-ui [$CLUSTER_TAG] comment $existing"
-              else
-                curl -sS -X POST -H "Authorization: token ${GIT_TOKEN}" \
-                  -H "Content-Type: application/json" \
-                  -d "$(jq -n --arg b "$body" '{body: $b}')" "$api" >/dev/null
-                echo "==> posting new end2end-ui [$CLUSTER_TAG] comment"
-              fi
+              local body="$1" outcome="${2:-success}" summary="${3:-end2end-ui update}"
+              mkdir -p /tmp/pp && curl -fsSL "https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/prpost/main.go" -o /tmp/pp/prpost.go && printf 'module pp\ngo 1.27\n' > /tmp/pp/go.mod
+              (cd /tmp/pp && go run prpost.go -tool end2end-ui -check end2end-ui -outcome "$outcome" -cluster "$CLUSTER_TAG" -summary "$summary" -body-file /dev/stdin <<<"$body")
             }
 
             # A PR comment is a notification, not a verdict. Delivery must never decide
@@ -150,7 +152,7 @@ spec:
             # error object instead of an array (HTTP 503 on 2026-08-17).
             post_sticky() {
               local body="$1"
-              if [ -z "$GIT_TOKEN" ] || [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ] || [ -z "$PULL_NUMBER" ]; then
+              if [ -z "$FORGE_API_URL" ] || [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ] || [ -z "$PULL_NUMBER" ]; then
                 echo "(skipping PR comment — missing env)"
                 return 0
               fi

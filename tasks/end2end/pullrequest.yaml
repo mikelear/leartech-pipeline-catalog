@@ -608,28 +608,21 @@ spec:
             MARKER="<!-- leartech-end2end-${CLUSTER_TAG} -->"
 
             # ── helper: post/patch sticky comment ──────────────────────
+            # One Go tool (go/prpost) through leartech-forge-api: the sticky key
+            # adopts the old marker, and the body gains the machine-readable
+            # leartech-report block for agents alongside the human markdown.
             post_sticky_once() {
-              local body="$1"
-              # ?per_page=100 so the marker search sees older comments on
-              # long-lived PRs. Without it GitHub defaults to 30 and the
-              # sticky-patch lookup misses — duplicate comments posted.
-              local api="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/${PULL_NUMBER}/comments?per_page=100"
-              local auth="Authorization: token ${GIT_TOKEN}"
-              local accept="Accept: application/vnd.github+json"
-              local existing_id
-              existing_id=$(curl -fsSL -H "$auth" -H "$accept" "$api" \
-                | jq -r --arg marker "$MARKER" '.[] | select(.body | startswith($marker)) | .id' \
-                | head -1)
-              local payload
-              payload=$(jq -cn --arg body "$body" '{body: $body}')
-              if [ -n "$existing_id" ]; then
-                echo "==> updating existing end2end [$CLUSTER_TAG] comment $existing_id"
-                curl -fsSL -X PATCH -H "$auth" -H "$accept" -d "$payload" \
-                  "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${existing_id}" >/dev/null
-              else
-                echo "==> posting new end2end [$CLUSTER_TAG] comment"
-                curl -fsSL -X POST -H "$auth" -H "$accept" -d "$payload" "$api" >/dev/null
+              local body="$1" outcome="$2" summary="$3"
+              if [ ! -f /tmp/pp/prpost.go ]; then
+                mkdir -p /tmp/pp
+                curl -fsSL "https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/prpost/main.go" -o /tmp/pp/prpost.go
+                printf 'module pp\ngo 1.27\n' > /tmp/pp/go.mod
               fi
+              (cd /tmp/pp && go run prpost.go \
+                -tool end2end -check end2end \
+                -outcome "${outcome:-success}" -cluster "$CLUSTER_TAG" \
+                -summary "${summary:-end2end update}" \
+                -body-file /dev/stdin <<<"$body")
             }
 
             # A PR comment is a notification, not a verdict. Delivery failure must
@@ -637,8 +630,8 @@ spec:
             # "not configured" note hit HTTP 503 while the step had nothing to test.
             post_sticky() {
               local body="$1"
-              if [ -z "${GIT_TOKEN:-}" ] || [ -z "${PULL_NUMBER:-}" ]; then
-                echo "==> GIT_TOKEN or PULL_NUMBER unset; skipping PR comment"
+              if [ -z "${FORGE_API_URL:-}" ] || [ -z "${PULL_NUMBER:-}" ]; then
+                echo "==> FORGE_API_URL or PULL_NUMBER unset; skipping PR comment"
                 return 0
               fi
               local attempt
