@@ -67,7 +67,7 @@ spec:
 
         # Non-alpine golang image: -race needs cgo + gcc which alpine lacks
         # by default. Slightly bigger image, but no apk add build-base.
-        - image: golang:1.27.2
+        - image: golang:1.27.3
           name: go-test
           resources:
             # `go test ./... -race` + envtest (real apiserver+etcd) is memory-heavy;

@@ -48,7 +48,7 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.116
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.123
           name: jx-variables
           resources: {}
           script: |
@@ -100,7 +100,7 @@ spec:
           resources: {}
         # Platform-namespace promote (replaces jx-promote). Opens a GitOps PR
         # bumping the pin in the service's own helmfile, per-cluster (CLUSTER_ID).
-        - image: ghcr.io/mikelear/platform-promote:0.54.49
+        - image: ghcr.io/mikelear/platform-promote:0.54.59
           name: platform-promote
           resources: {}
           env:

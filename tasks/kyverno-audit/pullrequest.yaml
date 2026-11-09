@@ -56,7 +56,7 @@ spec:
           resources: {}
           workingDir: /workspace/source
         steps:
-        - image: ghcr.io/kyverno/kyverno-cli:v1.19.1
+        - image: ghcr.io/kyverno/kyverno-cli:v1.19.2
           name: kyverno-audit
           resources:
             requests:
