@@ -258,7 +258,7 @@ spec:
                 -cluster "$CLUSTER_TAG" \
                 -summary "Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) — ${VERDICT}" \
                 -metrics "coverage=${TOTAL}%,base=${BASE_TOTAL:-?},delta=${BASE_DELTA:-?}%,scope=${SCOPE}" \
-                -body-file <(printf '%s\n' "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) `[${CLUSTER_TAG}]` — ${VERDICT}" "" "${DELTA_LINE}" "" "Scope: `${SCOPE}`" "" "**Lowest-covered functions**" "" "| File | Function | Coverage |" "|---|---|---|" "${LOWEST}")
+                -body-file <(printf '%s\n' "### :${ICON}: Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) `[${CLUSTER_TAG}]` — ${VERDICT}" "" "${DELTA_LINE}" ""  "**Lowest-covered functions**" "" "| File | Function | Coverage |" "|---|---|---|" "${LOWEST}")
             else
               echo "==> FORGE_API_URL or PULL_NUMBER unset; skipping PR coverage comment"
             fi
