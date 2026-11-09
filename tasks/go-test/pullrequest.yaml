@@ -157,6 +157,16 @@ spec:
             # threshold verdict, and (when REPO_OWNER/REPO_NAME + network
             # available) base-branch delta. Preserve exit code — make exits
             # non-zero on floor breach or delta regression.
+            # prpost (below) needs LEARTECH_AUTH_* to mint a forge-api token, but
+            # they are step-scoped and would otherwise leak into `go test` — where
+            # the template's TestInertAuthEnvSet asserts they are UNSET (an
+            # inbound-only service does not read them). Stash + unset for the test
+            # run; restore for the prpost block.
+            _STASH_AUTH_SERVER_URL="${LEARTECH_AUTH_SERVER_URL:-}"
+            _STASH_AUTH_CLIENT_ID="${LEARTECH_AUTH_CLIENT_ID:-}"
+            _STASH_AUTH_CLIENT_SECRET="${LEARTECH_AUTH_CLIENT_SECRET:-}"
+            unset LEARTECH_AUTH_SERVER_URL LEARTECH_AUTH_CLIENT_ID LEARTECH_AUTH_CLIENT_SECRET
+
             set +e
             make -f /tmp/leartech-go.mk test-coverage \
               COVERAGE_THRESHOLD="$THRESHOLD" \
@@ -214,6 +224,10 @@ spec:
             # Per-cluster marker <!-- leartech-coverage-<cluster> --> so GCP
             # and Azure coexist instead of clobbering each other (mirrors
             # security-scan + ai-review conventions).
+            export LEARTECH_AUTH_SERVER_URL="$_STASH_AUTH_SERVER_URL"
+            export LEARTECH_AUTH_CLIENT_ID="$_STASH_AUTH_CLIENT_ID"
+            export LEARTECH_AUTH_CLIENT_SECRET="$_STASH_AUTH_CLIENT_SECRET"
+
             if [ -n "${FORGE_API_URL:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
               apt-get update -qq && apt-get install -y -qq --no-install-recommends jq curl >/dev/null
 
