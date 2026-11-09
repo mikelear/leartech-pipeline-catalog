@@ -266,7 +266,7 @@ spec:
               # comments are adopted, not duplicated.
               VISUAL_FILE=/tmp/coverage-visual.md
               {
-                printf '### :%s: Coverage: %s%% (threshold %s%%) \`[%s]\` — %s\n\n' "$ICON" "$TOTAL" "$THRESHOLD" "$CLUSTER_TAG" "$VERDICT"
+                printf '### :%s: Coverage: %s%% (threshold %s%%) `[%s]` — %s\n\n' "$ICON" "$TOTAL" "$THRESHOLD" "$CLUSTER_TAG" "$VERDICT"
                 printf '%s\n\n' "$DELTA_LINE"
                 printf '**Lowest-covered functions**\n\n| File | Function | Coverage |\n|---|---|---|\n%s\n' "${LOWEST}"
               } > "$VISUAL_FILE"
