@@ -1,0 +1,80 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: liveforge
+spec:
+  pipelineSpec:
+    tasks:
+    - name: liveforge
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          name: ""
+          resources: {}
+          workingDir: /workspace/source
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        # The aggressive tier: the whole forge surface against the estate's own
+        # Forgejo (https://forgejo.jx.leartech.com) — unlimited, local, no GitHub
+        # rate limits. Creates throwaway repos+PRs under it-test and deletes them.
+        # The Go modules live in leartech-go-common (driver tier) and
+        # leartech-forge-api (route tier); this gate clones them at the PR's
+        # pinned versions and runs their -tags liveforge suites. A failure is a
+        # REAL forge regression, not a mock disagreement.
+        - image: golang:1.27.2
+          name: liveforge-drivers-and-routes
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          env:
+          - name: FORGE_BASE
+            value: https://forgejo.jx.leartech.com
+          - name: FORGEJO_IT_ORG
+            value: it-test
+          - name: FORGE_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: forgejo-liveforge-token
+                key: token
+                optional: true
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+            if [ -z "${FORGE_TOKEN:-}" ]; then
+              echo "==> forgejo-liveforge-token absent on this cluster; SKIPPING (optional gate)"
+              exit 0
+            fi
+            fail=0
+            echo "=== driver tier (leartech-go-common) ==="
+            git clone --depth 1 https://github.com/mikelear/leartech-go-common /tmp/gc
+            (cd /tmp/gc && FORGE_BASE=$FORGE_BASE FORGE_TOKEN=$FORGE_TOKEN \
+              go test -tags liveforge ./test/liveforge/... -count=1 -timeout 10m) || fail=1
+            echo "=== route tier (leartech-forge-api) ==="
+            git clone --depth 1 https://github.com/mikelear/leartech-forge-api /tmp/fa
+            (cd /tmp/fa && FORGE_BASE=$FORGE_BASE FORGE_TOKEN=$FORGE_TOKEN \
+              go test -tags liveforge ./test/liveforge/... -count=1 -timeout 10m) || fail=1
+            exit $fail
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}

@@ -15,6 +15,16 @@ spec:
     always_run: true
     optional: false
     source: checkers-image.yaml
+  - name: test
+    context: "test"
+    always_run: true
+    optional: false
+    source: test.yaml
+  - name: liveforge
+    context: "liveforge"
+    always_run: true
+    optional: false
+    source: liveforge.yaml
   postsubmits:
   # The catalog had no postsubmit at all until now -- it published nothing,
   # because everything it provided was fetched from raw.githubusercontent at
