@@ -1,0 +1,84 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: test
+spec:
+  pipelineSpec:
+    tasks:
+    - name: go-test
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          name: ""
+          resources: {}
+          workingDir: /workspace/source
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        # Every go/<tool> module is its own unit; this gate runs them all.
+        # The catalog ships the estate's quality gates — a broken gate tool is
+        # worse than a broken app, so the tools gate themselves here.
+        - image: golang:1.27.2
+          name: go-test-all-tools
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          env:
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+            fail=0
+            for mod in go/*/go.mod; do
+              dir=$(dirname "$mod")
+              echo "=== go test $dir ==="
+              if ! (cd "$dir" && go test ./... ); then
+                echo "FAIL: $dir"
+                fail=1
+              fi
+            done
+            exit $fail
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 1h0m0s
+status: {}
