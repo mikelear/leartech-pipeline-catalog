@@ -84,7 +84,7 @@ spec:
           script: |
             #!/bin/sh
             set -eo pipefail
-            apk add --no-cache git jq curl chromium nss freetype harfbuzz ttf-freefont
+            apk add --no-cache git jq curl chromium nss freetype harfbuzz ttf-freefont go
 
             THRESHOLD="${COVERAGE_THRESHOLD:-60.0}"
 
