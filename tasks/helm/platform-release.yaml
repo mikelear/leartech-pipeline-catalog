@@ -48,7 +48,7 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.123
           name: jx-variables
           resources: {}
           script: |
@@ -104,7 +104,7 @@ spec:
         # PR within minutes (not next Monday) — the go-common pattern. Idempotent;
         # non-fatal (the weekly cron still picks it up). A service/umbrella that
         # sits under an umbrella RELIES on this to close the release loop fast.
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.123
           name: trigger-renovate
           resources: {}
           script: |

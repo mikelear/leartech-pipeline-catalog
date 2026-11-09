@@ -93,7 +93,7 @@ spec:
         # `jx promote --all` to jx-staging. Deploy is via the umbrella that pins
         # this chart. Kick the Renovate cronjob so the umbrella gets a bump PR
         # within minutes — the go-no-promote pattern.
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.123
           name: trigger-renovate
           resources: {}
           script: |

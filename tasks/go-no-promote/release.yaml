@@ -94,7 +94,7 @@ spec:
         # deployment is owned by an umbrella publishes its chart and nothing
         # else; the umbrella's pin bump IS the deploy trigger, so this kick is
         # what closes the loop fast.
-        - image: ghcr.io/jenkins-x/jx-boot:3.16.59
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.123
           name: trigger-renovate
           resources: {}
           script: |
