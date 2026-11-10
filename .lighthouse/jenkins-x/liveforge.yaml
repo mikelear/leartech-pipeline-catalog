@@ -55,6 +55,10 @@ spec:
           script: |
             #!/usr/bin/env bash
             set -euo pipefail
+            # Trim: a GSM version written with a trailing newline makes the
+            # Authorization header invalid and the failure reads as forge-down.
+            FORGE_TOKEN="$(printf '%s' "$FORGE_TOKEN" | tr -d '\r\n')"
+            export FORGE_TOKEN
             if [ -z "${FORGE_TOKEN:-}" ]; then
               echo "==> forgejo-liveforge-token absent on this cluster; SKIPPING (optional gate)"
               exit 0
