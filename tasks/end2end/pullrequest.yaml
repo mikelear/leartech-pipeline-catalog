@@ -1179,51 +1179,26 @@ spec:
             #!/usr/bin/env bash
             # THE end2end runner. One copy, for every repo.
             #
-            # This script existed in 14 repos as five different programs — the same runner
-            # at five different ages. Measured 2026-09-13, hashing executable lines only:
-            #
-            #   10bec0ea  4 repos   ai-gateway, artifact-api, go-service-template, mcp-servers
-            #   90853a68  6 repos   dotnet/rust templates, gate, lighthouse-pr-events,
-            #                       plan-api, qa-canary
-            #   7c77ef19  2 repos   angular template, ship-proven-portal
-            #   16d33b51  1 repo    auth-service
-            #   1acf4dd3  1 repo    maestro
-            #
-            # None of the differences were repo-specific logic. They were age. Two fixes
-            # made in one afternoon reached four repos and six repos respectively, and the
-            # gap between them is where bugs live: the truncating-tail defect — a failing
-            # check reporting only its last three lines, so the diagnosis it had already
-            # written was thrown away — sat in all fourteen for months and was fixed in
-            # three.
-            #
-            # What it does, and the three outcomes it distinguishes:
-            #
-            #   exit 0   pass
-            #   exit 77  SKIP — the scenario does not apply in this environment. Counted as
-            #            neither pass nor fail, with the reason carried into results.json,
-            #            because the same packs run against a PR preview AND against
-            #            staging and some scenarios only exist in one. A preview-only check
-            #            exiting 1 on staging sets Arrival.phase=Failed and turns the
-            #            qa-gate red for a service that is fine.
-            #   other    fail, and the check's WHOLE log is printed, not the three lines
-            #            kept for results.json
-            #
+            # The runner's logic — what an exit code MEANS (pass / skip-77 / fail), the
+            # name stripping, the log tails, the empty/skip/green matrix, the doc-fragment
+            # metadata — lives in go/e2erun, pinned by its Go tests. This script is the
+            # executor seam: it resolves the binary (built into the leartech-checkers
+            # image; /workspace/bin on the pipeline) and runs it against the repo's pack
+            # directory. The verdict rules are tested once, in Go, not re-implemented here.
             set -eo pipefail
-            # The directory holding this repo's 0X-*.sh checks. Defaults to ./end2end so
-            # an interactive run needs no argument; the pipeline passes it explicitly.
             SCRIPT_DIR="$(cd "${1:-end2end}" && pwd)"
             cd "$SCRIPT_DIR/.."
-
+            
             echo "[end2end] preview=${PREVIEW_URL:-<unset>} ns=${PREVIEW_NAMESPACE:-<unset>} pr=${PULL_NUMBER:-<unset>}"
-
-            # THE RUNNER IS go/e2erun — the verdict rules (skip-77, name stripping,
-            # log tails, empty/skip/green matrix, doc-fragment metadata) live in
-            # Go with the matrix pinned by tests; this shell is orchestration only.
-            RC=0
-            /workspace/bin/e2erun "$SCRIPT_DIR" || RC=$?
-            results_file="$SCRIPT_DIR/results.json"
-            [ -f "$results_file" ] && cat "$results_file"
-            exit $RC
+            
+            BIN="$(command -v e2erun || true)"
+            [ -z "$BIN" ] && [ -x /workspace/bin/e2erun ] && BIN=/workspace/bin/e2erun
+            if [ -z "$BIN" ]; then
+              echo "FAIL: e2erun not found (PATH or /workspace/bin). The checkers image ships it; the pipeline's provide-e2erun step stages it." >&2
+              exit 127
+            fi
+            
+            exec "$BIN" "$SCRIPT_DIR"
             LEARTECH_RUNNER
             chmod +x /workspace/source/leartech-end2end-run.sh
 

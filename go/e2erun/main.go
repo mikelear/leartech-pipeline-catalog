@@ -133,7 +133,14 @@ func RunPack(dir string) Results {
 		success = true
 		summary = fmt.Sprintf("%d/%d checks passed, %d skipped — nothing applicable ran in this environment", passed, total, skipped)
 	case failed > 0:
-		summary = fmt.Sprintf("%d/%d checks passed", passed, total)
+		// The skip count still matters on a failing run: it separates
+		// "1 of 2 applicable checks failed" from "1 failed, 1 not applicable
+		// here" — pinned by the runner contract suite.
+		if skipped > 0 {
+			summary = fmt.Sprintf("%d/%d checks passed, %d skipped", passed, total, skipped)
+		} else {
+			summary = fmt.Sprintf("%d/%d checks passed", passed, total)
+		}
 	case failed == 0:
 		success = true
 		if skipped > 0 {

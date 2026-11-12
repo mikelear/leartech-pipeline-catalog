@@ -10,6 +10,12 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 RUNNER="$PWD/run.sh"
 
+# The runner delegates to go/e2erun; build it once and put it on PATH so the
+# fixtures exercise the SAME binary the pipeline runs.
+E2ERUN_DIR="$(cd ../go/e2erun && pwd)"
+( cd "$E2ERUN_DIR" && go build -o /tmp/e2erun-test . ) || { echo "FAIL: e2erun did not build" >&2; exit 1; }
+export PATH="/tmp:$PATH"; ln -sf /tmp/e2erun-test /tmp/e2erun
+
 rc=0
 fail() { echo "FAIL: $*" >&2; rc=1; }
 ok()   { echo "  ok   $*"; }
