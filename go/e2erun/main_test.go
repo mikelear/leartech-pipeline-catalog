@@ -40,7 +40,7 @@ func TestRunPack_PassFailSkipMatrix(t *testing.T) {
 	if res.Tests[1].Message == "(no output)" {
 		t.Fatal("a failure must carry the log tail, not the empty placeholder")
 	}
-	if res.Summary != "1/2 checks passed" {
+	if res.Summary != "1/2 checks passed, 1 skipped" {
 		t.Fatalf("summary=%q", res.Summary)
 	}
 }
