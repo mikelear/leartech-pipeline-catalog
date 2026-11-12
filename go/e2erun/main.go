@@ -42,6 +42,41 @@ type Results struct {
 	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
+// metadataFor assembles the metadata object from the environment the runner
+// historically built in jq: preview_url + version, plus any end2end/doc/*.md
+// fragments concatenated into doc.
+//
+// proven-by: TestMetadataFor_MergesDocFragmentsAndEnv
+func metadataFor(dir string) json.RawMessage {
+	meta := map[string]any{}
+	if v := os.Getenv("PREVIEW_URL"); v != "" {
+		meta["preview_url"] = v
+	}
+	if v := os.Getenv("VERSION"); v != "" {
+		meta["version"] = v
+	}
+	docs, _ := filepath.Glob(filepath.Join(dir, "doc", "*.md"))
+	if len(docs) > 0 {
+		sort.Strings(docs)
+		parts := make([]string, 0, len(docs))
+		for _, d := range docs {
+			b, err := os.ReadFile(d)
+			if err == nil {
+				parts = append(parts, string(b))
+			}
+		}
+		if len(parts) > 0 {
+			meta["doc"] = strings.Join(parts, "\n")
+		}
+		fmt.Printf("[end2end] collected %d doc fragment(s) for the PR comment\n", len(docs))
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(meta)
+	return b
+}
+
 // RunPack executes every NN-*.sh under dir, in order, and returns the results.
 //
 // proven-by: TestRunPack_PassFailSkipMatrix
@@ -98,7 +133,14 @@ func RunPack(dir string) Results {
 		success = true
 		summary = fmt.Sprintf("%d/%d checks passed, %d skipped — nothing applicable ran in this environment", passed, total, skipped)
 	case failed > 0:
-		summary = fmt.Sprintf("%d/%d checks passed", passed, total)
+		// The skip count still matters on a failing run: it separates
+		// "1 of 2 applicable checks failed" from "1 failed, 1 not applicable
+		// here" — pinned by the runner contract suite.
+		if skipped > 0 {
+			summary = fmt.Sprintf("%d/%d checks passed, %d skipped", passed, total, skipped)
+		} else {
+			summary = fmt.Sprintf("%d/%d checks passed", passed, total)
+		}
 	case failed == 0:
 		success = true
 		if skipped > 0 {
@@ -132,6 +174,7 @@ func main() {
 		dir = os.Args[1]
 	}
 	res := RunPack(dir)
+	res.Metadata = metadataFor(dir)
 	b, _ := json.MarshalIndent(res, "", "  ")
 	out := filepath.Join(dir, "results.json")
 	if err := os.WriteFile(out, b, 0o644); err != nil {
