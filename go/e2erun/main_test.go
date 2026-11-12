@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -104,5 +105,36 @@ func TestResultsJSONShape(t *testing.T) {
 		if _, ok := back[k]; !ok {
 			t.Fatalf("results.json missing %q", k)
 		}
+	}
+}
+
+func TestMetadataFor_MergesDocFragmentsAndEnv(t *testing.T) {
+	t.Setenv("PREVIEW_URL", "https://p.example")
+	t.Setenv("VERSION", "0.0.1-PR-9-1")
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "doc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "doc", "a-what.md"), []byte("what ran"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "doc", "b-how.md"), []byte("how it ran"), 0o644)
+	raw := metadataFor(dir)
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["preview_url"] != "https://p.example" || m["version"] != "0.0.1-PR-9-1" {
+		t.Fatalf("env half wrong: %+v", m)
+	}
+	doc, _ := m["doc"].(string)
+	if !strings.Contains(doc, "what ran") || !strings.Contains(doc, "how it ran") {
+		t.Fatalf("doc fragments not merged in order: %q", doc)
+	}
+}
+
+func TestMetadataFor_EmptyIsNil(t *testing.T) {
+	t.Setenv("PREVIEW_URL", "")
+	t.Setenv("VERSION", "")
+	if got := metadataFor(t.TempDir()); got != nil {
+		t.Fatalf("no env + no docs must omit metadata, got %s", got)
 	}
 }
