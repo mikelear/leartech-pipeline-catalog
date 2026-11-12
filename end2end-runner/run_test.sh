@@ -10,11 +10,19 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 RUNNER="$PWD/run.sh"
 
-# The runner delegates to go/e2erun; build it once and put it on PATH so the
-# fixtures exercise the SAME binary the pipeline runs.
-E2ERUN_DIR="$(cd ../go/e2erun && pwd)"
-( cd "$E2ERUN_DIR" && go build -o /tmp/e2erun-test . ) || { echo "FAIL: e2erun did not build" >&2; exit 1; }
-export PATH="/tmp:$PATH"; ln -sf /tmp/e2erun-test /tmp/e2erun
+# The runner delegates to go/e2erun. Build it when a Go toolchain is present
+# (the test gate) so the fixtures exercise the SAME binary the pipeline runs;
+# without one (the lint gate's container) fall back to any e2erun already on
+# PATH, and skip with a visible note when neither exists — the Go suite in
+# go/e2erun is the authoritative coverage there.
+if command -v go >/dev/null 2>&1; then
+  E2ERUN_DIR="$(cd ../go/e2erun && pwd)"
+  ( cd "$E2ERUN_DIR" && go build -o /tmp/e2erun-test . ) || { echo "FAIL: e2erun did not build" >&2; exit 1; }
+  ln -sf /tmp/e2erun-test /tmp/e2erun; export PATH="/tmp:$PATH"
+elif ! command -v e2erun >/dev/null 2>&1; then
+  echo "SKIP: no go toolchain and no e2erun on PATH; the Go suite in go/e2erun covers the contract"
+  exit 0
+fi
 
 rc=0
 fail() { echo "FAIL: $*" >&2; rc=1; }
