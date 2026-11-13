@@ -475,7 +475,7 @@ spec:
         #
         # Runs BEFORE the pack: this reads two files, and there is no reason to
         # spend a preview deploy and a 30-minute timeout discovering it after.
-        - image: ghcr.io/mikelear/leartech-checkers:0.6.2
+        - image: ghcr.io/mikelear/leartech-checkers:0.11.35
           name: e2e-skip-contract
           resources: {}
           script: |
@@ -485,7 +485,7 @@ spec:
         # The pack runner, from the pinned checkers image: one step copies the
         # binary into the shared workspace so the debian step (which owns the
         # consumer-script contract) runs it without a Go toolchain.
-        - image: ghcr.io/mikelear/leartech-checkers:0.6.2
+        - image: ghcr.io/mikelear/leartech-checkers:0.11.35
           name: provide-e2erun
           resources: {}
           workingDir: /workspace/source
@@ -493,6 +493,11 @@ spec:
             #!/bin/sh
             set -eu
             mkdir -p /workspace/bin
+            if [ ! -x /usr/local/bin/e2erun ]; then
+              echo "FAIL: /usr/local/bin/e2erun missing from ghcr.io/mikelear/leartech-checkers:0.11.35" >&2
+              echo "      bump the pin to a release that carries it (release-checkers asserts 11 binaries)" >&2
+              exit 1
+            fi
             cp /usr/local/bin/e2erun /workspace/bin/e2erun
             test -x /workspace/bin/e2erun
             echo "==> provided /workspace/bin/e2erun"
