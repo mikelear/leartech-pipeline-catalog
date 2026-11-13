@@ -64,6 +64,10 @@ spec:
             #!/usr/bin/env bash
             set -euo pipefail
             fail=0
+            # The pin gate FIRST: a bad image pin fails PRs across the whole
+            # estate, so it is checked before anything slower.
+            echo "=== pincheck tasks/end2end ==="
+            (cd go/pincheck && go run . -task ../../tasks/end2end/pullrequest.yaml) || fail=1
             for mod in go/*/go.mod; do
               dir=$(dirname "$mod")
               echo "=== go test $dir ==="
