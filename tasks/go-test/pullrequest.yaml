@@ -189,6 +189,10 @@ spec:
             # the make log (mk emits a "base=X% pr=Y% delta=Z%" line or
             # a "base-branch coverage unavailable" line).
             TOTAL=$(go tool cover -func=cover.out | awk '/^total:/ {print $3}' | sed 's/%//')
+            # A run that produced no cover.out (no module, no tests, or the mk
+            # aborting) leaves TOTAL empty — the comment then reads "Coverage: %"
+            # which names nothing. Report the honest zero.
+            [ -z "$TOTAL" ] && TOTAL=0.0
 
             BASE_TOTAL=""
             BASE_DELTA=""
