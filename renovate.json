@@ -68,6 +68,18 @@
       ],
       "automerge": true,
       "automergeStrategy": "squash"
+    },
+    {
+      "description": "Auto-merge leartech-checkers image bumps as soon as they land. The catalog's tasks pin this image for the gate binaries (commentgate, e2erun, pincheck...); a stale pin fails PRs estate-wide (the provide-e2erun 'cp: can't stat' incident pinned 0.6.2 while e2erun shipped in 0.11.35 \u2014 every end2end run in the estate red, all catalog gates green). Bumps carry MORE binaries, never fewer: the image's own build asserts the full set and fails otherwise.",
+      "matchPackageNames": [
+        "ghcr.io/mikelear/leartech-checkers"
+      ],
+      "groupName": "leartech-checkers",
+      "schedule": [
+        "at any time"
+      ],
+      "automerge": true,
+      "automergeStrategy": "squash"
     }
   ],
   "customManagers": [
