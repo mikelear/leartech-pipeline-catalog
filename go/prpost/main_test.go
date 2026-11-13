@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -119,4 +120,39 @@ func TestBearerForForge_PrefersTheStaticToken(t *testing.T) {
 	if got := bearerForForge(context.Background()); got != "static-tok" {
 		t.Fatalf("bearer = %q", got)
 	}
+}
+
+// The gitea path is sticky by MARKER in the body (forge-api's sticky_key does
+// not exist on a raw Gitea API): second post PATCHes the same comment.
+func TestUpsertGitea_StickyByMarker(t *testing.T) {
+	var posts []capturedReq
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		posts = append(posts, capturedReq{Method: r.Method, URL: r.URL.Path, Body: string(b)})
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
+			w.Write([]byte(`[{"id":55,"body":"<!-- leartech-end2end-gcp --> old"}]`))
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/issues/comments/55"):
+			w.Write([]byte(`{"id":55}`))
+		case r.Method == http.MethodPost:
+			w.Write([]byte(`{"id":56}`))
+		default:
+			w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	if err := UpsertGitea(context.Background(), srv.URL, "tok", "it-test", "lh-test", "7", "<!-- leartech-end2end-gcp -->\nnew body", "<!-- leartech-end2end-gcp -->"); err != nil {
+		t.Fatal(err)
+	}
+	if len(posts) != 2 || posts[1].Method != http.MethodPatch || !strings.Contains(posts[1].URL, "/issues/comments/55") {
+		t.Fatalf("marker must PATCH the existing comment: %+v", posts)
+	}
+	if !strings.Contains(posts[1].Body, "new body") {
+		t.Fatalf("patch body wrong: %s", posts[1].Body)
+	}
+}
+
+type capturedReq struct {
+	Method, URL, Body string
 }

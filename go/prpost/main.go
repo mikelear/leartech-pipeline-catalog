@@ -68,8 +68,8 @@ func main() {
 	api := flag.String("api", envOr("FORGE_API_URL", ""), "leartech-forge-api base URL")
 	flag.Parse()
 
-	if *tool == "" || *outcome == "" || *api == "" {
-		fmt.Fprintln(os.Stderr, "prpost: -tool, -outcome and FORGE_API_URL/-api are required")
+	if *tool == "" || *outcome == "" || (*api == "" && envOr("FORGE_KIND", "") == "") {
+		fmt.Fprintln(os.Stderr, "prpost: -tool, -outcome and FORGE_API_URL/-api (or FORGE_KIND=gitea) are required")
 		os.Exit(2)
 	}
 	rep := Report{
@@ -109,6 +109,19 @@ func main() {
 
 	body := Render(*tool, visual, rep)
 	key := StickyKey(*tool, *cluster)
+	if kind := envOr("FORGE_KIND", ""); kind == "gitea" || kind == "forgejo" {
+		server := envOr("FORGE_SERVER", "")
+		token := envOr("FORGE_TOKEN_PAT", "")
+		if server == "" || token == "" {
+			fmt.Fprintln(os.Stderr, "prpost: FORGE_KIND=gitea needs FORGE_SERVER and FORGE_TOKEN_PAT")
+			os.Exit(2)
+		}
+		if err := UpsertGitea(context.Background(), server, token, owner, name, pr, body, "<!-- "+key+" -->"); err != nil {
+			fmt.Fprintln(os.Stderr, "prpost:", err)
+			os.Exit(1)
+		}
+		os.Exit(ExitCodeOf(*outcome))
+	}
 	if err := Upsert(context.Background(), *api, owner, name, pr, body, key); err != nil {
 		fmt.Fprintln(os.Stderr, "prpost:", err)
 		os.Exit(1)
@@ -145,6 +158,54 @@ func Render(tool, visual string, rep Report) string {
 // Upsert posts the body through forge-api's sticky-comment route.
 //
 // proven-by: TestUpsert_IsStickyPerKey
+// Upsert posts the body through forge-api's sticky-comment route, or — when
+// FORGE_KIND=gitea is set — directly against a Gitea/Forgejo instance
+// (list comments, find the marker, POST or PATCH). The direct path exists
+// because a forgejo-repo pipeline must not depend on a github-kind forge-api.
+//
+// proven-by: TestUpsertGitea_StickyByMarker
+func UpsertGitea(ctx context.Context, server, token, owner, repo, pr, body, marker string) error {
+	base := strings.TrimSuffix(server, "")
+	listURL := fmt.Sprintf("%s/api/v1/repos/%s/%s/issues/%s/comments", base, owner, repo, pr)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
+	req.Header.Set("Authorization", "token "+token)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var comments []struct {
+		ID   int64  `json:"id"`
+		Body string `json:"body"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&comments)
+	var existing int64
+	for _, c := range comments {
+		if strings.Contains(c.Body, marker) {
+			existing = c.ID
+			break
+		}
+	}
+	payload, _ := json.Marshal(map[string]string{"body": body})
+	method, url := http.MethodPost, listURL
+	if existing != 0 {
+		method = http.MethodPatch
+		url = fmt.Sprintf("%s/api/v1/repos/%s/%s/issues/comments/%d", base, owner, repo, existing)
+	}
+	req2, _ := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "token "+token)
+	resp2, err := (&http.Client{Timeout: 30 * time.Second}).Do(req2)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	if resp2.StatusCode >= 300 {
+		return fmt.Errorf("gitea comment: HTTP %d", resp2.StatusCode)
+	}
+	return nil
+}
+
 func Upsert(ctx context.Context, api, owner, repo, pr, body, key string) error {
 	url := fmt.Sprintf("%s/repos/%s/%s/issues/%s/comments", strings.TrimSuffix(api, "/"), owner, repo, pr)
 	payload, _ := json.Marshal(map[string]string{"body": body, "sticky_key": key})
