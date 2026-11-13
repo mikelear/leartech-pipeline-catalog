@@ -475,7 +475,7 @@ spec:
         #
         # Runs BEFORE the pack: this reads two files, and there is no reason to
         # spend a preview deploy and a 30-minute timeout discovering it after.
-        - image: ghcr.io/mikelear/leartech-checkers:0.11.39
+        - image: ghcr.io/mikelear/leartech-checkers:0.11.40
           name: e2e-skip-contract
           resources: {}
           script: |
@@ -485,7 +485,7 @@ spec:
         # The pack runner, from the pinned checkers image: one step copies the
         # binary into the shared workspace so the debian step (which owns the
         # consumer-script contract) runs it without a Go toolchain.
-        - image: ghcr.io/mikelear/leartech-checkers:0.11.39
+        - image: ghcr.io/mikelear/leartech-checkers:0.11.40
           name: provide-e2erun
           resources: {}
           workingDir: /workspace/source
