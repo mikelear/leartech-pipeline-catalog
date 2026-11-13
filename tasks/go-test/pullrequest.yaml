@@ -228,7 +228,7 @@ spec:
             export LEARTECH_AUTH_CLIENT_ID="$_STASH_AUTH_CLIENT_ID"
             export LEARTECH_AUTH_CLIENT_SECRET="$_STASH_AUTH_CLIENT_SECRET"
 
-            if [ -n "${FORGE_API_URL:-}" ] && [ -n "${PULL_NUMBER:-}" ]; then
+            if { [ -n "${FORGE_API_URL:-}" ] || [ "${FORGE_KIND:-}" = "gitea" ] || [ "${FORGE_KIND:-}" = "forgejo" ]; } && [ -n "${PULL_NUMBER:-}" ]; then
               apt-get update -qq && apt-get install -y -qq --no-install-recommends jq curl >/dev/null
 
               CLUSTER_TAG="${CLUSTER_ID:-unknown}"

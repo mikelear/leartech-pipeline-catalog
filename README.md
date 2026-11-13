@@ -434,3 +434,9 @@ Scripts accept `--pr 0 --token ""` for dry-run mode (prints comment, no API call
 | [jx3-pipeline-catalog](https://github.com/mikelear/jx3-pipeline-catalog) | Fork of JX3 catalog with cluster-suffixed tags |
 | [jx-build-cluster-gsm](https://github.com/mikelear/jx-build-cluster-gsm) | GCP cluster GitOps (Kyverno, security-scans CronJobs) |
 | [jx-build-cluster-akv](https://github.com/mikelear/jx-build-cluster-akv) | Azure cluster GitOps |
+
+## Gate contexts
+
+Reported contexts are `gcp/<name>` (LIGHTHOUSE_CONTEXT_PREFIX). Branch protection
+and Tide both key on the SAME prefixed names — a bare `test` in either list makes
+Keeper wait for a context nobody reports, and the PR never merges.
