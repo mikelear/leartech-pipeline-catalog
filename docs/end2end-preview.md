@@ -85,7 +85,7 @@ check and belongs in the pack.
 | a `probes:` host no chart under `preview/` creates | leartech-auth-ui#111: every deployment ready, gate held closed on a 404'd hidra URL |
 | a `seeds:` entry that looks like a check | the auth-service suite ran twice as "seeding" |
 | a `seeds:` entry that is missing or not executable | the seed loops skip silently |
-| a pack script with a literal host | leartech-mortgagesourcing-web#18: smoke hit a public host |
+| a pack script that **requests** a host instead of the preview | a check that never mentions `PREVIEW_URL` cannot be about this PR |
 | a pack script that is not executable | the other lane requires the bit; the move is when it breaks |
 | an `END2END_*`/`E2E_*` env key no task reads | a repo believed it had declared a health path nothing read |
 | `end2end/NONE` beside a live pack or contract | two authorities for one question |
@@ -168,3 +168,32 @@ consecutive 200s" on its own.
 `e2e rehearse -dir . -namespace <ns>` prints exactly that trace against a preview
 that already exists, using the same code CI runs. It is what a developer runs
 instead of opening a PR to find out.
+
+## 6. What the check says about the estate today
+
+Run against all 34 repos that declare an `end2end` gate, with each repo's own
+`.lighthouse`, `end2end/` and `preview/` trees materialised (470 files):
+
+```
+34 repos checked, 31 with findings
+
+  31  no preview.yaml declared          <- every one of them, as expected: this is new
+   4  pack script "pins a host"        <- ALL FOUR were expected-string comparisons
+   1  no pack and no end2end/NONE      <- leartech-infra-agent
+```
+
+The first number is the migration (31 declarations to write, one PR each — §4). The
+third is a real, tiny gap.
+
+The second is worth recording as a lesson, because it is what the first version of
+that rule got wrong. It flagged any literal URL in any line, and every one of the
+four findings was a check comparing a response body against an expected string —
+`"<loc>https://www.mortgagesourcing.com</loc>"` is not a request, it is an assertion
+about a sitemap. The rule now only considers **request targets** (`curl`/`wget`
+lines), and it reports **zero** findings across the same 34 repos. A rule that cries
+wolf on correct code teaches people to ignore the gate, which is worse than not
+having it.
+
+So `hardcoded-host` in `testdata/broken/` is a rule guard, not a post-mortem: no PR
+in the estate has hit it yet, and it is there so that the first one that does is
+caught without a cluster.
