@@ -192,7 +192,7 @@ FILE_SIZE_FAIL ?= 0
 # .DEFAULT_GOAL so `make -f leartech-go.mk` (no target) prints help.
 .DEFAULT_GOAL := help
 
-.PHONY: base-clone-url auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage test-integration build vuln pre-push ci preflight preflight-doctor
+.PHONY: base-clone-url redact-url auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage test-integration build vuln pre-push ci preflight preflight-doctor
 
 # ── how a checker is obtained ────────────────────────────────────────────────
 #
@@ -1031,7 +1031,7 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	if [ -n "$$OWNER" ] && [ -n "$$NAME" ]; then \
 	  ORIGIN_URL=$$(git remote get-url origin 2>/dev/null || true); \
 	  REPO_URL=$$($(MAKE) --no-print-directory -f $(firstword $(MAKEFILE_LIST)) base-clone-url ORIGIN_URL="$$ORIGIN_URL" OWNER="$$OWNER" NAME="$$NAME"); \
-	  REPO_URL_SAFE=$$(printf '%s' "$$REPO_URL" | sed -E 's#(://)[^@/]*@#\1***@'); \
+	  REPO_URL_SAFE=$$($(MAKE) --no-print-directory -f $(firstword $(MAKEFILE_LIST)) redact-url URL="$$REPO_URL"); \
 	  BASE_CLONE_DIR=""; \
 	  if ! BASE_CLONE_DIR=$$(mktemp -d /tmp/go-test-base-XXXXXX 2>/tmp/base-step.log); then \
 	    BASE_WHY="mktemp: $$(tr '\n' ' ' </tmp/base-step.log)"; \
@@ -1071,6 +1071,9 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	  exit 1; \
 	fi; \
 	echo "PASS: coverage $${TOTAL}% meets threshold $${THRESHOLD}% (delta=$${BASE_DELTA:-n/a}% vs $${BASE_REF})"
+
+redact-url: ## Print a clone URL with any userinfo replaced by *** (safe to log)
+	@printf '%s\n' "$(URL)" | sed -E 's#(://)[^@/]*@#\1***@#'
 
 base-clone-url: ## Print the URL the delta-coverage baseline is cloned from (ORIGIN_URL/OWNER/NAME)
 	@u="$(ORIGIN_URL)"; o="$(OWNER)"; n="$(NAME)"; \
