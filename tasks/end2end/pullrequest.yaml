@@ -501,8 +501,9 @@ spec:
             cp /usr/local/bin/e2erun /workspace/bin/e2erun
             test -x /workspace/bin/e2erun
             echo "==> provided /workspace/bin/e2erun"
+
         - image: debian:12-slim
-          name: end2end
+          name: end2end-env
           resources: {}
           env:
             - name: GIT_TOKEN
@@ -518,6 +519,8 @@ spec:
           script: |
             #!/bin/bash
             set -eo pipefail
+            export PATH="/workspace/bin:$PATH"
+            [ -f .jx/variables.sh ] && source .jx/variables.sh
 
             # Tools the contract guarantees to consumer scripts.
             apt-get update -qq && apt-get install -y -qq --no-install-recommends \
@@ -580,6 +583,9 @@ spec:
             PREVIEW_SERVICE_URL=""
             export PREVIEW_SERVICE_URL
 
+
+            mkdir -p /workspace/.end2end
+            cat > /workspace/.end2end/lib.sh <<'ED2E_LIB'
             # Every command here is guarded: this function may NEVER fail the
             # step. Its whole purpose is to prefer a better probe target, and
             # falling back to the public URL is a worse probe, not a failure.
@@ -600,31 +606,6 @@ spec:
               PREVIEW_SERVICE_URL="http://${svc}.${PREVIEW_NAMESPACE}.svc.cluster.local:${port}"
               export PREVIEW_SERVICE_URL
             }
-
-            echo "==> consumer env:"
-            echo "    PREVIEW_URL=$PREVIEW_URL"
-            echo "    PREVIEW_SERVICE_URL=<resolved after the deploy>"
-            echo "    PREVIEW_HOST_BASE=$PREVIEW_HOST_BASE"
-            echo "    PREVIEW_NAMESPACE=$PREVIEW_NAMESPACE"
-            echo "    APP_NAME=$APP_NAME  PULL_NUMBER=$PULL_NUMBER  CLUSTER_ID=${CLUSTER_ID:-}"
-
-            # ── consumer-script resolution ─────────────────────────────
-            HAS_SCRIPT=0
-            [ -x end2end/run.sh ] && HAS_SCRIPT=1
-
-            # A repo with no end2end must SAY SO. end2end/NONE holds the reason.
-            HAS_OPTOUT=0
-            OPTOUT_REASON=""
-            if [ -f end2end/NONE ]; then
-              OPTOUT_REASON=$(grep -vE '^\s*(#|$)' end2end/NONE | head -3 | tr '\n' ' ' | sed 's/  */ /g')
-              [ -n "$OPTOUT_REASON" ] && HAS_OPTOUT=1
-            fi
-
-            # Per-cluster sticky marker so GCP and Azure comments coexist
-            # instead of clobbering each other (mirrors the security-scan
-            # + ai-review conventions).
-            CLUSTER_TAG="${CLUSTER_ID:-unknown}"
-            MARKER="<!-- leartech-end2end-${CLUSTER_TAG} -->"
 
             # ── helper: post/patch sticky comment ──────────────────────
             # One Go tool (go/prpost) through leartech-forge-api: the sticky key
@@ -665,6 +646,79 @@ spec:
               echo "==> Continuing anyway: this check's result is decided by the test outcome, not by comment delivery."
               return 0
             }
+
+            ED2E_LIB
+
+            cat > /workspace/.end2end/env <<EOF
+            PREVIEW_HOST_BASE="$PREVIEW_HOST_BASE"
+            PREVIEW_HOST_PREFIX="$PREVIEW_HOST_PREFIX"
+            PREVIEW_URL="$PREVIEW_URL"
+            PREVIEW_NAMESPACE="$PREVIEW_NAMESPACE"
+            EOF
+
+            echo "==> consumer env (written to /workspace/.end2end/env so later steps see it):"
+            echo "    PREVIEW_URL=$PREVIEW_URL"
+            echo "    PREVIEW_NAMESPACE=$PREVIEW_NAMESPACE"
+
+        - image: debian:12-slim
+          name: end2end-contract
+          resources: {}
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+          volumeMounts:
+          - name: gcs-key
+            mountPath: /var/run/secrets/test-artifacts
+            readOnly: true
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+            export PATH="/workspace/bin:$PATH"
+            [ -f .jx/variables.sh ] && source .jx/variables.sh
+            for f in env env.contract env.await env.run; do
+              [ -f "/workspace/.end2end/$f" ] && . "/workspace/.end2end/$f" || true
+            done
+            . /workspace/.end2end/lib.sh
+
+            echo "==> consumer env:"
+            echo "    PREVIEW_URL=$PREVIEW_URL"
+            echo "    PREVIEW_SERVICE_URL=<resolved after the deploy>"
+            echo "    PREVIEW_HOST_BASE=$PREVIEW_HOST_BASE"
+            echo "    PREVIEW_NAMESPACE=$PREVIEW_NAMESPACE"
+            echo "    APP_NAME=$APP_NAME  PULL_NUMBER=$PULL_NUMBER  CLUSTER_ID=${CLUSTER_ID:-}"
+
+            # ── consumer-script resolution ─────────────────────────────
+            HAS_SCRIPT=0
+            [ -x end2end/run.sh ] && HAS_SCRIPT=1
+
+            # A repo with no end2end says so in end2end/NONE, which holds the reason.
+            # proven-by: end2end-runner/phases_test.sh
+            HAS_OPTOUT=0
+            OPTOUT_REASON=""
+            if [ -f end2end/NONE ]; then
+              OPTOUT_REASON=$(grep -vE '^\s*(#|$)' end2end/NONE | head -3 | tr '\n' ' ' | sed 's/  */ /g')
+              [ -n "$OPTOUT_REASON" ] && HAS_OPTOUT=1
+            fi
+
+            # Per-cluster sticky marker so GCP and Azure comments coexist
+            # instead of clobbering each other (mirrors the security-scan
+            # + ai-review conventions).
+            CLUSTER_TAG="${CLUSTER_ID:-unknown}"
+            MARKER="<!-- leartech-end2end-${CLUSTER_TAG} -->"
+
+
+            cat > /workspace/.end2end/env.contract <<EOF
+            MARKER="$MARKER"
+            CLUSTER_TAG="$CLUSTER_TAG"
+            HAS_SCRIPT="$HAS_SCRIPT"
+            HAS_OPTOUT="$HAS_OPTOUT"
+            OPTOUT_REASON="$OPTOUT_REASON"
+            EOF
+
 
             # ── branch 1: no end2end/run.sh ─────────────────────────────
             #
@@ -737,6 +791,35 @@ spec:
               exit 1
             fi
 
+
+        - image: debian:12-slim
+          name: end2end-await
+          resources: {}
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+          volumeMounts:
+          - name: gcs-key
+            mountPath: /var/run/secrets/test-artifacts
+            readOnly: true
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+            export PATH="/workspace/bin:$PATH"
+            [ -f .jx/variables.sh ] && source .jx/variables.sh
+            for f in env env.contract env.await env.run; do
+              [ -f "/workspace/.end2end/$f" ] && . "/workspace/.end2end/$f" || true
+            done
+            . /workspace/.end2end/lib.sh
+
+            # A repo that declared end2end/NONE exits green in the contract step; the
+            # phases below have nothing to do and exit 0 rather than run the suite.
+            # proven-by: end2end-runner/phases_test.sh
+            [ "$HAS_SCRIPT" = "1" ] || { echo "==> no end2end suite in this repo (declared); this phase is a no-op"; exit 0; }
             # ── the preview must be THIS commit ────────────────────────
             # Measured on leartech-artifact-api PR #17, 2026-09-13. This task
             # started at 10:37:49, three seconds after the `pr` pipeline that
@@ -1160,6 +1243,38 @@ spec:
               echo "      that cannot read a token must not report on scopes." >&2
               exit 1
             fi
+            cat > /workspace/.end2end/env.await <<EOF
+            PREVIEW_SERVICE_URL="$PREVIEW_SERVICE_URL"
+            EOF
+
+        - image: debian:12-slim
+          name: end2end-run
+          resources: {}
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+          volumeMounts:
+          - name: gcs-key
+            mountPath: /var/run/secrets/test-artifacts
+            readOnly: true
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+            export PATH="/workspace/bin:$PATH"
+            [ -f .jx/variables.sh ] && source .jx/variables.sh
+            for f in env env.contract env.await env.run; do
+              [ -f "/workspace/.end2end/$f" ] && . "/workspace/.end2end/$f" || true
+            done
+            . /workspace/.end2end/lib.sh
+
+            # A repo that declared end2end/NONE exits green in the contract step; the
+            # phases below have nothing to do and exit 0 rather than run the suite.
+            # proven-by: end2end-runner/phases_test.sh
+            [ "$HAS_SCRIPT" = "1" ] || { echo "==> no end2end suite in this repo (declared); this phase is a no-op"; exit 0; }
 
             # THE runner, one copy for every repo.
             #
@@ -1193,16 +1308,16 @@ spec:
             set -eo pipefail
             SCRIPT_DIR="$(cd "${1:-end2end}" && pwd)"
             cd "$SCRIPT_DIR/.."
-            
+
             echo "[end2end] preview=${PREVIEW_URL:-<unset>} ns=${PREVIEW_NAMESPACE:-<unset>} pr=${PULL_NUMBER:-<unset>}"
-            
+
             BIN="$(command -v e2erun || true)"
             [ -z "$BIN" ] && [ -x /workspace/bin/e2erun ] && BIN=/workspace/bin/e2erun
             if [ -z "$BIN" ]; then
               echo "FAIL: e2erun not found (PATH or /workspace/bin). The checkers image ships it; the pipeline's provide-e2erun step stages it." >&2
               exit 127
             fi
-            
+
             exec "$BIN" "$SCRIPT_DIR"
             LEARTECH_RUNNER
             chmod +x /workspace/source/leartech-end2end-run.sh
@@ -1221,18 +1336,71 @@ spec:
             bash /workspace/source/leartech-end2end-run.sh end2end || SCRIPT_EXIT=$?
             echo "==> end2end/run.sh exited with $SCRIPT_EXIT"
 
+
+            cat > /workspace/.end2end/env.run <<EOF
+            SCRIPT_EXIT="$SCRIPT_EXIT"
+            EOF
+
+        - image: debian:12-slim
+          name: end2end-report
+          resources: {}
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+            # The report step posts the sticky PR comment through forge-api
+            # (go/prpost). Without these it skipped with a one-line note and the
+            # gate still went green, so the end2end comment was not posted.
+            # proven-by: end2end-runner/phases_test.sh
+            - name: FORGE_API_URL
+              value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+            - name: LEARTECH_AUTH_SERVER_URL
+              value: https://hydra-sp-infra.jx.leartech.com
+            - name: LEARTECH_AUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_ID
+                  optional: true
+            - name: LEARTECH_AUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_SECRET
+                  optional: true
+          volumeMounts:
+          - name: gcs-key
+            mountPath: /var/run/secrets/test-artifacts
+            readOnly: true
+          script: |
+            #!/bin/bash
+            set -eo pipefail
+            export PATH="/workspace/bin:$PATH"
+            [ -f .jx/variables.sh ] && source .jx/variables.sh
+            for f in env env.contract env.await env.run; do
+              [ -f "/workspace/.end2end/$f" ] && . "/workspace/.end2end/$f" || true
+            done
+            . /workspace/.end2end/lib.sh
+
+            # A repo that declared end2end/NONE exits green in the contract step; the
+            # phases below have nothing to do and exit 0 rather than run the suite.
+            # proven-by: end2end-runner/phases_test.sh
+            [ "$HAS_SCRIPT" = "1" ] || { echo "==> no end2end suite in this repo (declared); this phase is a no-op"; exit 0; }
             if [ ! -f end2end/results.json ]; then
               body=$(printf '%s\n' \
                 "$MARKER" \
                 ":x: **End-to-end: FAIL (no results.json)** \`[$CLUSTER_TAG]\`" \
                 "" \
-                "\`end2end/run.sh\` exited $SCRIPT_EXIT without writing \`end2end/results.json\`. See the \`end2end\` check logs for script output." \
+                "\`end2end/run.sh\` exited $SCRIPT_EXIT without writing \`end2end/results.json\`. See the \`end2end-run\` step logs for script output." \
                 "" \
                 "The script must emit \`end2end/results.json\` per the schema in \`tasks/end2end/pullrequest.yaml\` so the sticky PR comment can render." \
                 "" \
                 "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
               post_sticky "$body"
-              echo "FAIL: no results.json"
+              echo "FAIL: no results.json — end2end/run.sh exited $SCRIPT_EXIT; see the end2end-run step logs"
               exit 1
             fi
 
@@ -1241,11 +1409,11 @@ spec:
                 "$MARKER" \
                 ":x: **End-to-end: FAIL (results.json malformed)** \`[$CLUSTER_TAG]\`" \
                 "" \
-                "\`end2end/results.json\` is not valid JSON. See check logs." \
+                "\`end2end/results.json\` is not valid JSON. See the \`end2end-run\` step logs." \
                 "" \
                 "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
               post_sticky "$body"
-              echo "FAIL: results.json malformed"
+              echo "FAIL: results.json malformed — see the end2end-run step logs"
               exit 1
             fi
 
