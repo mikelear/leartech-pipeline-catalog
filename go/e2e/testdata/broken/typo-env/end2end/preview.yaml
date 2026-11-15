@@ -1,0 +1,5 @@
+# BROKEN: the env var is misspelled, so the task does not read it and the run uses
+# its own default.
+preview:
+  healthPath: /health
+  service: thing

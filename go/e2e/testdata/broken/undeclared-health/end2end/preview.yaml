@@ -1,0 +1,3 @@
+# BROKEN (next-generation-lending-website#9): no healthPath, so the wait guesses.
+preview:
+  service: thing

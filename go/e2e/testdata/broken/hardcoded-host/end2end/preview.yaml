@@ -1,0 +1,4 @@
+# BROKEN (leartech-mortgagesourcing-web#18): the smoke check hit a public host.
+preview:
+  healthPath: /health
+  service: thing

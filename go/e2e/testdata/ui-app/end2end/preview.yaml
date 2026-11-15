@@ -1,0 +1,13 @@
+# A web app with both lanes. The UI lane navigates the ingress, so it says so.
+preview:
+  healthPath: /health
+  service: leartech-auth-ui
+  port: 80
+  gate: auto
+  seeds:
+    - end2end/00-register-oauth-client.sh
+ui:
+  # ingress: the browser reaches it the way a user would. The
+  # service probe is right for a JSON API and wrong for anything with a cookie
+  # domain or an absolute redirect.
+  probe: ingress

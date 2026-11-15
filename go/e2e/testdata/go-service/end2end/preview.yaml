@@ -1,0 +1,23 @@
+# A Go service with an OAuth-protected API.
+#
+# Every key here is checked by `e2e contract` before a PR is opened, so a typo in
+# a health path or a probe URL costs seconds instead of a ten-minute end2end run.
+preview:
+  # The path the wait probes. It is also the chart's readinessProbe, so a preview
+  # that answers this answers what Kubernetes considers "serving".
+  healthPath: /health
+  # The workload to watch. A preview namespace also runs its own infrastructure,
+  # and picking the first deployment picks Hydra.
+  service: leartech-artifact-api
+  port: 8080
+  gate: auto
+  # Extra user-space readiness: things Kubernetes does not observe, like a cache
+  # that is still warming. Each answers `want` before any check runs.
+  probes:
+    - url: http://preview-auth-service-hydra.${NAMESPACE}.svc:4445/.well-known/openid-configuration
+      want: 200
+      note: hydra's discovery document, which the auth checks read
+  # Setup only. These run before the pack, and again before Playwright in the UI
+  # lane. A check listed here would run with its failures swallowed.
+  seeds:
+    - end2end/00-seed-test-data.sh

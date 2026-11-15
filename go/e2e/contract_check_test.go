@@ -1,0 +1,273 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// A check is only worth having if it fails on the thing that actually happened, so
+// every case here is a real finding from the estate, built as a fixture. That also
+// makes this file the worked example list for docs/end2end-preview.md.
+
+func repo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// A well-formed repo passes: this is the standard the docs point at.
+func TestContractCleanRepo(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile: `preview:
+  healthPath: /health
+  service: leartech-sp-web
+  seeds:
+    - end2end/00-seed-test-data.sh
+`,
+		"end2end/00-seed-test-data.sh": "#!/bin/bash\ncurl -sS \"${PREVIEW_URL}/seed\" >/dev/null\n",
+		"end2end/01-smoke.sh":          "#!/bin/bash\ncurl -sS -o /dev/null \"${PREVIEW_URL}/\"\n",
+		"preview/helmfile.yaml":        "releases:\n- name: preview-leartech-sp-web\n  hostname: leartech-sp-web-pr1.example\n",
+	})
+	if code := runContract([]string{"-dir", dir}); code != 0 {
+		t.Fatalf("clean repo failed the contract check (exit %d)", code)
+	}
+}
+
+// next-generation-lending-website#9: the repo declared END2END_HEALTH_PATH=/health,
+// the bash lane probed /health/live. An undeclared healthPath is a finding.
+func TestContractUndeclaredHealthPath(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile:          "preview:\n  service: thing\n",
+		"end2end/01-smoke.sh": "#!/bin/bash\ntrue\n",
+	})
+	if code := runContract([]string{"-dir", dir}); code != 1 {
+		t.Fatal("an undeclared healthPath passed; that default is the failure being fixed")
+	}
+}
+
+// NONE and a live pack cannot both be authoritative.
+func TestContractNoneAndPackBothPresent(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile:          "preview:\n  healthPath: /health\n  service: x\n",
+		"end2end/NONE":        "no suite: chart library\n",
+		"end2end/01-smoke.sh": "#!/bin/bash\ntrue\n",
+	})
+	if code := runContract([]string{"-dir", dir}); code != 1 {
+		t.Fatal("NONE beside a pack passed; nobody can tell which is authoritative")
+	}
+}
+
+// A repo with neither a pack nor NONE is the "undeclared" branch, and it is a
+// finding before the PR rather than a red end2end run.
+func TestContractNeitherPackNorNone(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile: "preview:\n  healthPath: /health\n  service: x\n",
+	})
+	if code := runContract([]string{"-dir", dir}); code != 1 {
+		t.Fatal("a repo with no pack and no NONE passed")
+	}
+}
+
+// leartech-mortgagesourcing-web#18: smoke hit a URL baked into the script rather
+// than PREVIEW_URL, so it tested a host that had nothing to do with the preview.
+func TestContractHardcodedHostInScript(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile:          "preview:\n  healthPath: /health\n  service: x\n",
+		"end2end/01-smoke.sh": "#!/bin/bash\ncurl -sS https://api.mortgagesourcing.com/mcp\n",
+	})
+	code := runContract([]string{"-dir", dir})
+	if code != 1 {
+		t.Fatal("a script pinning a public host passed")
+	}
+}
+
+func TestContractVariableBaseURLIsFine(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile:          "preview:\n  healthPath: /health\n  service: x\n",
+		"end2end/01-smoke.sh": "#!/bin/bash\ncurl -sS \"${PREVIEW_URL}/health\"\n",
+	})
+	if code := runContract([]string{"-dir", dir}); code != 0 {
+		t.Fatal("a script using PREVIEW_URL was rejected")
+	}
+}
+
+// leartech-auth-ui#111: the gate held a ready preview closed on a probe URL the
+// preview chart never creates. Static, this is a missing host in preview/.
+func TestContractProbeHostNotInCharts(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile: `preview:
+  healthPath: /health
+  service: x
+  probes:
+    - url: https://hydra-pr111.jx.leartech.com/.well-known/openid-configuration
+      want: 200
+`,
+		"end2end/01-smoke.sh":   "#!/bin/bash\ntrue\n",
+		"preview/helmfile.yaml": "releases:\n- name: preview-x\n",
+	})
+	if code := runContract([]string{"-dir", dir}); code != 1 {
+		t.Fatal("a probe naming a host no chart creates passed")
+	}
+}
+
+func TestContractProbeHostDeclaredInCharts(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile: `preview:
+  healthPath: /health
+  service: x
+  probes:
+    - url: https://hydra-pr111.jx.leartech.com/.well-known/openid-configuration
+      want: 200
+`,
+		"end2end/01-smoke.sh":   "#!/bin/bash\ntrue\n",
+		"preview/helmfile.yaml": "hostname: hydra-pr111.jx.leartech.com\n",
+	})
+	if code := runContract([]string{"-dir", dir}); code != 0 {
+		t.Fatal("a probe host that IS in the charts was rejected")
+	}
+}
+
+// The UI lane ran the whole functional suite as "seeds" with failures swallowed.
+func TestContractSeedThatIsACheck(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile: `preview:
+  healthPath: /health
+  service: x
+  seeds:
+    - end2end/05-auth-refusals.sh
+`,
+		"end2end/05-auth-refusals.sh": "#!/bin/bash\ntrue\n",
+	})
+	if code := runContract([]string{"-dir", dir}); code != 1 {
+		t.Fatal("a check listed as a seed passed")
+	}
+}
+
+// A seed that does not exist would be skipped silently by the loops.
+func TestContractSeedMissing(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile:          "preview:\n  healthPath: /health\n  service: x\n  seeds:\n    - end2end/00-seed-nope.sh\n",
+		"end2end/01-smoke.sh": "#!/bin/bash\ntrue\n",
+	})
+	if code := runContract([]string{"-dir", dir}); code != 1 {
+		t.Fatal("a missing seed passed")
+	}
+}
+
+// A typo in an env var was silently ignored, which is how a repo believed it had
+// declared a health path the task never read.
+func TestContractUnknownEnvKey(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile:          "preview:\n  healthPath: /health\n  service: x\n",
+		"end2end/01-smoke.sh": "#!/bin/bash\ntrue\n",
+		".lighthouse/jenkins-x/end2end.yaml": `spec:
+  pipelineSpec:
+    tasks:
+    - taskSpec:
+        stepTemplate:
+          env:
+          - name: END2END_HEALTH_PAHT
+            value: /health
+`,
+	})
+	if code := runContract([]string{"-dir", dir}); code != 1 {
+		t.Fatal("an unknown END2END_* env key passed")
+	}
+}
+
+func TestContractKnownEnvKeyIsFine(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile:          "preview:\n  healthPath: /health\n  service: x\n",
+		"end2end/01-smoke.sh": "#!/bin/bash\ntrue\n",
+		".lighthouse/jenkins-x/end2end.yaml": `spec:
+  pipelineSpec:
+    tasks:
+    - taskSpec:
+        stepTemplate:
+          env:
+          - name: END2END_HEALTH_PATH
+            value: /health
+`,
+	})
+	if code := runContract([]string{"-dir", dir}); code != 0 {
+		t.Fatal("a key the task reads was rejected")
+	}
+}
+
+// A UI lane with no specs is green having tested nothing.
+func TestContractUILaneWithoutSpecs(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile:          "preview:\n  healthPath: /health\n  service: x\n",
+		"end2end/01-smoke.sh": "#!/bin/bash\ntrue\n",
+	})
+	if code := runContract([]string{"-dir", dir, "-check-name", "ui"}); code != 1 {
+		t.Fatal("the ui lane passed with no *.spec.ts")
+	}
+}
+
+func TestContractUILaneSpecUsesPreviewURL(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile:                 "preview:\n  healthPath: /health\n  service: x\n",
+		"end2end/01-smoke.sh":        "#!/bin/bash\ntrue\n",
+		"end2end-ui/landing.spec.ts": "test('x', async ({page}) => { await page.goto(process.env.PREVIEW_URL!) })\n",
+	})
+	if code := runContract([]string{"-dir", dir, "-check-name", "ui"}); code != 0 {
+		t.Fatal("a spec reading PREVIEW_URL was rejected")
+	}
+}
+
+// A spec that pins a host tests that host; the UI lane must not pass it.
+func TestContractUILaneSpecWithoutPreviewURL(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile:                 "preview:\n  healthPath: /health\n  service: x\n",
+		"end2end/01-smoke.sh":        "#!/bin/bash\ntrue\n",
+		"end2end-ui/landing.spec.ts": "test('x', async ({page}) => { await page.goto('https://example.test/') })\n",
+	})
+	if code := runContract([]string{"-dir", dir, "-check-name", "ui"}); code != 1 {
+		t.Fatal("a spec that never mentions the preview URL passed")
+	}
+}
+
+// A script the runner would skip entirely (non-executable) is a check that looks
+// present and never runs in the lane that requires the bit.
+func TestContractNonExecutableScript(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile: "preview:\n  healthPath: /health\n  service: x\n",
+	})
+	p := filepath.Join(dir, "end2end", "01-smoke.sh")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("#!/bin/bash\ntrue\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := runContract([]string{"-dir", dir}); code != 1 {
+		t.Fatal("a non-executable pack script passed")
+	}
+}
+
+// explain must show the defaults, because a declaration you cannot read back is
+// one you cannot review.
+func TestExplainShowsResolvedContract(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile: "preview:\n  healthPath: /health/live\n  service: x\n",
+	})
+	code := runExplain([]string{"-dir", dir})
+	if code != 0 && code != 1 {
+		t.Fatalf("explain exited %d", code)
+	}
+	if !strings.Contains(ContractFile, "preview.yaml") {
+		t.Fatal("contract file constant moved")
+	}
+}

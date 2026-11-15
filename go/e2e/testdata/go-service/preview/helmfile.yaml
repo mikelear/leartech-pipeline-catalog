@@ -1,0 +1,5 @@
+releases:
+  - name: preview-auth-service
+    chart: preview/charts/auth-service
+  - name: preview-leartech-artifact-api
+    chart: preview/charts/leartech-artifact-api

@@ -1,0 +1,4 @@
+releases:
+  - name: preview-leartech-auth-ui
+  - name: preview-auth-service-hydra
+    chart: preview/charts/hydra

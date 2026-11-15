@@ -1,0 +1,7 @@
+# BROKEN (end2end-ui seed sweep): a CHECK listed as a seed runs with failures
+# swallowed, twice, and reports a real failure as "continuing".
+preview:
+  healthPath: /health
+  service: thing
+  seeds:
+    - end2end/05-auth-refusals.sh
