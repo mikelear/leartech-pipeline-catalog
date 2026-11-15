@@ -30,6 +30,7 @@ help:
 	@echo "    test-go-config-schema  Assert the shared base config is schema-valid"
 	@echo "    test-go-version-pin  Assert golangci-lint is pinned identically in mk, task and README"
 	@echo "    test-go-parity   Assert leartech-go.mk merge matches golden linter set"
+	@echo "    test-go-base-clone-url  Assert the delta baseline clones from the PR's own forge"
 	@echo "    test-go-authconformance  Self-test the auth-conformance checker (fixtures)"
 	@echo ""
 	@echo "    logs TASK=x      Tail logs (x = static, image, dynamic, external, internal)"
@@ -142,6 +143,9 @@ test-go-parity:
 	@echo "=== Go mk parity check ==="
 	@sh $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))/go/parity_test.sh
 
+test-go-base-clone-url:
+	@sh $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))/go/base_clone_url_test.sh
+
 clean-static:
 	@kubectl $(CONTEXT) delete pod static-scan-test -n $(NAMESPACE) --ignore-not-found=true 2>/dev/null
 
@@ -163,4 +167,4 @@ clean: clean-static clean-image clean-external clean-internal clean-dynamic
 logs:
 	kubectl $(CONTEXT) logs -n $(NAMESPACE) $(TASK)-scan-test -f
 
-.PHONY: help test-go-config-schema test-go-version-pin test-static test-image test-external test-internal test-dynamic test-all test-go-parity clean clean-static clean-image clean-external clean-internal clean-dynamic logs
+.PHONY: help test-go-base-clone-url test-go-config-schema test-go-version-pin test-static test-image test-external test-internal test-dynamic test-all test-go-parity clean clean-static clean-image clean-external clean-internal clean-dynamic logs

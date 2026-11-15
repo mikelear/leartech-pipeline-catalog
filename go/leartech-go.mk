@@ -192,7 +192,7 @@ FILE_SIZE_FAIL ?= 0
 # .DEFAULT_GOAL so `make -f leartech-go.mk` (no target) prints help.
 .DEFAULT_GOAL := help
 
-.PHONY: auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage test-integration build vuln pre-push ci preflight preflight-doctor
+.PHONY: base-clone-url redact-url auth-conformance auth-standard help lint-config lint file-size vet tidy-check test test-coverage test-integration build vuln pre-push ci preflight preflight-doctor
 
 # ── how a checker is obtained ────────────────────────────────────────────────
 #
@@ -1029,12 +1029,14 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	  fi; \
 	fi; \
 	if [ -n "$$OWNER" ] && [ -n "$$NAME" ]; then \
-	  REPO_URL="https://github.com/$${OWNER}/$${NAME}.git"; \
+	  ORIGIN_URL=$$(git remote get-url origin 2>/dev/null || true); \
+	  REPO_URL=$$($(MAKE) --no-print-directory -f $(firstword $(MAKEFILE_LIST)) base-clone-url ORIGIN_URL="$$ORIGIN_URL" OWNER="$$OWNER" NAME="$$NAME"); \
+	  REPO_URL_SAFE=$$($(MAKE) --no-print-directory -f $(firstword $(MAKEFILE_LIST)) redact-url URL="$$REPO_URL"); \
 	  BASE_CLONE_DIR=""; \
 	  if ! BASE_CLONE_DIR=$$(mktemp -d /tmp/go-test-base-XXXXXX 2>/tmp/base-step.log); then \
 	    BASE_WHY="mktemp: $$(tr '\n' ' ' </tmp/base-step.log)"; \
 	  elif ! git clone --depth=1 --branch="$${BASE_REF}" --quiet "$$REPO_URL" "$$BASE_CLONE_DIR" 2>/tmp/base-step.log; then \
-	    BASE_WHY="clone of $${REPO_URL}@$${BASE_REF}: $$(tr '\n' ' ' </tmp/base-step.log)"; \
+	    BASE_WHY="clone of $${REPO_URL_SAFE}@$${BASE_REF}: $$(tr '\n' ' ' </tmp/base-step.log)"; \
 	  elif ! (cd "$$BASE_CLONE_DIR" && go test ./... -count=1 -coverpkg="$$SCOPE" -coverprofile=cover-base.out) >/tmp/base-test.log 2>&1; then \
 	    BASE_WHY="base-branch tests failed: $$(tail -3 /tmp/base-test.log | tr '\n' ' ')"; \
 	  elif ! strip_generated "$${BASE_CLONE_DIR}/cover-base.out" "$$BASE_CLONE_DIR"; then \
@@ -1069,6 +1071,18 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	  exit 1; \
 	fi; \
 	echo "PASS: coverage $${TOTAL}% meets threshold $${THRESHOLD}% (delta=$${BASE_DELTA:-n/a}% vs $${BASE_REF})"
+
+redact-url: ## Print a clone URL with any userinfo replaced by *** (safe to log)
+	@printf '%s\n' "$(URL)" | sed -E 's#(://)[^@/]*@#\1***@#'
+
+base-clone-url: ## Print the URL the delta-coverage baseline is cloned from (ORIGIN_URL/OWNER/NAME)
+	@u="$(ORIGIN_URL)"; o="$(OWNER)"; n="$(NAME)"; \
+	d="https://github.com/$$o/$$n.git"; \
+	case "$$u" in \
+	  "") printf '%s\n' "$$d" ;; \
+	  *"$$o/$$n"*) printf '%s\n' "$$u" ;; \
+	  *) printf '%s\n' "$$d" ;; \
+	esac
 
 # pre-push: what you should run before `git push`. Order chosen so cheap
 # checks fail fast:  vet → tidy-check → build → test-coverage → lint → vuln.
