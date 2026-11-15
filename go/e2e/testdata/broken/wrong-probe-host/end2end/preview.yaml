@@ -1,0 +1,7 @@
+# BROKEN (leartech-auth-ui#111): the gate waits on a host the preview does not create.
+preview:
+  healthPath: /health
+  service: thing
+  probes:
+    - url: https://hydra-pr111.jx.leartech.com/.well-known/openid-configuration
+      want: 200

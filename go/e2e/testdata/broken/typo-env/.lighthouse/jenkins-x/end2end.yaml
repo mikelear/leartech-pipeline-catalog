@@ -1,0 +1,8 @@
+spec:
+  pipelineSpec:
+    tasks:
+      - taskSpec:
+          stepTemplate:
+            env:
+              - name: END2END_HEALTH_PAHT
+                value: /health

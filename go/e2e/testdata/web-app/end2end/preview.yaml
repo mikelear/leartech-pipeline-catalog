@@ -1,0 +1,10 @@
+# A static site behind leartech-nginx: /health is served by nginx, not the SPA.
+#
+# The point of declaring it here: the bash lane used to default to /health/live
+# and the UI lane to /health, so one PR could be told the preview was up by one
+# check and down by the other.
+preview:
+  healthPath: /health
+  service: leartech-sp-web
+  port: 80
+  gate: absent

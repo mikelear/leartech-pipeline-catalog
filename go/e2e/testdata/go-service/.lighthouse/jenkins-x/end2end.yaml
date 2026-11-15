@@ -1,0 +1,12 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: end2end
+spec:
+  pipelineSpec:
+    tasks:
+      - name: end2end
+        taskSpec:
+          stepTemplate:
+            image: uses:mikelear/leartech-pipeline-catalog/tasks/end2end/pullrequest.yaml@main
+  serviceAccountName: tekton-bot
