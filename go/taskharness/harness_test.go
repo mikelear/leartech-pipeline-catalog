@@ -7,6 +7,11 @@ import (
 
 const endToEndTask = "../../tasks/end2end/pullrequest.yaml"
 
+// The end2end task is no longer one step: it is five named phases that share the
+// pod's workspace. The harness is pointed at the phase that decides the verdict,
+// because that is the script whose shell options and verbatim text matter most.
+const endToEndStep = "end2end-report"
+
 // The harness must refuse to test nothing. A green test over an empty or
 // missing script is worse than no test, and is the failure this package was
 // written to remove.
@@ -30,9 +35,9 @@ func TestLoadStepNamesTheStepsWhenItCannotFindOne(t *testing.T) {
 // The script must come out byte-identical. Every bug this package exists to
 // catch survived a harness that had been retyped or reformatted.
 func TestLoadStepReturnsTheScriptVerbatim(t *testing.T) {
-	s := LoadStep(t, endToEndTask, "end2end")
-	if len(s.Script) < 1000 {
-		t.Fatalf("script is %d bytes; the end2end step is over a thousand lines", len(s.Script))
+	s := LoadStep(t, endToEndTask, endToEndStep)
+	if len(s.Script) < 500 {
+		t.Fatalf("script is %d bytes; the end2end phases are a hundred lines each", len(s.Script))
 	}
 	if s.Image == "" {
 		t.Error("step image not captured — a script verified in the wrong image proves nothing")
@@ -48,7 +53,7 @@ func TestLoadStepReturnsTheScriptVerbatim(t *testing.T) {
 // a harness that ran without `set -eo pipefail` could not see that a failed
 // command substitution kills the step.
 func TestShellOptionsComeFromTheTaskNotTheTest(t *testing.T) {
-	s := LoadStep(t, endToEndTask, "end2end")
+	s := LoadStep(t, endToEndTask, endToEndStep)
 	joined := strings.Join(s.ShellOptions(), " ")
 	if !strings.Contains(joined, "-e") {
 		t.Errorf("expected the end2end step to declare set -e; got %q", joined)
