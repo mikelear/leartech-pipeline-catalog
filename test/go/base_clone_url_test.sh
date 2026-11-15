@@ -53,6 +53,37 @@ check "remote naming another repo -> github.com default, not the other repo" \
   "https://github.com/it-test/lh-test.git" \
   ORIGIN_URL=https://github.com/mikelear/lighthouse.git
 
+# The redaction runs over the URL the clone now takes from the remote, which can
+# carry a token. If it were wrong the failure message would either print the
+# token into a PR comment or mangle the URL beyond recognition — so it is worth
+# its own cases, and it is the one regression this file has already had (a sed
+# without its closing delimiter silently became an error, not a redaction).
+check_redact() {
+  desc=$1; want=$2; url=$3
+  got=$(make -s -f "$MK" redact-url URL="$url")
+  if [ "$got" = "$want" ]; then
+    printf '  ok   %s\n' "$desc"
+  else
+    printf '  FAIL %s\n       want: %s\n       got:  %s\n' "$desc" "$want" "$got"
+    fails=$((fails + 1))
+  fi
+}
+
+echo
+echo "=== clone URL redaction ==="
+
+check_redact "token userinfo -> ***" \
+  "https://***@github.com/a/b.git" \
+  "https://x-access-token:sekrit@github.com/a/b.git"
+
+check_redact "plain URL -> unchanged" \
+  "https://forgejo.jx.leartech.com/it-test/lh-test.git" \
+  "https://forgejo.jx.leartech.com/it-test/lh-test.git"
+
+check_redact "an @ in the path (no userinfo) -> unchanged" \
+  "https://forge.example/it-test/a@b.git" \
+  "https://forge.example/it-test/a@b.git"
+
 if [ "$fails" -ne 0 ]; then
   echo
   echo "FAIL: $fails case(s). The baseline clone must follow the PR's own forge."
