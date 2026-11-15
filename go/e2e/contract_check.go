@@ -188,44 +188,76 @@ var (
 	envExpansion = regexp.MustCompile(`\$\{?[A-Za-z_]`)
 )
 
-// hardcodedHost returns the first literal host in a script that is not part of a
-// variable expansion, or "".
+// hardcodedHost returns the first literal host a script uses as a REQUEST TARGET,
+// or "".
+//
+// Because a URL in a script has two meanings and only one is a finding:
+// `curl https://api.example/mcp` requests that host, while
+// `check "<loc>https://www.example</loc>"` compares against a string. Measured
+// across the 34 repos that run a pack, the second is much the more common, and
+// flagging it would make the check untrustworthy — a lesson from the first version
+// of this rule, which reported four findings across the estate and all four were
+// expected-string comparisons.
 func hardcodedHost(path string) string {
 	b, err := os.ReadFile(path) // #nosec G304 -- path came from the pack glob
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	text := string(b)
+	// A script that never mentions the preview at all is the other real failure:
+	// whatever it does test, it is not this PR.
+	touchesPreview := strings.Contains(text, "PREVIEW_URL") ||
+		strings.Contains(text, "STAGING_URL") || strings.Contains(text, "BASE_URL")
+
+	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "#") {
 			continue // a comment may name a host; it is not a request
 		}
-		if strings.Contains(line, "BASE_URL") || strings.Contains(line, "PREVIEW_URL") ||
-			strings.Contains(line, "STAGING_URL") {
-			continue // the one place a host belongs is inside a variable
-		}
-		m := curlURLCall.FindStringSubmatch(line)
-		if m == nil {
+		if !isRequestLine(trimmed) {
 			continue
 		}
-		// If the URL came from a variable the literal host is not here anyway; a
-		// match on a line that also expands an env var is a base URL being
-		// composed, not pinned.
-		if envExpansion.MatchString(line) && !strings.Contains(line, "://") {
-			continue
+		for _, m := range curlURLCall.FindAllStringSubmatch(trimmed, -1) {
+			host := m[1]
+			if isBenignHost(host) {
+				continue
+			}
+			if isEstateHost(host) {
+				// An estate host is always derivable from the run: the preview's
+				// own namespace, the staging URL, or a variable.
+				return host
+			}
+			if !touchesPreview {
+				return host
+			}
+			// A third-party host (an API the service calls) alongside a preview
+			// variable is a legitimate call, not a substitute for one.
 		}
-		if isBenignHost(m[1]) {
-			continue
-		}
-		return m[1]
 	}
 	return ""
 }
 
-// isBenignHost filters hosts that are not "a preview": schema URLs in comments
-// are already skipped, but a tool may legitimately call a public API.
+// isRequestLine reports whether a line actually fetches a URL, as opposed to
+// printing or comparing one.
+func isRequestLine(line string) bool {
+	for _, tool := range []string{"curl ", "curl\t", "wget ", "httpie ", "xh "} {
+		if strings.Contains(line+" ", tool) {
+			return true
+		}
+	}
+	return false
+}
+
+// isEstateHost matches the estate's own domains, which are always reachable as a
+// variable from inside a pipeline.
+func isEstateHost(host string) bool {
+	return strings.HasSuffix(host, ".leartech.com") || host == "leartech.com"
+}
+
+// isBenignHost filters hosts that are not "a preview": a loopback address, or a
+// schema URL, is never the mistake this check is for.
 func isBenignHost(host string) bool {
-	for _, h := range []string{"localhost", "127.0.0.1", "example.com", "schema.org", "w3.org"} {
+	for _, h := range []string{"localhost", "127.0.0.1", "example.com", "schema.org", "w3.org", "github.com"} {
 		if host == h || strings.HasSuffix(host, "."+h) {
 			return true
 		}
