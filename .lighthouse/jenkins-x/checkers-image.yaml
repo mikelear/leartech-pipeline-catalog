@@ -1,9 +1,9 @@
 # Build the checkers image on every PR, without pushing.
 #
 # The point is that a change to any checker's source fails HERE rather than on
-# main. The Dockerfile's own final stage asserts all five binaries landed and
-# are executable, so a silently-missing checker cannot ship -- a consumer would
-# otherwise fall through to the curl path and never notice.
+# main. The Dockerfile's own final stage asserts every binary landed and is
+# executable, so a missing checker fails the build rather than leaving a consumer
+# to fall through to the curl path unnoticed.
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
