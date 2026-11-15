@@ -1009,8 +1009,18 @@ test-coverage: ## Race + coverage, enforce floor + delta-vs-base
 	echo "=== per-function coverage ==="; \
 	go tool cover -func=cover.out; \
 	TOTAL=$$(go tool cover -func=cover.out | awk '/^total:/ {print $$3}' | sed 's/%//'); \
+	STATEMENTS=$$(grep -vc '^mode:' cover.out || true); \
 	echo; \
 	echo "=== coverage summary ==="; \
+	if [ "$${STATEMENTS:-0}" = "0" ]; then \
+	  echo "FAIL: COVERAGE_SCOPE=$$SCOPE matched no packages, so this run measured nothing."; \
+	  echo "      A profile with no statements reports 0.0%%, which is indistinguishable"; \
+	  echo "      from code that exists and is untested. The scope is the difference:"; \
+	  echo "      the default is $(COVERAGE_SCOPE_DEFAULT), and a repo whose Go lives"; \
+	  echo "      elsewhere (a flat module at the root, cmd/, pkg/) must say so:"; \
+	  echo "        COVERAGE_SCOPE=./...  (or pkg/..., cmd/...)"; \
+	  exit 1; \
+	fi; \
 	echo "total=$${TOTAL}%  threshold=$${THRESHOLD}%"; \
 	STATUS="pass"; STATUS_REASON=""; \
 	if awk -v t="$$TOTAL" -v th="$$THRESHOLD" 'BEGIN { exit !(t < th) }'; then \
