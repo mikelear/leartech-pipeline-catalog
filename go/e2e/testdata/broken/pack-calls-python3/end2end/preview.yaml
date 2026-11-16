@@ -1,0 +1,7 @@
+# BROKEN: the pack reads JSON with python3, which the runtime image does not carry.
+# The line fails with "command not found" and the check reports whatever it was about to
+# assert as disproved — leartech-console-api#24 read a missing interpreter as "auth
+# refusals broken", which is a security finding about correct code.
+preview:
+  healthPath: /health
+  service: thing
