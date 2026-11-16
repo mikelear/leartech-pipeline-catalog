@@ -158,7 +158,7 @@ spec:
             # ── Helper: post/update sticky PR comment ───────────────────
             post_sticky_once() {
               local body="$1" outcome="${2:-success}" summary="${3:-end2end-ui update}"
-              /workspace/bin/prpost -tool end2end-ui -check end2end-ui -outcome "$outcome" -cluster "$CLUSTER_TAG" -summary "$summary" -body-file /dev/stdin <<<"$body")
+              /workspace/bin/prpost -tool end2end-ui -check end2end-ui -outcome "$outcome" -cluster "$CLUSTER_TAG" -summary "$summary" -body-file /dev/stdin <<<"$body"
             }
 
             # A PR comment is a notification, not a verdict. Delivery must never decide
