@@ -51,6 +51,26 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
+        # The catalog's tools, from the pinned image. They used to be curled from
+        # raw.githubusercontent inside the step that used them, which made what ran a
+        # different artefact from what merged for up to five minutes (that CDN serves
+        # cache-control: max-age=300) and needed a Go toolchain in every image.
+        - image: ghcr.io/mikelear/leartech-checkers:0.14.0
+          name: provide-catalog-tools
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -eu
+            mkdir -p /workspace/bin
+            for f in /usr/local/bin/prpost /usr/local/share/leartech-go.mk; do
+              test -f "$f" || { echo "FAIL: $f missing from ghcr.io/mikelear/leartech-checkers:0.14.0" >&2; exit 1; }
+            done
+            cp /usr/local/bin/prpost /workspace/bin/prpost
+            cp /usr/local/share/leartech-go.mk /workspace/bin/leartech-go.mk
+            chmod +x /workspace/bin/prpost
+            test -x /workspace/bin/prpost
+            test -f /workspace/bin/leartech-go.mk
+            echo "==> provided /workspace/bin/{prpost,leartech-go.mk}"
         - image: mcr.microsoft.com/dotnet/sdk:11.0
           name: dotnet-mutants
           resources:
@@ -195,8 +215,7 @@ spec:
 
               # One Go poster (go/prpost) via leartech-forge-api: sticky key adopts the
               # old marker and the body gains the machine-readable leartech-report block.
-              mkdir -p /tmp/pp && curl -fsSL "https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/prpost/main.go" -o /tmp/pp/prpost.go && printf 'module pp\ngo 1.27\n' > /tmp/pp/go.mod
-              (cd /tmp/pp && go run prpost.go -tool mutants -check dotnet-mutants -cluster "$CLUSTER_TAG" -outcome success -summary "Mutation score ${SCORE:-reported}" -body-file /dev/stdin <<<"$BODY")
+              /workspace/bin/prpost -tool mutants -check dotnet-mutants -cluster "$CLUSTER_TAG" -outcome success -summary "Mutation score ${SCORE:-reported}" -body-file /dev/stdin <<<"$BODY")
             # Honour Stryker's --break-at exit code (0 = pass, 1 = below threshold).
             exit "${MUTANTS_EXIT:-0}"
   podTemplate:

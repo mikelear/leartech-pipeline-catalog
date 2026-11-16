@@ -28,6 +28,26 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
+        # The catalog's tools, from the pinned image. They used to be curled from
+        # raw.githubusercontent inside the step that used them, which made what ran a
+        # different artefact from what merged for up to five minutes (that CDN serves
+        # cache-control: max-age=300) and needed a Go toolchain in every image.
+        - image: ghcr.io/mikelear/leartech-checkers:0.14.0
+          name: provide-catalog-tools
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -eu
+            mkdir -p /workspace/bin
+            for f in /usr/local/bin/prpost /usr/local/share/leartech-go.mk; do
+              test -f "$f" || { echo "FAIL: $f missing from ghcr.io/mikelear/leartech-checkers:0.14.0" >&2; exit 1; }
+            done
+            cp /usr/local/bin/prpost /workspace/bin/prpost
+            cp /usr/local/share/leartech-go.mk /workspace/bin/leartech-go.mk
+            chmod +x /workspace/bin/prpost
+            test -x /workspace/bin/prpost
+            test -f /workspace/bin/leartech-go.mk
+            echo "==> provided /workspace/bin/{prpost,leartech-go.mk}"
         - image: golangci/golangci-lint:v2.14.0
           name: golangci-lint
           # golangci-lint loads the whole type-checked module graph — memory-heavy
@@ -61,7 +81,7 @@ spec:
             curl -fsSL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
             chmod +x /usr/local/bin/yq
 
-            MK_URL="https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/leartech-go.mk"
+            MK_URL="/workspace/bin/leartech-go.mk"
             echo "==> fetching golden mk from $MK_URL"
             curl -fsSL -o /tmp/leartech-go.mk "$MK_URL"
 
