@@ -527,7 +527,7 @@ spec:
         # mistake — in seconds, with the fix named — instead of ten minutes into a wait
         # that then says "never returned 200". A repo that has not adopted it is told so
         # and passes, so the standard arrives without reddening 31 repos at once.
-        - image: ghcr.io/mikelear/leartech-checkers:0.16.0
+        - image: ghcr.io/mikelear/leartech-checkers:0.18.0
           name: end2end-declare
           resources: {}
           workingDir: /workspace/source
@@ -536,7 +536,7 @@ spec:
             set -eu
             e2e contract -dir . -check-name web
 
-        - image: debian:12-slim
+        - image: ghcr.io/mikelear/leartech-checkers:0.18.0
           name: end2end-env
           resources: {}
           env:
@@ -556,12 +556,23 @@ spec:
             export PATH="/workspace/bin:$PATH"
             [ -f .jx/variables.sh ] && source .jx/variables.sh
 
-            # Tools the contract guarantees to consumer scripts.
-            apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-              ca-certificates curl jq bash python3 python3-pip openssl >/dev/null
-            # kubectl for scripts that need cluster-internal access (e.g. Hydra admin, Mongo seed)
-            curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl
-            chmod +x /usr/local/bin/kubectl
+            # Tools the consumer-script contract guarantees. They come from the image,
+            # NOT from an install here: a Tekton task's steps are separate containers
+            # sharing only /workspace, so anything installed in this step is missing from
+            # the next four. That is how the wait phase came to run with no curl and no
+            # kubectl and report a healthy preview as broken.
+            #
+            # Asserted rather than assumed, because the failure mode is silence: a script
+            # that cannot find curl says "command not found" three steps later, inside a
+            # message about something else.
+            for tool in curl kubectl jq bash; do
+              command -v "$tool" >/dev/null || {
+                echo "FAIL: $tool missing from the checkers image. Every end2end phase runs" >&2
+                echo "      in that image precisely so a tool is where the step needs it." >&2
+                exit 1
+              }
+            done
+            echo "==> step tools present: $(command -v curl kubectl jq bash | tr '\n' ' ')"
 
             source .jx/variables.sh
 
@@ -689,7 +700,7 @@ spec:
             echo "    PREVIEW_URL=$PREVIEW_URL"
             echo "    PREVIEW_NAMESPACE=$PREVIEW_NAMESPACE"
 
-        - image: debian:12-slim
+        - image: ghcr.io/mikelear/leartech-checkers:0.18.0
           name: end2end-contract
           resources: {}
           env:
@@ -821,7 +832,7 @@ spec:
             fi
 
 
-        - image: debian:12-slim
+        - image: ghcr.io/mikelear/leartech-checkers:0.18.0
           name: end2end-await
           resources: {}
           env:
@@ -830,6 +841,26 @@ spec:
                 secretKeyRef:
                   name: tekton-git
                   key: password
+                  optional: true
+            # A wait failure is the most common end2end failure, so its comment is the
+            # most valuable thing this task posts. Without these the step prints
+            # "FORGE_API_URL or PULL_NUMBER unset; skipping PR comment" and the PR shows a
+            # red check with no explanation of why the preview never came up.
+            - name: FORGE_API_URL
+              value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+            - name: LEARTECH_AUTH_SERVER_URL
+              value: https://hydra-sp-infra.jx.leartech.com
+            - name: LEARTECH_AUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_ID
+                  optional: true
+            - name: LEARTECH_AUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_SECRET
                   optional: true
           volumeMounts:
           - name: gcs-key
@@ -1276,7 +1307,7 @@ spec:
             PREVIEW_SERVICE_URL="$PREVIEW_SERVICE_URL"
             EOF
 
-        - image: debian:12-slim
+        - image: ghcr.io/mikelear/leartech-checkers:0.18.0
           name: end2end-run
           resources: {}
           env:
@@ -1370,7 +1401,7 @@ spec:
             SCRIPT_EXIT="$SCRIPT_EXIT"
             EOF
 
-        - image: debian:12-slim
+        - image: ghcr.io/mikelear/leartech-checkers:0.18.0
           name: end2end-report
           resources: {}
           env:
