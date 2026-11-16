@@ -82,8 +82,9 @@ spec:
             chmod +x /usr/local/bin/yq
 
             MK_URL="/workspace/bin/leartech-go.mk"
-            echo "==> fetching golden mk from $MK_URL"
-            curl -fsSL -o /tmp/leartech-go.mk "$MK_URL"
+            test -f "$MK_URL" || { echo "FAIL: $MK_URL missing; the provide-catalog-tools step did not run" >&2; exit 1; }
+            echo "==> using the mk from the pinned checkers image: $MK_URL"
+            cp "$MK_URL" /tmp/leartech-go.mk
 
             echo "==> make -f /tmp/leartech-go.mk lint"
             make -f /tmp/leartech-go.mk lint
