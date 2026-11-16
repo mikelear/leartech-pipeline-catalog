@@ -79,25 +79,6 @@ func allFindings(repoDir, lane string) []string {
 	}
 
 	if c != nil {
-		for _, seed := range c.Seeds {
-			p := filepath.Join(repoDir, seed)
-			info, err := os.Stat(p)
-			if err != nil {
-				add("%s: seed %q does not exist.", ContractFile, seed)
-				continue
-			}
-			if info.Mode()&0o111 == 0 {
-				add("%s: seed %q is not executable.", ContractFile, seed)
-			}
-			if SeedNameLooksLikeACheck(seed) {
-				add("%s: seed %q looks like a CHECK, not setup. The UI lane runs its seeds "+
-					"before, and again before Playwright, with failures swallowed — on "+
-					"leartech-auth-service that meant the functional suite ran twice and "+
-					"reported its failures as 'continuing'. Name a seed for what it sets up "+
-					"(register/seed/setup/reset/fixture/bootstrap) or move it back into the pack.",
-					ContractFile, seed)
-			}
-		}
 		for _, p := range c.Probes {
 			for _, host := range probeHosts(p.URL) {
 				if hostAppearsInCharts(repoDir, host) {
@@ -108,6 +89,54 @@ func allFindings(repoDir, lane string) []string {
 					"held a ready preview closed for 10 minutes waiting on a 404'd hydra URL. "+
 					"If the host is created at runtime, template it (${NAMESPACE}) so this "+
 					"check can see that.", ContractFile, p.URL, host)
+			}
+		}
+	}
+
+	// ── setup: the menu, and the one legal exception ──────────────────────
+	//
+	// Every rule here exists because a repo wrote its own setup and it cost someone:
+	// a sibling suite flipped a shared staging fixture's role and could not restore it
+	// (the header of leartech-auth-service's 00-reset-staging-fixtures.sh records it),
+	// and a borrow-staging's-issuer preview could not test a single negative case.
+	if c != nil {
+		declared := map[string]bool{}
+		for _, s := range c.Setup {
+			if s.Verb == VerbProbe || s.Verb == VerbHydraClient {
+				continue
+			}
+			declared[string(s.Verb)] = true
+		}
+		bespoke := map[string]bool{}
+		for _, b := range c.Bespoke {
+			bespoke[normaliseScript(repoDir, b.Script)] = true
+		}
+
+		// A setup-looking script in the pack that is neither a menu verb's work nor a
+		// declared exception is the mix-and-match case: it runs, nobody reviewed it as
+		// setup, and against staging it can corrupt shared state.
+		for _, script := range scripts {
+			if !looksLikeSetup(script) {
+				continue
+			}
+			rel := normaliseScript(repoDir, script)
+			if bespoke[rel] {
+				continue
+			}
+			add("%s is a setup script the catalog does not provide and the repo has not "+
+				"declared. Setup is a menu (see `e2e setup -h`): declare the procedure under "+
+				"preview.setup with a verb, or declare this file under preview.bespoke with a "+
+				"reason to keep it preview-only. A setup script that nobody declared is how a "+
+				"shared staging fixture gets poisoned: leartech-auth-service carries a "+
+				"00-reset-staging-fixtures.sh purely to repair the last time that happened.",
+				rel)
+		}
+
+		// A bespoke file that does not exist is an exception to nothing.
+		for _, b := range c.Bespoke {
+			p := filepath.Join(repoDir, b.Script)
+			if _, err := os.Stat(p); err != nil {
+				add("%s: bespoke script %q does not exist.", ContractFile, b.Script)
 			}
 		}
 	}
@@ -124,15 +153,33 @@ func runContract(args []string) int {
 	fs := flag.NewFlagSet("e2e contract", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "repository root")
 	lane := fs.String("check-name", "web", "which lane: web or ui")
+	strict := fs.Bool("strict", false, "fail even when the repo has not adopted the standard")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
+	adopted := adoptedStandard(*dir)
 	findings := allFindings(*dir, *lane)
 	sort.Strings(findings)
 	if len(findings) == 0 {
 		fmt.Printf("==> e2e contract: ok (%d pack script(s))\n", len(packScripts(*dir)))
 		return 0
 	}
+
+	// MIGRATION RULE. A repo that has not written end2end/preview.yaml has not adopted
+	// the standard, and reddening it would redden 31 repos for a file that did not exist
+	// last week. It is reported so the work is visible, and it fails the moment the repo
+	// adopts — which is the honest boundary: the standard binds the repos that accepted
+	// it, and adoption is one file.
+	if !adopted && !*strict {
+		fmt.Printf("==> e2e contract: %d finding(s) — NOT YET CONFORMANT (reported, not failed)\n\n", len(findings))
+		for _, f := range findings {
+			fmt.Printf("  - %s\n\n", f)
+		}
+		fmt.Printf("This repo has not adopted the standard yet (no %s). Adding that file\n", ContractFile)
+		fmt.Println("makes these findings fail the gate, which is what `-strict` does today.")
+		return 0
+	}
+
 	fmt.Printf("==> e2e contract: %d finding(s)\n\n", len(findings))
 	for _, f := range findings {
 		fmt.Printf("  - %s\n\n", f)
@@ -141,6 +188,13 @@ func runContract(args []string) int {
 	fmt.Println("that gets its declaration wrong learns here in seconds, not from an")
 	fmt.Println("end2end run that waited ten minutes and then said 'never returned 200'.")
 	return 1
+}
+
+// adoptedStandard reports whether a repo has taken the standard on. It is the presence
+// of the declaration and nothing else, so the boundary is one file a reviewer can see.
+func adoptedStandard(repoDir string) bool {
+	_, err := os.Stat(filepath.Join(repoDir, ContractFile))
+	return err == nil
 }
 
 func runExplain(args []string) int {
@@ -172,6 +226,42 @@ func rel(root, path string) string {
 		return r
 	}
 	return path
+}
+
+// setupNames are the words a file name uses when it is setup rather than a check.
+// Deliberately the same list SeedNameLooksLikeACheck uses, inverted, so the two agree
+// about one file name.
+// disagree about what a setup step is.
+var setupNames = []string{"seed", "setup", "reset", "register", "fixture", "bootstrap", "provision"}
+
+// looksLikeSetup reports whether a pack script's name says it sets state up. It is a
+// name test on purpose: a check that mutates would need reading the script, and a rule
+// that guesses would be worse than one that asks the repo to declare.
+func looksLikeSetup(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	for _, marker := range setupNames {
+		if strings.Contains(base, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// normaliseScript makes a declared path and a walked path comparable regardless of
+// "./" prefixes or a repo root.
+func normaliseScript(repoDir, path string) string {
+	p := filepath.Clean(path)
+	root := filepath.Clean(repoDir)
+	// A path walked from the repo root carries it as a prefix; a declared one does not.
+	// Comparing the two without this is how a correctly-declared exception still reads
+	// as undeclared.
+	if rel, err := filepath.Rel(root, p); err == nil && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	if rel, err := filepath.Rel(root, filepath.Join(root, p)); err == nil {
+		return rel
+	}
+	return strings.TrimPrefix(p, "./")
 }
 
 // packScripts returns the 0X-*.sh files the runner would execute, in order.

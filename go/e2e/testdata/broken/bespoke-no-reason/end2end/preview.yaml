@@ -1,0 +1,8 @@
+# BROKEN: a declared exception with no reason. With none a reviewer has no way to tell
+# an unavoidable procedure from an unfinished menu verb, which is how a repo ends
+# up with three of them.
+preview:
+  healthPath: /health
+  service: thing
+  bespoke:
+    - script: end2end/00-seed-thing.sh

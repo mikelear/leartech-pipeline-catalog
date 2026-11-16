@@ -1,0 +1,9 @@
+# BROKEN: a verb that is not on the menu. The menu is closed on purpose: it is the
+# one reviewed implementation of each procedure, and "we invented our own" is what
+# produced four generations of the same setup code.
+preview:
+  healthPath: /health
+  service: thing
+  setup:
+    - verb: psql-into-the-sibling
+      name: thing

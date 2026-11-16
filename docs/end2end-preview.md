@@ -29,12 +29,16 @@ preview:
   port:       80                 # optional; else the Service's first port, else 80
   gate:       auto              # auto | required | absent
   versionAnchor: true           # optional; default true
-  probes:                       # optional; must pass before any check runs
-    - url: http://preview-auth-service-hydra.${NAMESPACE}.svc:4445/.well-known/openid-configuration
+  setup:                        # optional; each entry is a verb from the catalog's menu
+    - verb: probe
+      url: http://preview-auth-service-hydra.${NAMESPACE}.svc:4445/.well-known/openid-configuration
       want: 200
       note: hydra's discovery document
-  seeds:                        # optional; SETUP only, never checks
-    - end2end/00-seed-test-data.sh
+    - verb: hydra-client
+      name: thing-e2e
+      scopes: [openid, offline, thing:read]
+      audiences: [leartech-thing]
+      redirectURIs: ["${PREVIEW_URL}/callback"]
 ui:
   probe: ingress               # ingress | service (UI lane only)
 ```
@@ -65,12 +69,7 @@ not hypothetical: `leartech-auth-service`'s preview runs Hydra, and taking
 39 of the 41 repos with a `preview/` directory do not deploy the gate, and every one
 of their runs spends 60–180 seconds discovering that. `gate: absent` says it once.
 
-**`seeds`** — setup, listed explicitly. The UI lane currently runs **every**
-`0X-*.sh` as a "seed" with failures swallowed; on `leartech-auth-service` that is 21
-scripts including the whole functional suite, so a real failure is printed as
-"(seed script exited non-zero — continuing)". A seed's name says what it sets up
-(`register`, `seed`, `setup`, `reset`, `fixture`, `bootstrap`); anything else is a
-check and belongs in the pack.
+**`setup`** — a closed menu, not a place to put scripts. See §3.
 
 ---
 
@@ -82,9 +81,10 @@ check and belongs in the pack.
 |---|---|
 | `healthPath` not declared | next-generation-lending-website#9: the wait guessed |
 | `healthPath` not rooted (`health` not `/health`) | it is appended to a base URL |
-| a `probes:` host no chart under `preview/` creates | leartech-auth-ui#111: every deployment ready, gate held closed on a 404'd hidra URL |
-| a `seeds:` entry that looks like a check | the auth-service suite ran twice as "seeding" |
-| a `seeds:` entry that is missing or not executable | the seed loops skip silently |
+| a `setup:` `probe` host no chart under `preview/` creates | leartech-auth-ui#111: every deployment ready, gate held closed on a 404'd hydra URL |
+| a setup-named script nobody declared | `leartech-auth-service`'s reset script exists because a sibling repo's bespoke setup poisoned a shared fixture |
+| a `setup:` verb that is not on the menu | four generations of the same hand-written client registration |
+| a `bespoke:` entry with no reason, or pointed at staging | an exception nobody can weigh, on an environment another repo is using |
 | a pack script that **requests** a host instead of the preview | a check that never mentions `PREVIEW_URL` cannot be about this PR |
 | a pack script that is not executable | the other lane requires the bit; the move is when it breaks |
 | an `END2END_*`/`E2E_*` env key no task reads | a repo believed it had declared a health path nothing read |
@@ -97,7 +97,84 @@ estate has not paid for it, it is not a check.**
 
 ---
 
-## 3. The examples are the regression pack
+## 3. Setup is a menu, not a script
+
+Every repo wrote its own setup: a `curl` at the Hydra admin API, a `kubectl exec` into
+a sibling Postgres, a script that flipped a fixture user's role. Two costs, both paid.
+
+**It duplicates.** Four generations of "register an OAuth client", each at a different
+age, none of them read back after writing — so a client could be "seeded" and unable to
+request the scope its suite asserts on.
+
+**It can corrupt a shared environment.** `leartech-auth-service` carries
+`end2end/00-reset-staging-fixtures.sh` whose header explains that a *sibling repo's*
+suite flipped `test@` to `tenant_admin` and could not restore it, reddening a different
+repo's gate until a redeploy re-seeded it. Its closing line is the standard: "staging
+is a persistent, SHARED environment".
+
+So the catalog provides the verbs and a repo names the verb its parameters:
+
+```yaml
+setup:
+  - verb: hydra-client
+    name: thing-e2e
+    scopes: [openid, offline, thing:read]
+    audiences: [leartech-thing]
+    redirectURIs: ["${PREVIEW_URL}/callback"]
+```
+
+| verb | what it does | runnable today |
+|---|---|---|
+| `hydra-client` | register a client, **read it back**, assert scopes and audiences stuck | yes |
+| `probe` | assert a URL answers a status | yes |
+| `hydra-secret` | set a client secret from GSM and assert the client accepts it | declared |
+| `auth-user` | create or assert a fixture user's role | declared |
+| `scope` | declare a capability scope so the fleet's vocabulary agrees | declared |
+| `audience` | declare an audience and assert a token can be minted for it | declared |
+
+`e2e setup -dir .` prints the plan; `--apply` runs it. A verb that is declared but not
+runnable **fails** rather than no-opping — a suite that silently ran without its
+fixtures is worse than one that failed.
+
+### `where`: preview and staging are not the same problem
+
+| | preview | staging |
+|---|---|---|
+| lifetime | ephemeral, provisioned per PR | persistent, shared |
+| who runs it | the PR's own pipeline | the **Observer**, on every dispatch |
+| setup may | provision anything | only what is idempotent, because a sibling repo is using the same rows |
+
+Every menu verb is idempotent by construction, so `where: staging` is safe. A bespoke
+script is **preview only**, and the checker refuses `where: staging` on one — that is
+the rule that would have prevented the poisoning incident above.
+
+**The rule that follows for data:** a suite must not *depend* on staging having data
+added for it. If staging needs fixtures, that is the deployment's job — the deploy that
+populates staging runs once and asserts the rows exist; a test that inserts them is
+doing deployment work on every run, against rows another repo is reading. So:
+
+- **preview:** provision freely, it is yours.
+- **staging:** assert, never insert. A `probe` or an `auth-user` verb is an assertion
+  that the deployment did its job; a bespoke insert is not allowed there at all.
+
+### The one legal exception
+
+A procedure the menu cannot express is declared, with a reason, and stays preview-only:
+
+```yaml
+bespoke:
+  - script: end2end/00-seed-session-store.sh
+    reason: the Playwright login reads a cookie bound to the ingress hostname,
+      which no menu verb can mint without a browser; replaced by a verb once one exists.
+```
+
+Undeclared → the check fails and names the file. Declared without a reason → fails.
+Declared for staging → fails. Declared properly → passes, and `e2e explain` lists it, so
+it cannot hide and a repo cannot accumulate three.
+
+---
+
+## 4. The examples are the regression pack
 
 `go/e2e/testdata/` holds declarations, and `go/e2e/testdata_test.go` runs the checker
 over all of them on every build:
@@ -114,6 +191,10 @@ testdata/broken/wrong-probe-host/       -> "no chart under preview/"
 testdata/broken/seed-that-is-a-check/   -> "looks like a CHECK"
 testdata/broken/hardcoded-host/         -> "pins the host"
 testdata/broken/typo-env/               -> "END2END_HEALTH_PAHT"
+testdata/broken/bespoke-setup/          -> "the catalog does not provide"
+testdata/broken/bespoke-in-staging/     -> "staging is persistent and shared"
+testdata/broken/unknown-verb/           -> "not on the catalog's menu"
+testdata/broken/bespoke-no-reason/      -> "has no `reason`"
 ```
 
 The passing four are what a repo should look like. The broken five each reproduce a
@@ -126,15 +207,15 @@ it either still behaves as documented or the build fails.
 
 ---
 
-## 4. Migrating a repo
+## 5. Migrating a repo
 
 1. Read what the task does today from the run you last had:
    `curl` the PR's end2end comment, or run `e2e explain` after writing step 2.
 2. Write `end2end/preview.yaml` — start from the closest fixture in §3.
 3. Set `gate:` honestly. If `preview/helmfile.yaml` has no `preview-gate` release,
    it is `absent`.
-4. Move any `0X-*.sh` that only sets state into `seeds:`, and rename it for what it
-   sets up.
+4. Convert any `0X-*.sh` that only sets state into a menu verb under `setup:`. If it
+   genuinely is not expressible, declare it under `bespoke:` with a reason.
 5. Add the `e2e contract` step to lint (one step; see `tasks/go-test` for the shape
    of a catalog step that curls a pinned tool).
 6. Delete `END2END_HEALTH_PATH` from the pipeline YAML once `healthPath` is declared
@@ -145,7 +226,7 @@ have a readiness step that is longer than the suite.
 
 ---
 
-## 5. What this changes about the failure messages
+## 6. What this changes about the failure messages
 
 The wait now names the deployment, the URL and the status, and it quotes the gate's
 own message on timeout — because the gate's JSON was already the best diagnosis in
@@ -169,7 +250,7 @@ consecutive 200s" on its own.
 that already exists, using the same code CI runs. It is what a developer runs
 instead of opening a PR to find out.
 
-## 6. What the check says about the estate today
+## 7. What the check says about the estate today
 
 Run against all 34 repos that declare an `end2end` gate, with each repo's own
 `.lighthouse`, `end2end/` and `preview/` trees materialised (470 files):
@@ -197,3 +278,21 @@ having it.
 So `hardcoded-host` in `testdata/broken/` is a rule guard, not a post-mortem: no PR
 in the estate has hit it yet, and it is there so that the first one that does is
 caught without a cluster.
+
+## 8. Adoption, and why the check does not red the estate today
+
+A repo that has not written `end2end/preview.yaml` has not adopted the standard, so the
+check **reports** its findings and passes:
+
+```
+==> e2e contract: 1 finding(s) — NOT YET CONFORMANT (reported, not failed)
+```
+
+The moment the file exists, the same findings fail the gate. That boundary is one file
+a reviewer can see, and it is the difference between a standard arriving and 31 repos
+going red for a file that did not exist last week. `-strict` fails regardless, for a
+repo that wants the gate before it has finished the declaration.
+
+`leartech-auth-service` is the worked example: the first commit adds the declaration,
+the check goes red naming its two bespoke scripts and telling it what to do; the second
+declares them and it goes green.

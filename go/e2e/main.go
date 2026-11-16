@@ -36,6 +36,14 @@ const usage = `e2e — the end2end declaration and the preview it describes.
         Print the parsed declaration — defaults resolved — so a consumer can see
         what the pipeline will actually do. A declaration you cannot read back is
         one you cannot review.
+
+  e2e setup [-dir <repo>] [--apply] [-where preview|staging]
+        Print the setup plan from the catalog's menu, and with --apply run it.
+        Setup is a menu: a repo names a verb, never a script.
+
+The menu: hydra-client, probe, hydra-secret, auth-user, scope, audience.
+A procedure the menu cannot express is declared under preview.bespoke with a
+reason, and runs in a preview only.
 `
 
 func main() {
@@ -54,6 +62,8 @@ func main() {
 		os.Exit(runWait(args, true))
 	case "explain":
 		os.Exit(runExplain(args))
+	case "setup":
+		os.Exit(runSetup(args))
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		os.Exit(0)

@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // realDeployments reads the workloads in a preview namespace through kubectl.
@@ -109,4 +113,68 @@ func portOf(ctx context.Context, namespace, name string) int {
 		return 0
 	}
 	return p
+}
+
+// realDo issues one HTTP request. Used by the setup verbs, which talk to the
+// preview's own Hydra admin rather than to the public ingress.
+func realDo(ctx context.Context, method, url string, body []byte) (int, []byte, error) {
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, rdr)
+	if err != nil {
+		return 0, nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, out, nil
+}
+
+// hydraAdminFor finds the Hydra admin Service in a preview namespace.
+//
+// By name, not "the first Service": a preview also runs its app and its peer, and the
+// admin API is the one called hydra-admin or preview-hydra-admin depending on the
+// chart's release prefix. An empty answer means the preview has no issuer of its own,
+// which is a finding rather than something to work around.
+func hydraAdminFor(ctx context.Context, namespace string) string {
+	out, err := exec.CommandContext(ctx, "kubectl", "-n", namespace, "get", "svc", "-o", "json").Output()
+	if err != nil {
+		return ""
+	}
+	var payload struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Spec struct {
+				Ports []struct {
+					Port int `json:"port"`
+				} `json:"ports"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return ""
+	}
+	for _, it := range payload.Items {
+		n := it.Metadata.Name
+		if !strings.HasSuffix(n, "hydra-admin") {
+			continue
+		}
+		port := 4445
+		if len(it.Spec.Ports) > 0 {
+			port = it.Spec.Ports[0].Port
+		}
+		return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", n, namespace, port)
+	}
+	return ""
 }

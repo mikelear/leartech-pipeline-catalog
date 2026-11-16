@@ -1,0 +1,6 @@
+# BROKEN: the repo brought its own setup procedure and declared nothing.
+# This is the mix-and-match case: the script runs, nobody reviewed it AS setup,
+# and against staging it can corrupt a fixture a sibling repo depends on.
+preview:
+  healthPath: /health
+  service: thing
