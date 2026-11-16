@@ -24,6 +24,12 @@ var imageRe = regexp.MustCompile(`image:\s*(\S+)`)
 // cannot provide it.
 const firstWithE2erun = "0.11.35"
 
+// firstWithPrpostAndMk is the first released checkers tag carrying the poster and
+// the shared go-test makefile. Tasks no longer fetch either from raw.githubusercontent,
+// so a pin older than this has no /usr/local/bin/prpost to copy and the provide step
+// fails on every PR — the same incident class as the e2erun one above.
+const firstWithPrpostAndMk = "0.14.0"
+
 func main() {
 	task := flag.String("task", "", "path to the task YAML")
 	flag.Parse()
@@ -45,6 +51,11 @@ func main() {
 	for _, t := range tags {
 		exists[t] = true
 	}
+	// The prpost/mk floor applies to the pin of the step that COPIES them, not to
+	// every checkers pin in the file: a task may pin the image for e2erun alone on an
+	// older tag, and failing that would be a gate wrong about correct configuration.
+	providing := providingTags(string(b))
+
 	fail := false
 	seen := map[string]bool{}
 	for _, m := range imageRe.FindAllStringSubmatch(string(b), -1) {
@@ -67,12 +78,56 @@ func main() {
 		case semverLess(tag, firstWithE2erun):
 			fmt.Printf("FAIL: %s pins leartech-checkers:%s — predates e2erun (first carrying it: %s)\n", *task, tag, firstWithE2erun)
 			fail = true
+		case providing[tag] && semverLess(tag, firstWithPrpostAndMk):
+			fmt.Printf("FAIL: %s pins leartech-checkers:%s — predates prpost and leartech-go.mk (first carrying them: %s)\n", *task, tag, firstWithPrpostAndMk)
+			fail = true
 		}
 	}
 	if fail {
 		os.Exit(1)
 	}
 	fmt.Printf("==> pincheck: %d checkers tag(s) verified against the registry\n", len(seen))
+}
+
+// providingTags returns the checkers tags used by a step that copies prpost, the
+// shared makefile or the rust base policy. A tag qualifies when a reference to one of
+// those paths appears after it and before the next checkers image reference, which is
+// the extent of one Tekton step in these files.
+func providingTags(task string) map[string]bool {
+	type ref struct {
+		line int
+		tag  string
+	}
+	var refs []ref
+	var toolLines []int
+	for i, line := range strings.Split(task, "\n") {
+		if m := imageRe.FindStringSubmatch(line); m != nil {
+			r := strings.Trim(m[1], `"`)
+			if strings.HasPrefix(r, "ghcr.io/mikelear/leartech-checkers:") {
+				refs = append(refs, ref{i, strings.TrimPrefix(r, "ghcr.io/mikelear/leartech-checkers:")})
+			}
+		}
+		for _, tool := range []string{"/usr/local/bin/prpost", "/usr/local/share/leartech-go.mk", "/usr/local/share/deny.base.toml"} {
+			if strings.Contains(line, tool) {
+				toolLines = append(toolLines, i)
+				break
+			}
+		}
+	}
+	out := map[string]bool{}
+	for i, r := range refs {
+		end := 1 << 30
+		if i+1 < len(refs) {
+			end = refs[i+1].line
+		}
+		for _, tl := range toolLines {
+			if tl > r.line && tl < end {
+				out[r.tag] = true
+				break
+			}
+		}
+	}
+	return out
 }
 
 // releasedTags lists the public image's tags from ghcr's registry API.

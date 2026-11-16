@@ -28,6 +28,17 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
+        - image: ghcr.io/mikelear/leartech-checkers:0.14.0
+          name: provide-catalog-tools
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -eu
+            mkdir -p /workspace/bin
+            test -f /usr/local/share/deny.base.toml || { echo "FAIL: deny.base.toml missing from the checkers image" >&2; exit 1; }
+            cp /usr/local/share/deny.base.toml /workspace/bin/deny.base.toml
+            test -f /workspace/bin/deny.base.toml
+            echo "==> provided /workspace/bin/deny.base.toml"
         - image: rust:1.98-slim-bookworm
           name: rust-audit
           resources:
@@ -57,9 +68,8 @@ spec:
             if [ -f deny.toml ]; then
               echo "==> using repo-local deny.toml"
             else
-              echo "==> fetching leartech base deny.toml from catalog"
-              curl -fsSL -o deny.toml \
-                https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/rust/deny.base.toml
+              echo "==> using the leartech base deny.toml from the pinned checkers image"
+              cp /workspace/bin/deny.base.toml deny.toml
             fi
 
             echo "==> cargo deny check (advisories, licenses, bans, sources)"
