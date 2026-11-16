@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -253,5 +255,99 @@ func TestURLDecode(t *testing.T) {
 	}
 	if _, err := urldecode([]byte("%zz")); err == nil {
 		t.Error("malformed encoding was accepted; a half-decoded value is worse than an error")
+	}
+}
+
+// splice is the fixture that separates "refuses an unverified claim" from "refuses an
+// unknown key": the header and the signature stay, only the payload changes. A test that
+// re-mints with forge cannot make that distinction, and this session found a suite
+// claiming to test exactly that while using the wrong primitive.
+func TestSpliceKeepsHeaderAndSignature(t *testing.T) {
+	dir := t.TempDir()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	body := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"user-1","scp":["read"]}`))
+	sig := "c2lnbmF0dXJl"
+	tokenPath := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenPath, []byte(header+"."+body+"."+sig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	claimsPath := filepath.Join(dir, "claims.json")
+	if err := os.WriteFile(claimsPath, []byte(`{"sub":"user-1","scp":["read","write"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := splice(tokenPath, claimsPath)
+	if err != nil {
+		t.Fatalf("splice: %v", err)
+	}
+	parts := strings.Split(got, ".")
+	if len(parts) != 3 {
+		t.Fatalf("got %d segments, want 3", len(parts))
+	}
+	if parts[0] != header {
+		t.Error("header changed; then a refusal could be about the algorithm rather than the edit")
+	}
+	if parts[2] != sig {
+		t.Error("signature changed; the point is that it no longer matches the payload")
+	}
+	payload, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	if !strings.Contains(string(payload), `"write"`) {
+		t.Errorf("payload = %s, want the edited claims", payload)
+	}
+}
+
+// An emptied payload would be refused for having no claims rather than for the edit,
+// which is a different finding wearing the same 401.
+func TestSpliceRefusesEmptyClaims(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenPath, []byte("a.b.c"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	claimsPath := filepath.Join(dir, "claims.json")
+	if err := os.WriteFile(claimsPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := splice(tokenPath, claimsPath); err == nil {
+		t.Fatal("an empty claims object produced a token")
+	}
+}
+
+// alg:none is the classic confusion bug: the token asks to be trusted unsigned. The
+// fixture must actually be signature-less, or the test proves nothing.
+func TestUnsignedDropsTheSignature(t *testing.T) {
+	dir := t.TempDir()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	body := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"user-1"}`))
+	tokenPath := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenPath, []byte(header+"."+body+".c2ln"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := unsigned(tokenPath, "")
+	if err != nil {
+		t.Fatalf("unsigned: %v", err)
+	}
+	parts := strings.Split(got, ".")
+	if len(parts) != 3 || parts[2] != "" {
+		t.Fatalf("got %q, want three segments with an empty signature", got)
+	}
+	if parts[1] != body {
+		t.Error("payload changed; only the header and the signature should")
+	}
+	raw, _ := base64.RawURLEncoding.DecodeString(parts[0])
+	if !strings.Contains(string(raw), `"alg":"none"`) {
+		t.Errorf("header = %s, want alg none", raw)
+	}
+}
+
+func TestUnsignedRejectsANonJWT(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenPath, []byte("not-a-jwt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unsigned(tokenPath, "none"); err == nil {
+		t.Fatal("a non-JWT produced a token")
 	}
 }

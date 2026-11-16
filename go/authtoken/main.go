@@ -22,6 +22,8 @@
 //	authtoken claim scp            # from a JWT
 //	authtoken payload              # a JWT's whole payload, as JSON
 //	authtoken forge                # claims JSON in, an unverifiable JWT out
+//	authtoken splice <jwt> <file>  # payload replaced, header AND signature kept
+//	authtoken unsigned <jwt> <alg> # header's alg set, signature dropped
 //	authtoken count                # how many entries a JSON array has
 //	authtoken pick users email=x id  # one object's field, found by another
 //	authtoken urldecode            # form-encoded text in, plain text out
@@ -48,6 +50,7 @@ import (
 func main() {
 	if len(os.Args) < 2 || len(os.Args) > 5 {
 		fmt.Fprintln(os.Stderr, "usage: authtoken field <name> | claim <name> | payload | forge | "+
+			"splice <jwt> <claims.json> | unsigned <jwt> <alg> | "+
 			"count | pick <array> <key>=<value> <field> | urldecode  (reads stdin)")
 		os.Exit(2)
 	}
@@ -67,6 +70,10 @@ func main() {
 		out, err = payload(in)
 	case "forge":
 		out, err = forge(in)
+	case "splice":
+		out, err = splice(arg(2), arg(3))
+	case "unsigned":
+		out, err = unsigned(arg(2), arg(3))
 	case "count":
 		out, err = count(in)
 	case "pick":
@@ -195,6 +202,79 @@ func forge(in []byte) (string, error) {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(signing))
 	return signing + "." + enc.EncodeToString(mac.Sum(nil)), nil
+}
+
+// splice returns the token with its payload REPLACED and its original header and
+// signature untouched.
+//
+// This is the one fixture that separates "refuses because the signature does not match"
+// from "reads the claims without verifying anything". A suite that edits a payload and
+// keeps the signature must get 401: 200 means the claims were trusted as parsed, and every
+// scope and audience assertion above it is decorative. Re-minting with `forge` cannot show
+// that, because its signature was never valid either — the refusal could be about the key
+// rather than about verification.
+func splice(tokenPath, claimsPath string) (string, error) {
+	token, err := os.ReadFile(tokenPath) // #nosec G304 -- fixture path from the caller
+	if err != nil {
+		return "", fmt.Errorf("reading the token: %w", err)
+	}
+	claims, err := os.ReadFile(claimsPath) // #nosec G304
+	if err != nil {
+		return "", fmt.Errorf("reading the claims: %w", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(claims, &obj); err != nil {
+		return "", fmt.Errorf("claims are not a JSON object: %w", err)
+	}
+	if len(obj) == 0 {
+		return "", fmt.Errorf("claims are empty; an emptied payload would be refused " +
+			"for having no claims rather than for the edit")
+	}
+	parts := strings.Split(strings.TrimSpace(string(token)), ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("not a JWT: %d segment(s)", len(parts))
+	}
+	body, err := json.Marshal(obj)
+	if err != nil {
+		return "", err
+	}
+	// RawURLEncoding: JWT segments are base64url without padding.
+	return parts[0] + "." + base64.RawURLEncoding.EncodeToString(body) + "." + parts[2], nil
+}
+
+// unsigned returns the token with its header's alg set and its signature REMOVED — the
+// alg:none fixture.
+//
+// A verifier that accepts it has taken the algorithm from the attacker's header, which is
+// the classic JWT confusion bug: the token says "no signature required" and the server
+// agrees. 401 is the only acceptable answer.
+func unsigned(tokenPath, alg string) (string, error) {
+	token, err := os.ReadFile(tokenPath) // #nosec G304
+	if err != nil {
+		return "", fmt.Errorf("reading the token: %w", err)
+	}
+	parts := strings.Split(strings.TrimSpace(string(token)), ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("not a JWT: %d segment(s)", len(parts))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("header is not base64url: %w", err)
+	}
+	var hdr map[string]any
+	if err := json.Unmarshal(raw, &hdr); err != nil {
+		return "", fmt.Errorf("header is not JSON: %w", err)
+	}
+	if alg == "" {
+		alg = "none"
+	}
+	hdr["alg"] = alg
+	out, err := json.Marshal(hdr)
+	if err != nil {
+		return "", err
+	}
+	// A trailing dot with nothing after it IS the signature-less form.
+	return base64.RawURLEncoding.EncodeToString(out) + "." + parts[1] + ".", nil
 }
 
 // decodePayload returns the raw bytes of a JWT's payload segment, so claim
