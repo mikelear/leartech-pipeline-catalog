@@ -191,6 +191,19 @@ spec:
               exit 0
             fi
 
+            # The tools this step uses, asserted rather than assumed. This lane needs the
+            # playwright image for its browsers, so it cannot borrow the checkers image
+            # the other lane's phases run in — which leaves the image as the one place a
+            # tool can disappear silently, presenting as a preview that never came up.
+            for tool in curl jq node npx; do
+              command -v "$tool" >/dev/null || {
+                echo "FAIL: $tool missing from ghcr.io/mikelear/playwright-runner. This step" >&2
+                echo "      waits on the preview with curl and runs the specs with npx." >&2
+                exit 1
+              }
+            done
+            echo "==> step tools present: $(command -v curl jq node npx | tr '\n' ' ')"
+
             # ── Wait for preview ────────────────────────────────────────
             HEALTH_PATH="${END2END_HEALTH_PATH:-/health/live}"
             MAX_WAIT="${END2END_HEALTH_TIMEOUT:-600}"
