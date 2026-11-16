@@ -95,7 +95,7 @@ RUN set -eu; \
     test -f /usr/local/share/leartech-go.mk || { echo "FAIL: leartech-go.mk did not land in the image" >&2; exit 1; }; \
     test -f /usr/local/share/deny.base.toml || { echo "FAIL: deny.base.toml did not land in the image" >&2; exit 1; }; \
     for t in bash curl jq openssl kubectl; do \
-      command -v "$$t" >/dev/null || { echo "FAIL: $$t missing from the runtime image; a consumer step would have to install it" >&2; exit 1; }; \
+      command -v "$t" >/dev/null || { echo "FAIL: $t missing from the runtime image; a consumer step would have to install it" >&2; exit 1; }; \
     done; \
     echo "==> leartech-checkers: 15 binaries, leartech-go.mk, and the step tools (bash curl jq openssl kubectl)"
 
