@@ -522,6 +522,20 @@ spec:
             test -x /workspace/bin/e2erun
             echo "==> provided /workspace/bin/e2erun"
 
+        # The declaration check, before anything that needs a cluster. A repo that
+        # adopted the standard (end2end/preview.yaml exists) fails here on a declaration
+        # mistake — in seconds, with the fix named — instead of ten minutes into a wait
+        # that then says "never returned 200". A repo that has not adopted it is told so
+        # and passes, so the standard arrives without reddening 31 repos at once.
+        - image: ghcr.io/mikelear/leartech-checkers:0.16.0
+          name: end2end-declare
+          resources: {}
+          workingDir: /workspace/source
+          script: |
+            #!/bin/sh
+            set -eu
+            e2e contract -dir . -check-name web
+
         - image: debian:12-slim
           name: end2end-env
           resources: {}
