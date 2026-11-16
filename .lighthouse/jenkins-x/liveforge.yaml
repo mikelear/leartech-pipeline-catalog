@@ -32,7 +32,7 @@ spec:
         # leartech-forge-api (route tier); this gate clones them at the PR's
         # pinned versions and runs their -tags liveforge suites. A failure is a
         # REAL forge regression, not a mock disagreement.
-        - image: golang:1.27.2
+        - image: golang:1.27.4
           name: liveforge-drivers-and-routes
           resources:
             requests:

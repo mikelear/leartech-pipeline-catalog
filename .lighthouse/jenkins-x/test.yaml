@@ -34,7 +34,7 @@ spec:
         # Every go/<tool> module is its own unit; this gate runs them all.
         # The catalog ships the estate's quality gates — a broken gate tool is
         # worse than a broken app, so the tools gate themselves here.
-        - image: golang:1.27.2
+        - image: golang:1.27.4
           name: go-test-all-tools
           resources:
             requests:
