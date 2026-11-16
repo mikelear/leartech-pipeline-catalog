@@ -118,7 +118,7 @@ spec:
             The PR build may still be running. Re-run with \`/test dynamic-security-scan\` after the preview is deployed."
 
                 if [ -n "${FORGE_API_URL:-}" ] && [ -n "$PULL_NUMBER" ]; then
-                  /workspace/bin/prpost -tool dynamic-scan -check dynamic-scan -outcome pending -cluster "${CLUSTER_ID:-unknown}" -summary "skipped: preview not ready in 900s" -body-file /dev/stdin <<<"$SKIP_COMMENT") || true
+                  /workspace/bin/prpost -tool dynamic-scan -check dynamic-scan -outcome pending -cluster "${CLUSTER_ID:-unknown}" -summary "skipped: preview not ready in 900s" -body-file /dev/stdin <<<"$SKIP_COMMENT" || true
                 fi
                 exit 0
               fi
