@@ -28,7 +28,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/mikelear/leartech-checkers:0.19.2
+        - image: ghcr.io/mikelear/leartech-checkers:0.22.0
           name: provide-catalog-tools
           resources: {}
           script: |
