@@ -120,7 +120,7 @@ func LoadContract(repoDir string) (*Contract, []string) {
 	if err != nil {
 		return nil, []string{fmt.Sprintf(
 			"%s: not readable (%v). A repo with an end2end pack must declare its preview: "+
-				"healthPath, and optionally service/port/gate/probes/seeds. "+
+				"healthPath, and optionally service/port/gate/setup/bespoke. "+
 				"See docs/end2end-preview.md.", ContractFile, err)}
 	}
 	var d DeclaredContract
