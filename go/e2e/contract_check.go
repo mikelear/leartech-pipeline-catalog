@@ -123,13 +123,15 @@ func allFindings(repoDir, lane string) []string {
 			if bespoke[rel] {
 				continue
 			}
-			add("%s is a setup script the catalog does not provide and the repo has not "+
-				"declared. Setup is a menu (see `e2e setup -h`): declare the procedure under "+
-				"preview.setup with a verb, or declare this file under preview.bespoke with a "+
-				"reason to keep it preview-only. A setup script that nobody declared is how a "+
-				"shared staging fixture gets poisoned: leartech-auth-service carries a "+
-				"00-reset-staging-fixtures.sh purely to repair the last time that happened.",
-				rel)
+			add("%s sets state up, and setup is a menu the catalog provides rather than a "+
+				"script each repo writes. Declare what it does under preview.setup with a verb "+
+				"— hydra-client (register an OAuth client and read it back), auth-user (create "+
+				"or assert a fixture user's role), audience, scope, hydra-secret, probe — so "+
+				"there is one reviewed implementation, it is idempotent, and it is safe against "+
+				"the SHARED staging environment the Observer runs the same pack on. If the "+
+				"procedure genuinely is not a verb, declare this file under preview.bespoke "+
+				"with a reason; that keeps it in a preview and puts the exception in review. "+
+				"Run `e2e setup -h` for the menu.", rel)
 		}
 
 		// A bespoke file that does not exist is an exception to nothing.

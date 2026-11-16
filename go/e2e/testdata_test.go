@@ -51,7 +51,7 @@ func TestBrokenFixturesFailForTheirOwnReason(t *testing.T) {
 		{"testdata/broken/wrong-probe-host", "no chart under preview/"},
 		{"testdata/broken/hardcoded-host", "pins the host"},
 		{"testdata/broken/typo-env", "END2END_HEALTH_PAHT"},
-		{"testdata/broken/bespoke-setup", "the catalog does not provide"},
+		{"testdata/broken/bespoke-setup", "setup is a menu the catalog provides"},
 		{"testdata/broken/bespoke-in-staging", "staging is persistent and shared"},
 		{"testdata/broken/unknown-verb", "not on the catalog's menu"},
 		{"testdata/broken/bespoke-no-reason", "has no `reason`"},
