@@ -689,11 +689,16 @@ spec:
 
             ED2E_LIB
 
+            # EXPORTED, not merely assigned. Each phase sources these files and then RUNS
+            # the pack as a child process; a plain assignment in a sourced file sets a
+            # shell variable that no child inherits, so the pack saw an empty PREVIEW_URL
+            # and 19 of 21 scripts skipped themselves. One shell used to do all of this,
+            # where the task's own export carried through.
             cat > /workspace/.end2end/env <<EOF
-            PREVIEW_HOST_BASE="$PREVIEW_HOST_BASE"
-            PREVIEW_HOST_PREFIX="$PREVIEW_HOST_PREFIX"
-            PREVIEW_URL="$PREVIEW_URL"
-            PREVIEW_NAMESPACE="$PREVIEW_NAMESPACE"
+            export PREVIEW_HOST_BASE="$PREVIEW_HOST_BASE"
+            export PREVIEW_HOST_PREFIX="$PREVIEW_HOST_PREFIX"
+            export PREVIEW_URL="$PREVIEW_URL"
+            export PREVIEW_NAMESPACE="$PREVIEW_NAMESPACE"
             EOF
 
             echo "==> consumer env (written to /workspace/.end2end/env so later steps see it):"
@@ -752,11 +757,11 @@ spec:
 
 
             cat > /workspace/.end2end/env.contract <<EOF
-            MARKER="$MARKER"
-            CLUSTER_TAG="$CLUSTER_TAG"
-            HAS_SCRIPT="$HAS_SCRIPT"
-            HAS_OPTOUT="$HAS_OPTOUT"
-            OPTOUT_REASON="$OPTOUT_REASON"
+            export MARKER="$MARKER"
+            export CLUSTER_TAG="$CLUSTER_TAG"
+            export HAS_SCRIPT="$HAS_SCRIPT"
+            export HAS_OPTOUT="$HAS_OPTOUT"
+            export OPTOUT_REASON="$OPTOUT_REASON"
             EOF
 
 
@@ -1304,7 +1309,7 @@ spec:
               exit 1
             fi
             cat > /workspace/.end2end/env.await <<EOF
-            PREVIEW_SERVICE_URL="$PREVIEW_SERVICE_URL"
+            export PREVIEW_SERVICE_URL="$PREVIEW_SERVICE_URL"
             EOF
 
         - image: ghcr.io/mikelear/leartech-checkers:0.18.0
@@ -1402,7 +1407,7 @@ spec:
 
 
             cat > /workspace/.end2end/env.run <<EOF
-            SCRIPT_EXIT="$SCRIPT_EXIT"
+            export SCRIPT_EXIT="$SCRIPT_EXIT"
             EOF
 
         - image: ghcr.io/mikelear/leartech-checkers:0.18.0
