@@ -57,7 +57,26 @@ RUN set -eu; \
 # A shell is required: these run as Tekton step images, and a Tekton `script:`
 # block needs an interpreter. scratch would be smaller and unusable.
 FROM alpine:3.24
-RUN apk add --no-cache ca-certificates git
+# The tools a consumer STEP needs, not just the ones the checkers need.
+#
+# WHY THEY BELONG HERE. A Tekton task's steps are separate containers that share only
+# /workspace, so a tool installed in one step is not in the next. The end2end task used
+# to apt-get curl and download kubectl in its FIRST step and then run four more in
+# plain debian:12-slim — where neither exists. The wait phase therefore reported
+# "kubectl or PULL_PULL_SHA unavailable" and probed a Service URL it had never resolved,
+# and the failure read as a broken preview rather than a container with no curl.
+#
+# Every step that needs a shell tool can now run in THIS image and have it, so the
+# class is gone rather than repeatedly patched. Installed once, at build time, instead
+# of apt-get per run.
+RUN apk add --no-cache ca-certificates git bash curl jq openssl
+# kubectl from the release channel, pinned by digest-of-version at build time so the
+# image is reproducible from its tag alone.
+RUN set -eu; \
+    v=$(curl -fsSL https://dl.k8s.io/release/stable.txt); \
+    curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${v}/bin/linux/amd64/kubectl"; \
+    chmod +x /usr/local/bin/kubectl; \
+    kubectl version --client
 COPY --from=build /out/ /usr/local/bin/
 # The shared go-test makefile ships here too, for the same reason the binaries do:
 # a task that curls it from raw.githubusercontent gets whatever that CDN is serving,
@@ -75,7 +94,10 @@ RUN set -eu; \
     done; \
     test -f /usr/local/share/leartech-go.mk || { echo "FAIL: leartech-go.mk did not land in the image" >&2; exit 1; }; \
     test -f /usr/local/share/deny.base.toml || { echo "FAIL: deny.base.toml did not land in the image" >&2; exit 1; }; \
-    echo "==> leartech-checkers: 15 binaries present and executable, plus leartech-go.mk"
+    for t in bash curl jq openssl kubectl; do \
+      command -v "$$t" >/dev/null || { echo "FAIL: $$t missing from the runtime image; a consumer step would have to install it" >&2; exit 1; }; \
+    done; \
+    echo "==> leartech-checkers: 15 binaries, leartech-go.mk, and the step tools (bash curl jq openssl kubectl)"
 
 LABEL org.opencontainers.image.source=https://github.com/mikelear/leartech-pipeline-catalog
 LABEL org.opencontainers.image.description="The leartech pipeline catalog's gates as pinned binaries"
