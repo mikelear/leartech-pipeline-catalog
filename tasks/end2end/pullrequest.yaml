@@ -1330,6 +1330,10 @@ spec:
               [ -f "/workspace/.end2end/$f" ] && . "/workspace/.end2end/$f" || true
             done
             . /workspace/.end2end/lib.sh
+            # The preview vars are SOURCED above (plain assignments); e2erun is a
+            # child process, so export them or the suite sees none and aborts with
+            # "no PREVIEW_SERVICE_URL — nothing to test against".
+            export PREVIEW_SERVICE_URL PREVIEW_URL PREVIEW_NAMESPACE PREVIEW_HOST_BASE PREVIEW_HOST_PREFIX APP_NAME
 
             # A repo that declared end2end/NONE exits green in the contract step; the
             # phases below have nothing to do and exit 0 rather than run the suite.
