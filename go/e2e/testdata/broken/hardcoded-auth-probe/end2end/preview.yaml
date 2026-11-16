@@ -1,0 +1,6 @@
+# BROKEN: the audience check assumes a route this service does not expose, and a 404
+# inside it reads as "cross-service audience binding broken" — a security finding about
+# correct code.
+preview:
+  healthPath: /health
+  service: thing

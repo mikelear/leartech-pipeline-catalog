@@ -8,3 +8,7 @@ preview:
   service: leartech-sp-web
   port: 80
   gate: absent
+  # The route behind authentication. Any authenticated GET will do; the point is
+  # that it is DECLARED, so a service that does not expose /api/v1/example is not
+  # reported as having broken audience binding.
+  authProbe: /api/v1/site

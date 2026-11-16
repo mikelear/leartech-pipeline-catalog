@@ -29,7 +29,14 @@ type DeclaredContract struct {
 		Port             int    `yaml:"port"`
 		VersionAnchor    *bool  `yaml:"versionAnchor"`
 		Gate             string `yaml:"gate"`
-		Probes           []struct {
+		// AuthProbe is the route a suite uses to prove that the service REFUSES a
+		// token minted for someone else. Every audience check needs one, because the
+		// property is "401 here, 200 there" — and it needs the same route everywhere
+		// to be comparable. Declared, not assumed: 17 repos' packs hardcode
+		// /api/v1/example, which a service is free not to expose, and a 404 then
+		// reads as "admitted" in a check that reports the opposite of the truth.
+		AuthProbe string `yaml:"authProbe"`
+		Probes    []struct {
 			URL  string `yaml:"url"`
 			Want int    `yaml:"want"`
 			Note string `yaml:"note"`
@@ -57,6 +64,7 @@ type Contract struct {
 	Port          int
 	VersionAnchor bool
 	Gate          GateMode
+	AuthProbe     string
 	Probes        []Probe
 	Seeds         []string
 	Setup         []Setup
@@ -154,6 +162,15 @@ func LoadContract(repoDir string) (*Contract, []string) {
 				"so it would produce %q.", ContractFile, c.HealthPath, "http://host"+c.HealthPath))
 	}
 
+	if probe := strings.TrimSpace(d.Preview.AuthProbe); probe != "" {
+		if !strings.HasPrefix(probe, "/") {
+			findings = append(findings, fmt.Sprintf(
+				"%s: preview.authProbe %q does not start with / — it is appended to the base URL.",
+				ContractFile, probe))
+		} else {
+			c.AuthProbe = probe
+		}
+	}
 	c.Service = d.Preview.Service
 	c.Port = d.Preview.Port
 	if d.Preview.VersionAnchor != nil {
@@ -275,6 +292,11 @@ func (c *Contract) String() string {
 	}
 	fmt.Fprintf(&b, "versionAnchor: %v\n", c.VersionAnchor)
 	fmt.Fprintf(&b, "gate:          %s\n", c.Gate)
+	if c.AuthProbe == "" {
+		b.WriteString("authProbe:     (not declared — the audience checks have no route to test)\n")
+	} else {
+		fmt.Fprintf(&b, "authProbe:     %s\n", c.AuthProbe)
+	}
 	fmt.Fprintf(&b, "ui.probe:      %s\n", c.UIProbe)
 	if len(c.Setup) == 0 {
 		b.WriteString("setup:         none\n")

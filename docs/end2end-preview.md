@@ -28,6 +28,7 @@ preview:
   service:    leartech-sp-web    # the workload under test
   port:       80                 # optional; else the Service's first port, else 80
   gate:       auto              # auto | required | absent
+  authProbe:  /api/v1/site      # the route behind authentication (see below)
   versionAnchor: true           # optional; default true
   setup:                        # optional; each entry is a verb from the catalog's menu
     - verb: probe
@@ -69,6 +70,8 @@ not hypothetical: `leartech-auth-service`'s preview runs Hydra, and taking
 39 of the 41 repos with a `preview/` directory do not deploy the gate, and every one
 of their runs spends 60–180 seconds discovering that. `gate: absent` says it once.
 
+**`authProbe`** — the route the audience checks probe. See §2a.
+
 **`setup`** — a closed menu, not a place to put scripts. See §3.
 
 ---
@@ -84,6 +87,8 @@ of their runs spends 60–180 seconds discovering that. `gate: absent` says it o
 | a `setup:` `probe` host no chart under `preview/` creates | leartech-auth-ui#111: every deployment ready, gate held closed on a 404'd hydra URL |
 | a setup-named script nobody declared | `leartech-auth-service`'s reset script exists because a sibling repo's bespoke setup poisoned a shared fixture |
 | a `setup:` verb that is not on the menu | four generations of the same hand-written client registration |
+| a pack script that calls `python3` | leartech-console-api#24: a missing interpreter reported as "auth refusals broken" |
+| a pack script that hardcodes `/api/v1/example`, or a repo with one and no `authProbe` | console-api#24: a 404 on an unexposed route reported as "audience binding broken" |
 | a `bespoke:` entry with no reason, or pointed at staging | an exception nobody can weigh, on an environment another repo is using |
 | a pack script that **requests** a host instead of the preview | a check that never mentions `PREVIEW_URL` cannot be about this PR |
 | a pack script that is not executable | the other lane requires the bit; the move is when it breaks |
@@ -94,6 +99,70 @@ of their runs spends 60–180 seconds discovering that. `gate: absent` says it o
 
 Every one of those is a real failure. That is the rule for adding a rule: **if the
 estate has not paid for it, it is not a check.**
+
+---
+
+## 2a. Two rules that came from `leartech-console-api#24`
+
+Both were found by a PR whose failure named the wrong culprit, and both are now findings.
+
+### No interpreter in the pack
+
+47 pack scripts across 18 repos called `python3` to read a JSON field. That worked while
+the end2end steps installed it, and stopped the day the phases moved to the catalog's
+runtime image — which is the runtime they should use, because it carries the pinned tools.
+
+The failure does not look like a missing interpreter. It looks like this:
+
+```
+| `auth-refusals` | :x: fail | 125ms | ... 05-auth-refusals.sh: line 105: python3: command not found
+                                     curl: (23) Failure writing output to destination |
+```
+
+A security check reporting FAIL because a tool was absent, about correct code.
+
+`jq` and `authtoken` are both in that image, and there is nothing in the estate's packs
+that needs anything more:
+
+| was | is |
+|---|---|
+| `echo "$body" \| python3 -c 'import json,sys; print(json.load(sys.stdin)["x"])'` | `echo "$body" \| jq -r .x` |
+| `python3 -c '...base64url decode segment 2...'` | `authtoken claim scp` (or `authtoken payload`) |
+| `python3 -c '...print(json.load(...)["access_token"])'` | `authtoken field access_token` |
+| counting a JSON array | `authtoken count` |
+
+The check fails a pack script that calls `python3`, and names the replacement.
+
+### Declare the audience probe; do not assume someone else's route
+
+The cross-service audience property is *"401 with a token minted for someone else, 200
+with its own"*. That needs one authenticated route per service — and 27 pack scripts in
+17 repos hardcode `/api/v1/example`, which a service is free not to expose.
+
+When it does not, the **control** assertion ("this service accepts its OWN token") gets a
+404 and the check reports:
+
+```
+CROSS-SERVICE AUDIENCE BINDING BROKEN
+```
+
+A security finding, about correct code, in the one check that is supposed to be
+trustworthy about security. So the route is declared:
+
+```yaml
+preview:
+  authProbe: /api/v1/site   # any authenticated GET; it does not have to be a business route
+```
+
+and the task exports `AUTH_PROBE` for the pack to read. The check fails a script that
+hardcodes `/api/v1/example` without reading `$AUTH_PROBE`, and fails a repo that has such
+a script without declaring the route.
+
+**This is a real requirement on services, and it is deliberate:** every service must
+expose *one* route that is behind its auth middleware, so that "refuses a foreign token"
+can be told apart from "refuses everything". A service that exposes nothing authenticated
+cannot be checked for audience binding at all, and its absence is a failure rather than a
+skip — the whole point of the check is the comparison.
 
 ---
 

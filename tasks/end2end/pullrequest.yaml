@@ -699,6 +699,13 @@ spec:
             export PREVIEW_HOST_PREFIX="$PREVIEW_HOST_PREFIX"
             export PREVIEW_URL="$PREVIEW_URL"
             export PREVIEW_NAMESPACE="$PREVIEW_NAMESPACE"
+            # The route the audience checks probe, from the declaration. Exported so a
+            # pack reads $AUTH_PROBE rather than hardcoding one service's path: a 404 on
+            # a hardcoded path inside an audience check reads as "someone's token was
+            # admitted", which is a security finding about correct code.
+            AUTH_PROBE=$(e2e explain -dir . 2>/dev/null | sed -n 's/^authProbe: *//p' | head -1)
+            case "$AUTH_PROBE" in *'('*) AUTH_PROBE="" ;; esac
+            export AUTH_PROBE
             EOF
 
             echo "==> consumer env (written to /workspace/.end2end/env so later steps see it):"
