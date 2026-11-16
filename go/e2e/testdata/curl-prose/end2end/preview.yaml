@@ -1,0 +1,9 @@
+# BROKEN on purpose? No — this one must PASS the unbounded-curl rule.
+#
+# It exists because the first version of that rule fired on any line CONTAINING "curl ",
+# so an error message about a curl read as an unbounded request. A rule that flags prose is
+# a rule people learn to route around, which is the same failure as flagging expected-string
+# comparisons. This fixture is the guard: a message that names curl, and a real bounded call.
+preview:
+  healthPath: /health
+  service: thing
