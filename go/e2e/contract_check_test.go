@@ -37,7 +37,7 @@ func TestContractCleanRepo(t *testing.T) {
       url: http://preview-hydra.${NAMESPACE}.svc:4445/.well-known/openid-configuration
       want: 200
 `,
-		"end2end/01-smoke.sh":   "#!/bin/bash\ncurl -sS -o /dev/null \"${PREVIEW_URL}/\"\n",
+		"end2end/01-smoke.sh":   "#!/bin/bash\ncurl -sS -m 20 -o /dev/null \"${PREVIEW_URL}/\"\n",
 		"preview/helmfile.yaml": "releases:\n- name: preview-leartech-sp-web\n  hostname: leartech-sp-web-pr1.example\n  hydra: hydra-pr1.jx.leartech.com\n",
 	})
 	if code := runContract([]string{"-dir", dir}); code != 0 {
@@ -96,7 +96,7 @@ func TestContractHardcodedHostInScript(t *testing.T) {
 func TestContractVariableBaseURLIsFine(t *testing.T) {
 	dir := repo(t, map[string]string{
 		ContractFile:          "preview:\n  healthPath: /health\n  service: x\n",
-		"end2end/01-smoke.sh": "#!/bin/bash\ncurl -sS \"${PREVIEW_URL}/health\"\n",
+		"end2end/01-smoke.sh": "#!/bin/bash\ncurl -sS -m 20 \"${PREVIEW_URL}/health\"\n",
 	})
 	if code := runContract([]string{"-dir", dir}); code != 0 {
 		t.Fatal("a script using PREVIEW_URL was rejected")

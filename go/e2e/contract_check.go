@@ -143,6 +143,46 @@ func allFindings(repoDir, lane string) []string {
 		}
 	}
 
+	// ── every request in the pack must be bounded ─────────────────────────
+	//
+	// A curl with no `-m`/`--max-time` has no upper bound: against a preview answering
+	// slowly, or a Service with no endpoints, it waits until the kernel gives up — and the
+	// runner cannot tell a hang from a slow suite, so the run ends on the PIPELINE timeout
+	// with nothing in the log. leartech-auth-service's 30-minute PipelineRun timed out
+	// exactly this way having executed no assertions, because many of its curls were
+	// unbounded.
+	for _, script := range scripts {
+		body, err := os.ReadFile(script) // #nosec G304 -- path came from the pack read
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(body), "\n")
+		reported := false
+		for i, line := range lines {
+			if reported || !strings.Contains(line, "curl ") ||
+				strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			// Flags may sit on continuation lines, so read the whole invocation.
+			window := line
+			for j := i + 1; j < len(lines) && j <= i+4; j++ {
+				window += " " + lines[j]
+				if !strings.HasSuffix(strings.TrimSpace(lines[j-1]), "\\") {
+					break
+				}
+			}
+			if boundedRe.MatchString(window) {
+				continue
+			}
+			add("%s:%d has a curl with no timeout. It has no upper bound: against a slow "+
+				"preview, or a Service with no endpoints, it waits until the kernel gives up, "+
+				"and the run then dies on the pipeline timeout with nothing in the log to say "+
+				"which check hung. Add -m 20 (or --max-time) to the invocation.",
+				rel(repoDir, script), i+1)
+			reported = true
+		}
+	}
+
 	// ── the pack must not depend on a language the runtime does not carry ──
 	//
 	// 47 pack scripts across 18 repos called python3 to read a JSON field. That worked
@@ -379,6 +419,9 @@ func packScripts(repoDir string) []string {
 func isDigit(b byte) bool { return b >= '0' && b <= '9' }
 
 var (
+	// boundedRe matches the flags giving curl an upper bound, including the
+	// connect-timeout variants: any of them means the call cannot wait forever.
+	boundedRe   = regexp.MustCompile(`-m[ =]?[0-9]|--max-time|--connect-timeout|-y[ =]?[0-9]`)
 	curlURLCall = regexp.MustCompile(`https?://([A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)`)
 	// A URL that is built from a variable is the thing we want; only a literal
 	// host in the script's own text is a finding.

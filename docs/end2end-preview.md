@@ -87,6 +87,7 @@ of their runs spends 60–180 seconds discovering that. `gate: absent` says it o
 | a `setup:` `probe` host no chart under `preview/` creates | leartech-auth-ui#111: every deployment ready, gate held closed on a 404'd hydra URL |
 | a setup-named script nobody declared | `leartech-auth-service`'s reset script exists because a sibling repo's bespoke setup poisoned a shared fixture |
 | a `setup:` verb that is not on the menu | four generations of the same hand-written client registration |
+| a pack script with a `curl` that has no `-m` | an unbounded request makes a hang indistinguishable from a slow suite, and the run dies on the pipeline timeout having executed nothing |
 | a pack script that calls `python3` | leartech-console-api#24: a missing interpreter reported as "auth refusals broken" |
 | a pack script that hardcodes `/api/v1/example`, or a repo with one and no `authProbe` | console-api#24: a 404 on an unexposed route reported as "audience binding broken" |
 | a `bespoke:` entry with no reason, or pointed at staging | an exception nobody can weigh, on an environment another repo is using |
