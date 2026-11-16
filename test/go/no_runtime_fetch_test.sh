@@ -58,6 +58,17 @@ for f in tasks/*/*.yaml tasks/*/*/*.yaml; do
   done
 done
 
+# A LOCAL provided tool must be read with cp, never curl: curl rejects a bare
+# path ("no host part in the URL"), which broke go-lint estate-wide on 2026-11-16
+# when the fetch was moved to the image but the curl was left. A fetch form that
+# fails is still a fetch bug.
+for f in tasks/*/pullrequest.yaml tasks/*/release.yaml; do
+  [ -f "$f" ] || continue
+  if grep -E 'curl ' "$f" | grep -Eq 'MK_URL|/workspace/bin/leartech-go\.mk'; then
+    note "$f curls a LOCAL path (MK_URL / /workspace/bin/leartech-go.mk) — use cp, not curl"
+  fi
+done
+
 # The image has to actually carry them, or every consumer fails at run time.
 for f in go/prpost/main.go go/leartech-go.mk rust/deny.base.toml; do
   [ -f "$f" ] || note "$f is missing, so the image cannot ship it"
