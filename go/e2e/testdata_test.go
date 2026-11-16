@@ -34,7 +34,7 @@ func TestGoodFixturesPassTheContractCheck(t *testing.T) {
 				"contract check rejected it:\n%s", d, captureContract(t, d))
 		}
 	}
-	if checked < 4 {
+	if checked < 5 {
 		t.Errorf("only %d passing fixture(s) found; the examples are part of the standard", checked)
 	}
 }

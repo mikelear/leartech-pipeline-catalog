@@ -159,7 +159,7 @@ func allFindings(repoDir, lane string) []string {
 		lines := strings.Split(string(body), "\n")
 		reported := false
 		for i, line := range lines {
-			if reported || !strings.Contains(line, "curl ") ||
+			if reported || !startsCommand(strings.TrimSpace(line), "curl") ||
 				strings.HasPrefix(strings.TrimSpace(line), "#") {
 				continue
 			}
@@ -355,6 +355,27 @@ func anyHardcodesProbe(scripts []string) bool {
 		if b, err := os.ReadFile(s); err == nil && strings.Contains(string(b), "/api/v1/example") {
 			return true
 		}
+	}
+	return false
+}
+
+// startsCommand reports whether a line RUNS the given binary, as opposed to mentioning it.
+//
+// A shell command starts at the beginning of a line, or after an operator or an assignment:
+// `x=$(curl …`, `if curl …`, `a && curl …`. `echo "curl failed"` does not — and a rule that
+// flags prose about a command is one people learn to route around.
+func startsCommand(line, binary string) bool {
+	if strings.HasPrefix(line, binary+" ") {
+		return true
+	}
+	for _, prefix := range []string{"$(", "(", "|", "&&", "||", ";", "if ", "then ", "else ", "do ", "! "} {
+		if strings.Contains(line, prefix+binary+" ") {
+			return true
+		}
+	}
+	// An env prefix or an assignment whose value is the command: `X=1 curl …`, `t=$(curl …`.
+	if i := strings.Index(line, "="); i > 0 && strings.HasPrefix(line[i+1:], binary+" ") {
+		return true
 	}
 	return false
 }
