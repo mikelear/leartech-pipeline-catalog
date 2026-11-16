@@ -1,0 +1,7 @@
+# BROKEN: jq's `//` is the ALTERNATIVE operator — it yields the right-hand side when the
+# left is FALSE as well as null. So `.active // ""` prints the empty string for a genuinely
+# deactivated user, and the assertion reports "active=false -> got , want false" about
+# correct code. It is also green for the user it exists to catch.
+preview:
+  healthPath: /health
+  service: thing
