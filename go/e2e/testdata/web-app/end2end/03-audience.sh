@@ -5,5 +5,5 @@
 set -uo pipefail
 BASE_URL="${PREVIEW_URL:-}"
 PROBE="${AUTH_PROBE:?the end2end task exports AUTH_PROBE from preview.authProbe}"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${BASE_URL}${PROBE}")
+code=$(curl -sS -m 20 -o /dev/null -w '%{http_code}' "${BASE_URL}${PROBE}")
 [ "$code" = "401" ] || { echo "[audience] ${PROBE} -> ${code}, want 401 unauthenticated"; exit 1; }

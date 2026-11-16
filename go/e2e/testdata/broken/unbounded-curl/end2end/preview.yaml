@@ -1,0 +1,7 @@
+# BROKEN: a request with no upper bound. Against a slow preview, or a Service with no
+# endpoints, it waits until the kernel gives up — and the runner cannot tell a hang from a
+# slow suite, so the run dies on the pipeline timeout having executed nothing.
+# leartech-auth-service's 30-minute timeout had exactly this shape.
+preview:
+  healthPath: /health
+  service: thing
