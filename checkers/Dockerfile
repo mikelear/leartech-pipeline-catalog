@@ -42,12 +42,13 @@ COPY go/pincheck/       ./pincheck/
 COPY go/authgate/         ./authgate/
 COPY go/keeperaccess/     ./keeperaccess/
 COPY go/e2e/              ./e2e/
+COPY go/prpost/           ./prpost/
 
 # CGO off and -trimpath so the binaries are static and reproducible: an agent
 # and a CI step must be running the same bytes, not merely the same version.
 ENV CGO_ENABLED=0
 RUN set -eu; \
-    for m in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e; do \
+    for m in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e prpost; do \
       cd "/src/$m"; \
       go mod download; \
       go build -trimpath -ldflags="-s -w" -o "/out/$m" .; \
@@ -58,15 +59,23 @@ RUN set -eu; \
 FROM alpine:3.24
 RUN apk add --no-cache ca-certificates git
 COPY --from=build /out/ /usr/local/bin/
+# The shared go-test makefile ships here too, for the same reason the binaries do:
+# a task that curls it from raw.githubusercontent gets whatever that CDN is serving,
+# which is up to five minutes behind a merge. Pinned to this tag, a consumer's
+# coverage behaviour is a function of the tag Renovate bumps.
+COPY go/leartech-go.mk /usr/local/share/leartech-go.mk
+COPY rust/deny.base.toml /usr/local/share/deny.base.toml
 
 # Fail the BUILD if a binary did not land or cannot run. An image that ships
 # a missing checker would make every consumer skip it silently, which is the
 # exact failure mode these checkers exist to catch.
 RUN set -eu; \
-    for b in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e; do \
+    for b in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e prpost; do \
       test -x "/usr/local/bin/$b" || { echo "FAIL: $b did not build into the image" >&2; exit 1; }; \
     done; \
-    echo "==> leartech-checkers: 14 binaries present and executable"
+    test -f /usr/local/share/leartech-go.mk || { echo "FAIL: leartech-go.mk did not land in the image" >&2; exit 1; }; \
+    test -f /usr/local/share/deny.base.toml || { echo "FAIL: deny.base.toml did not land in the image" >&2; exit 1; }; \
+    echo "==> leartech-checkers: 15 binaries present and executable, plus leartech-go.mk"
 
 LABEL org.opencontainers.image.source=https://github.com/mikelear/leartech-pipeline-catalog
 LABEL org.opencontainers.image.description="The leartech pipeline catalog's gates as pinned binaries"
