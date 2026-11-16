@@ -124,7 +124,7 @@ spec:
         # raw.githubusercontent inside the step that used them, which made what ran a
         # different artefact from what merged for up to five minutes (that CDN serves
         # cache-control: max-age=300) and needed a Go toolchain in every image.
-        - image: ghcr.io/mikelear/leartech-checkers:0.14.0
+        - image: ghcr.io/mikelear/leartech-checkers:0.15.0
           name: provide-catalog-tools
           resources: {}
           script: |
@@ -495,7 +495,7 @@ spec:
         #
         # Runs BEFORE the pack: this reads two files, and there is no reason to
         # spend a preview deploy and a 30-minute timeout discovering it after.
-        - image: ghcr.io/mikelear/leartech-checkers:0.13.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.15.0
           name: e2e-skip-contract
           resources: {}
           script: |
@@ -505,7 +505,7 @@ spec:
         # The pack runner, from the pinned checkers image: one step copies the
         # binary into the shared workspace so the debian step (which owns the
         # consumer-script contract) runs it without a Go toolchain.
-        - image: ghcr.io/mikelear/leartech-checkers:0.13.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.15.0
           name: provide-e2erun
           resources: {}
           workingDir: /workspace/source
