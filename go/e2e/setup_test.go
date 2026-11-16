@@ -231,3 +231,68 @@ func TestResolveSetupRefusesUnprovenStagingStep(t *testing.T) {
 		t.Errorf("findings = %v, want one about the shared staging environment", findings)
 	}
 }
+
+// The first real client migrated onto this menu is a browser client: no secret
+// (token_endpoint_auth_method "none"), a logout redirect, and eight audiences. A menu
+// that cannot express it is a menu nobody migrates to, so the shape is pinned.
+func TestApplyHydraClientExpressesABrowserClient(t *testing.T) {
+	var sent map[string]any
+	d := setupDeps{
+		do: func(ctx context.Context, method, u string, body []byte) (int, []byte, error) {
+			if method == "PUT" {
+				_ = json.Unmarshal(body, &sent)
+				return 201, nil, nil
+			}
+			return 200, []byte(`{"scope":"openid profile email leartechapi offline",` +
+				`"audience":["leartech-auth-service"]}`), nil
+		},
+		hydraAdminURL: func(ctx context.Context, ns string) string {
+			return "http://preview-hydra-admin." + ns + ".svc:4445"
+		},
+	}
+
+	step := Setup{
+		Verb:                    VerbHydraClient,
+		Where:                   WherePreview,
+		Name:                    "frontend-services",
+		Scopes:                  []string{"openid", "profile", "email", "leartechapi", "offline"},
+		Audiences:               []string{"leartech-auth-service"},
+		RedirectURIs:            []string{"https://x-pr1.example/auth/callback"},
+		PostLogoutRedirectURIs:  []string{"https://x-pr1.example"},
+		TokenEndpointAuthMethod: "none",
+	}
+	if _, err := applySetup(context.Background(), []Setup{step}, WherePreview, "jx-pr1", "", d); err != nil {
+		t.Fatalf("applySetup: %v", err)
+	}
+	if sent["token_endpoint_auth_method"] != "none" {
+		t.Errorf("token_endpoint_auth_method = %v, want none: a browser client cannot keep a secret",
+			sent["token_endpoint_auth_method"])
+	}
+	if _, ok := sent["post_logout_redirect_uris"]; !ok {
+		t.Error("post_logout_redirect_uris missing from the request; the logout redirect would be dropped in silence")
+	}
+}
+
+// A server-side client that says nothing gets the safe default.
+func TestApplyHydraClientDefaultsToASecret(t *testing.T) {
+	var sent map[string]any
+	d := setupDeps{
+		do: func(ctx context.Context, method, u string, body []byte) (int, []byte, error) {
+			if method == "PUT" {
+				_ = json.Unmarshal(body, &sent)
+				return 201, nil, nil
+			}
+			return 200, []byte(`{"scope":"openid","audience":["a"]}`), nil
+		},
+		hydraAdminURL: func(ctx context.Context, ns string) string { return "http://h." + ns + ":4445" },
+	}
+	step := Setup{Verb: VerbHydraClient, Where: WherePreview, Name: "srv",
+		Scopes: []string{"openid"}, Audiences: []string{"a"},
+		RedirectURIs: []string{"https://x/cb"}}
+	if _, err := applySetup(context.Background(), []Setup{step}, WherePreview, "ns", "", d); err != nil {
+		t.Fatalf("applySetup: %v", err)
+	}
+	if sent["token_endpoint_auth_method"] != "client_secret_basic" {
+		t.Errorf("default auth method = %v, want client_secret_basic", sent["token_endpoint_auth_method"])
+	}
+}
