@@ -1,0 +1,10 @@
+# BROKEN: a bespoke script pointed at staging. Staging is persistent and shared and
+# runs on every Observer dispatch; the one script in the estate that repairs
+# shared-state damage exists because a sibling repo did exactly this.
+preview:
+  healthPath: /health
+  service: thing
+  bespoke:
+    - script: end2end/00-seed-staging.sh
+      reason: legacy, we will remove it
+      where: staging

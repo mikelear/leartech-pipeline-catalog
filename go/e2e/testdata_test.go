@@ -49,9 +49,12 @@ func TestBrokenFixturesFailForTheirOwnReason(t *testing.T) {
 	}{
 		{"testdata/broken/undeclared-health", "healthPath"},
 		{"testdata/broken/wrong-probe-host", "no chart under preview/"},
-		{"testdata/broken/seed-that-is-a-check", "looks like a CHECK"},
 		{"testdata/broken/hardcoded-host", "pins the host"},
 		{"testdata/broken/typo-env", "END2END_HEALTH_PAHT"},
+		{"testdata/broken/bespoke-setup", "the catalog does not provide"},
+		{"testdata/broken/bespoke-in-staging", "staging is persistent and shared"},
+		{"testdata/broken/unknown-verb", "not on the catalog's menu"},
+		{"testdata/broken/bespoke-no-reason", "has no `reason`"},
 	}
 	for _, c := range cases {
 		if !isDir(c.dir) {

@@ -4,10 +4,18 @@ preview:
   service: leartech-auth-ui
   port: 80
   gate: auto
-  seeds:
-    - end2end/00-register-oauth-client.sh
-ui:
-  # ingress: the browser reaches it the way a user would. The
-  # service probe is right for a JSON API and wrong for anything with a cookie
-  # domain or an absolute redirect.
-  probe: ingress
+  setup:
+    - verb: hydra-client
+      name: auth-ui-e2e
+      scopes: [openid, profile, offline]
+      audiences: [leartech-auth-ui]
+      redirectURIs: ["${PREVIEW_URL}/oauth2/callback"]
+  # The one procedure the menu does not cover: the spec's login needs a browser
+  # cookie bound to the ingress host, so the client above is copied into the UI's
+  # own session store. Declared, preview-only, and with a reason — a reviewer can
+  # weigh it, and it does not grow into three.
+  bespoke:
+    - script: end2end/00-seed-session-store.sh
+      reason: the Playwright login reads a cookie bound to the ingress hostname,
+        which no menu verb can mint without a browser; replaced by a verb once
+        one exists.

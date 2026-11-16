@@ -11,13 +11,24 @@ preview:
   service: leartech-artifact-api
   port: 8080
   gate: auto
-  # Extra user-space readiness: things Kubernetes does not observe, like a cache
-  # that is still warming. Each answers `want` before any check runs.
-  probes:
-    - url: http://preview-auth-service-hydra.${NAMESPACE}.svc:4445/.well-known/openid-configuration
+  # Setup is a MENU. Each entry names a verb the catalog provides; none of them is
+  # a script in this repo, because setup is the half that can corrupt a shared
+  # environment and the catalog is where one reviewed implementation lives.
+  setup:
+    # User-space readiness: what Kubernetes does not observe, like a token issuer
+    # whose discovery document is not yet served. Each answers `want` before any
+    # check runs.
+    - verb: probe
+      url: http://preview-auth-service-hydra.${NAMESPACE}.svc:4445/.well-known/openid-configuration
       want: 200
       note: hydra's discovery document, which the auth checks read
-  # Setup only. These run before the pack, and again before Playwright in the UI
-  # lane. A check listed here would run with its failures swallowed.
-  seeds:
-    - end2end/00-seed-test-data.sh
+    # The OAuth client the authenticated checks use. The catalog registers it,
+    # reads it back, and asserts the scopes and audiences stuck. Written by hand
+    # this is a curl at the Hydra admin API with no read-back, which is how a
+    # client ends up "seeded" and unable to request the scope its suite asserts.
+    - verb: hydra-client
+      name: leartech-artifact-api-e2e
+      scopes: [openid, offline, artifacts:read]
+      audiences: [leartech-artifact-api]
+      grantTypes: [client_credentials, refresh_token]
+      redirectURIs: ["${PREVIEW_URL}/callback"]

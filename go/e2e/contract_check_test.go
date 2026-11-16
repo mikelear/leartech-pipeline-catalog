@@ -32,12 +32,13 @@ func TestContractCleanRepo(t *testing.T) {
 		ContractFile: `preview:
   healthPath: /health
   service: leartech-sp-web
-  seeds:
-    - end2end/00-seed-test-data.sh
+  setup:
+    - verb: probe
+      url: http://preview-hydra.${NAMESPACE}.svc:4445/.well-known/openid-configuration
+      want: 200
 `,
-		"end2end/00-seed-test-data.sh": "#!/bin/bash\ncurl -sS \"${PREVIEW_URL}/seed\" >/dev/null\n",
-		"end2end/01-smoke.sh":          "#!/bin/bash\ncurl -sS -o /dev/null \"${PREVIEW_URL}/\"\n",
-		"preview/helmfile.yaml":        "releases:\n- name: preview-leartech-sp-web\n  hostname: leartech-sp-web-pr1.example\n",
+		"end2end/01-smoke.sh":   "#!/bin/bash\ncurl -sS -o /dev/null \"${PREVIEW_URL}/\"\n",
+		"preview/helmfile.yaml": "releases:\n- name: preview-leartech-sp-web\n  hostname: leartech-sp-web-pr1.example\n  hydra: hydra-pr1.jx.leartech.com\n",
 	})
 	if code := runContract([]string{"-dir", dir}); code != 0 {
 		t.Fatalf("clean repo failed the contract check (exit %d)", code)
@@ -138,30 +139,79 @@ func TestContractProbeHostDeclaredInCharts(t *testing.T) {
 	}
 }
 
-// The UI lane ran the whole functional suite as "seeds" with failures swallowed.
-func TestContractSeedThatIsACheck(t *testing.T) {
+// A verb that is not on the menu is a finding: the menu is the contract, and
+// "the repo brought its own procedure" is what it replaces.
+func TestContractSetupVerbNotOnTheMenu(t *testing.T) {
 	dir := repo(t, map[string]string{
 		ContractFile: `preview:
   healthPath: /health
   service: x
-  seeds:
-    - end2end/05-auth-refusals.sh
+  setup:
+    - verb: psql-into-the-sibling
 `,
-		"end2end/05-auth-refusals.sh": "#!/bin/bash\ntrue\n",
+		"end2end/01-smoke.sh": "#!/bin/bash\ntrue\n",
 	})
-	if code := runContract([]string{"-dir", dir}); code != 1 {
-		t.Fatal("a check listed as a seed passed")
+	out := captureContract(t, dir)
+	if !strings.Contains(out, "is not on the catalog's menu") {
+		t.Errorf("an unknown verb was accepted:\n%s", out)
 	}
 }
 
-// A seed that does not exist would be skipped silently by the loops.
-func TestContractSeedMissing(t *testing.T) {
+// A bespoke script declared for staging is refused: staging is persistent and shared,
+// and the one script in the estate that repairs shared-state damage exists because
+// another repo's bespoke setup caused it.
+func TestContractBespokeRefusedForStaging(t *testing.T) {
 	dir := repo(t, map[string]string{
-		ContractFile:          "preview:\n  healthPath: /health\n  service: x\n  seeds:\n    - end2end/00-seed-nope.sh\n",
-		"end2end/01-smoke.sh": "#!/bin/bash\ntrue\n",
+		ContractFile: `preview:
+  healthPath: /health
+  service: x
+  bespoke:
+    - script: end2end/00-seed-thing.sh
+      reason: legacy
+      where: staging
+`,
+		"end2end/00-seed-thing.sh": "#!/bin/bash\ntrue\n",
+		"end2end/01-smoke.sh":      "#!/bin/bash\ntrue\n",
+	})
+	out := captureContract(t, dir)
+	if !strings.Contains(out, "staging is persistent and shared") {
+		t.Errorf("a staging bespoke was accepted:\n%s", out)
+	}
+}
+
+// A bespoke with no reason is an exception nobody can weigh.
+func TestContractBespokeNeedsAReason(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile: `preview:
+  healthPath: /health
+  service: x
+  bespoke:
+    - script: end2end/00-seed-thing.sh
+`,
+		"end2end/00-seed-thing.sh": "#!/bin/bash\ntrue\n",
+		"end2end/01-smoke.sh":      "#!/bin/bash\ntrue\n",
 	})
 	if code := runContract([]string{"-dir", dir}); code != 1 {
-		t.Fatal("a missing seed passed")
+		t.Fatal("a bespoke with no reason passed")
+	}
+}
+
+// A correctly declared bespoke script passes, and is reported in the explain output so
+// it cannot hide.
+func TestContractDeclaredBespokePasses(t *testing.T) {
+	dir := repo(t, map[string]string{
+		ContractFile: `preview:
+  healthPath: /health
+  service: x
+  bespoke:
+    - script: end2end/00-seed-thing.sh
+      reason: needs a browser cookie no verb can mint yet
+`,
+		"end2end/00-seed-thing.sh": "#!/bin/bash\ntrue\n",
+		"end2end/01-smoke.sh":      "#!/bin/bash\ntrue\n",
+	})
+	if code := runContract([]string{"-dir", dir}); code != 0 {
+		t.Fatalf("a declared bespoke was rejected:\n%s", captureContract(t, dir))
 	}
 }
 

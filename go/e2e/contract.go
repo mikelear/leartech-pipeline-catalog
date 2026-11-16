@@ -35,7 +35,13 @@ type DeclaredContract struct {
 			Want int    `yaml:"want"`
 			Note string `yaml:"note"`
 		} `yaml:"probes"`
-		Seeds []string `yaml:"seeds"`
+		// Setup replaces hand-written setup scripts with the catalog's menu. Each entry
+		// names a verb and its parameters; see setup.go for the closed set.
+		Setup []DeclaredSetup `yaml:"setup"`
+		// Bespoke is the declared exception: a script the menu does not cover, in a
+		// preview.
+		// only, and it carries a reason a reviewer can weigh.
+		Bespoke []Bespoke `yaml:"bespoke"`
 	} `yaml:"preview"`
 	UI struct {
 		Probe string `yaml:"probe"`
@@ -54,6 +60,8 @@ type Contract struct {
 	Gate          GateMode
 	Probes        []Probe
 	Seeds         []string
+	Setup         []Setup
+	Bespoke       []Bespoke
 	UIProbe       string
 }
 
@@ -188,7 +196,40 @@ func LoadContract(repoDir string) (*Contract, []string) {
 		c.Probes = append(c.Probes, Probe{URL: p.URL, Want: want, Note: p.Note})
 	}
 
-	c.Seeds = d.Preview.Seeds
+	for i, raw := range d.Preview.Setup {
+		step, stepFindings := resolveSetup(raw)
+		c.Setup = append(c.Setup, step)
+		for _, f := range stepFindings {
+			findings = append(findings, fmt.Sprintf("%s: setup[%d]: %s", ContractFile, i, f))
+		}
+	}
+	for i, b := range d.Preview.Bespoke {
+		if strings.TrimSpace(b.Script) == "" {
+			findings = append(findings, fmt.Sprintf(
+				"%s: bespoke[%d] has no `script`. A declared exception names the file it "+
+					"covers, or the declaration excuses nothing.", ContractFile, i))
+			continue
+		}
+		if strings.TrimSpace(b.Reason) == "" {
+			findings = append(findings, fmt.Sprintf(
+				"%s: bespoke[%d] (%s) has no `reason`. Without one a reviewer cannot tell "+
+					"an unavoidable procedure from an unfinished menu verb, which is how a "+
+					"repo ends up with three of them.", ContractFile, i, b.Script))
+		}
+		// A bespoke script against staging is refused outright: the one script in the
+		// estate that repairs shared-state damage exists because another repo's bespoke
+		// setup poisoned a shared fixture.
+		if strings.EqualFold(strings.TrimSpace(b.Where), string(WhereStaging)) ||
+			strings.EqualFold(strings.TrimSpace(b.Where), string(WhereBoth)) {
+			findings = append(findings, fmt.Sprintf(
+				"%s: bespoke[%d] (%s) declares where: %s. A bespoke script runs in a preview "+
+					"only — staging is persistent and shared, and runs on every Observer "+
+					"dispatch, so an unproven procedure there can poison a sibling repo's "+
+					"fixtures. Use a menu verb, which is idempotent by construction.",
+				ContractFile, i, b.Script, b.Where))
+		}
+		c.Bespoke = append(c.Bespoke, b)
+	}
 	if strings.EqualFold(strings.TrimSpace(d.UI.Probe), "service") {
 		c.UIProbe = "service"
 	}
@@ -246,6 +287,20 @@ func (c *Contract) String() string {
 				fmt.Fprintf(&b, "   (%s)", p.Note)
 			}
 			b.WriteString("\n")
+		}
+	}
+	if len(c.Setup) == 0 {
+		b.WriteString("setup:         none\n")
+	} else {
+		b.WriteString("setup (from the catalog's menu):\n")
+		for _, line := range setupPlan(c.Setup, WherePreview) {
+			fmt.Fprintf(&b, "  - %s\n", line)
+		}
+	}
+	if len(c.Bespoke) > 0 {
+		b.WriteString("bespoke (preview only, declared exception):\n")
+		for _, bs := range c.Bespoke {
+			fmt.Fprintf(&b, "  - %s: %s\n", bs.Script, bs.Reason)
 		}
 	}
 	if len(c.Seeds) == 0 {
