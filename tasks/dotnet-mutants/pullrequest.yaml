@@ -215,7 +215,8 @@ spec:
 
               # One Go poster (go/prpost) via leartech-forge-api: sticky key adopts the
               # old marker and the body gains the machine-readable leartech-report block.
-              /workspace/bin/prpost -tool mutants -check dotnet-mutants -cluster "$CLUSTER_TAG" -outcome success -summary "Mutation score ${SCORE:-reported}" -body-file /dev/stdin <<<"$BODY")
+              /workspace/bin/prpost -tool mutants -check dotnet-mutants -cluster "$CLUSTER_TAG" -outcome success -summary "Mutation score ${SCORE:-reported}" -body-file /dev/stdin <<<"$BODY"
+            fi
             # Honour Stryker's --break-at exit code (0 = pass, 1 = below threshold).
             exit "${MUTANTS_EXIT:-0}"
   podTemplate:

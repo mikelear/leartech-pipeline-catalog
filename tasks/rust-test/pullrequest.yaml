@@ -163,7 +163,8 @@ spec:
 
               # One Go poster (go/prpost) via leartech-forge-api: sticky key adopts the
               # old marker and the body gains the machine-readable leartech-report block.
-              /workspace/bin/prpost -tool coverage -check test -cluster "$CLUSTER_TAG" -outcome "$( [ "$MAKE_RC" -eq 0 ] && echo success || echo failure)" -summary "Coverage: ${TOTAL}% — ${STATUS}" -body-file /dev/stdin <<<"$BODY")
+              /workspace/bin/prpost -tool coverage -check test -cluster "$CLUSTER_TAG" -outcome "$( [ "$MAKE_RC" -eq 0 ] && echo success || echo failure)" -summary "Coverage: ${TOTAL}% — ${STATUS}" -body-file /dev/stdin <<<"$BODY"
+            fi
             if [ "$STATUS" = "fail" ]; then
               echo "FAIL: coverage ${TOTAL}% is below threshold ${THRESHOLD}%"
               exit 1
