@@ -58,6 +58,7 @@ func TestBrokenFixturesFailForTheirOwnReason(t *testing.T) {
 		{"testdata/broken/pack-calls-python3", "calls python3"},
 		{"testdata/broken/hardcoded-auth-probe", "/api/v1/example"},
 		{"testdata/broken/unbounded-curl", "has a curl with no timeout"},
+		{"testdata/broken/jq-alternative-eats-false", "alternative operator"},
 	}
 	for _, c := range cases {
 		if !isDir(c.dir) {

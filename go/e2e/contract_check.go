@@ -183,6 +183,55 @@ func allFindings(repoDir, lane string) []string {
 		}
 	}
 
+	// ── jq's `//` swallows false, so a boolean assertion can lose its answer ──
+	//
+	// In jq, `//` is the ALTERNATIVE operator: it yields the right-hand side when the left
+	// is FALSE as well as null. So
+	//
+	//	active_after=$(... | jq -r '.active // ""')
+	//	expect "deactivated user active=false" "false" "$active_after"
+	//
+	// prints the empty string for a genuinely deactivated user, and the assertion reports
+	// "active=false -> got , want false" as an application finding. A deactivation check
+	// that cannot see `false` is worse than no check: it is green for the user it exists to
+	// catch.
+	//
+	// Deliberately narrow: it follows the VARIABLE from a `// ""` assignment to a line that
+	// compares it against true/false. `// ""` on a string field is fine, and flagging it
+	// would repeat the false-positive this check has already made once.
+	for _, script := range scripts {
+		body, err := os.ReadFile(script) // #nosec G304 -- path came from the pack read
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(body), "\n")
+		reported := false
+		for i, line := range lines {
+			if reported || strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			m := jqAltAssignRe.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			v := m[1]
+			for j, other := range lines {
+				if !strings.Contains(other, "$"+v) || !boolLiteralRe.MatchString(other) {
+					continue
+				}
+				add("%s:%d puts jq's `// \"\"` into $%s, and line %d compares it against "+
+					"true/false. In jq `//` is the alternative operator, so it yields the "+
+					"right-hand side when the left is FALSE as well as null — a genuine "+
+					"`false` becomes the empty string and the assertion reports a missing "+
+					"value, about correct code. Use `if has(\"field\") then (.field | "+
+					"tostring) else \"\" end`.",
+					rel(repoDir, script), i+1, v, j+1)
+				reported = true
+				break
+			}
+		}
+	}
+
 	// ── the pack must not depend on a language the runtime does not carry ──
 	//
 	// 47 pack scripts across 18 repos called python3 to read a JSON field. That worked
@@ -440,6 +489,17 @@ func packScripts(repoDir string) []string {
 func isDigit(b byte) bool { return b >= '0' && b <= '9' }
 
 var (
+	// jqAlternativeRe finds the alternative operator applied to a literal empty string,
+	// which is where a boolean gets swallowed.
+	jqAlternativeRe = regexp.MustCompile(`//\s*""`)
+	// boolLiteralRe finds a comparison against a boolean spelled as text.
+	// boolLiteralRe finds a comparison against true/false written as text — a shell test
+	// (`[ "$x" = "false" ]`), a jq comparison, or a helper's expected value.
+	// boolLiteralRe finds a comparison against true/false written as text: a shell test
+	// (`[ "$x" = "false" ]`), a helper argument (`expect "label" "false" "$v"`), or jq ==.
+	boolLiteralRe = regexp.MustCompile(`=+\s*"?(true|false)"?` + `|` + `"(true|false)"`)
+	// jqAltAssignRe captures the variable assigned from a jq filter using `// ""`.
+	jqAltAssignRe = regexp.MustCompile(`^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)=\$\(.*jq.*//\s*""`)
 	// boundedRe matches the flags giving curl an upper bound, including the
 	// connect-timeout variants: any of them means the call cannot wait forever.
 	boundedRe   = regexp.MustCompile(`-m[ =]?[0-9]|--max-time|--connect-timeout|-y[ =]?[0-9]`)
