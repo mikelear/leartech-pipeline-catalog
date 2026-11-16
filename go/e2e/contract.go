@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -277,18 +276,6 @@ func (c *Contract) String() string {
 	fmt.Fprintf(&b, "versionAnchor: %v\n", c.VersionAnchor)
 	fmt.Fprintf(&b, "gate:          %s\n", c.Gate)
 	fmt.Fprintf(&b, "ui.probe:      %s\n", c.UIProbe)
-	if len(c.Probes) == 0 {
-		b.WriteString("probes:        none\n")
-	} else {
-		b.WriteString("probes:\n")
-		for _, p := range c.Probes {
-			fmt.Fprintf(&b, "  - %s -> %d", p.URL, p.Want)
-			if p.Note != "" {
-				fmt.Fprintf(&b, "   (%s)", p.Note)
-			}
-			b.WriteString("\n")
-		}
-	}
 	if len(c.Setup) == 0 {
 		b.WriteString("setup:         none\n")
 	} else {
@@ -301,16 +288,6 @@ func (c *Contract) String() string {
 		b.WriteString("bespoke (preview only, declared exception):\n")
 		for _, bs := range c.Bespoke {
 			fmt.Fprintf(&b, "  - %s: %s\n", bs.Script, bs.Reason)
-		}
-	}
-	if len(c.Seeds) == 0 {
-		b.WriteString("seeds:         none\n")
-	} else {
-		sorted := append([]string(nil), c.Seeds...)
-		sort.Strings(sorted)
-		b.WriteString("seeds:\n")
-		for _, s := range sorted {
-			fmt.Fprintf(&b, "  - %s\n", s)
 		}
 	}
 	return b.String()
