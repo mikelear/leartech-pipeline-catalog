@@ -88,30 +88,38 @@ type DeclaredSetup struct {
 	Audiences    []string `yaml:"audiences"`
 	GrantTypes   []string `yaml:"grantTypes"`
 	RedirectURIs []string `yaml:"redirectURIs"`
-	Email        string   `yaml:"email"`
-	Role         string   `yaml:"role"`
-	Password     string   `yaml:"password"`
-	URL          string   `yaml:"url"`
-	Want         int      `yaml:"want"`
-	Note         string   `yaml:"note"`
+	// PostLogoutRedirectURIs and TokenEndpointAuthMethod exist because the FIRST real
+	// client migrated onto this menu (leartech-auth-service's frontend-services) uses
+	// both: it is a public SPA client ("none") with a logout redirect. A menu that cannot
+	// express what the estate actually uses is a menu nobody migrates to.
+	PostLogoutRedirectURIs  []string `yaml:"postLogoutRedirectURIs"`
+	TokenEndpointAuthMethod string   `yaml:"tokenEndpointAuthMethod"`
+	Email                   string   `yaml:"email"`
+	Role                    string   `yaml:"role"`
+	Password                string   `yaml:"password"`
+	URL                     string   `yaml:"url"`
+	Want                    int      `yaml:"want"`
+	Note                    string   `yaml:"note"`
 }
 
 // Setup is a validated step: the verb is known, `where` resolved, and the parameters
 // its verb requires are present.
 type Setup struct {
-	Verb         SetupVerb
-	Where        SetupWhere
-	Name         string
-	Scopes       []string
-	Audiences    []string
-	GrantTypes   []string
-	RedirectURIs []string
-	Email        string
-	Role         string
-	Password     string
-	URL          string
-	Want         int
-	Note         string
+	Verb                    SetupVerb
+	Where                   SetupWhere
+	Name                    string
+	Scopes                  []string
+	Audiences               []string
+	GrantTypes              []string
+	RedirectURIs            []string
+	PostLogoutRedirectURIs  []string
+	TokenEndpointAuthMethod string
+	Email                   string
+	Role                    string
+	Password                string
+	URL                     string
+	Want                    int
+	Note                    string
 }
 
 // Bespoke is a declared exception: a script the menu does not cover, a preview scope,
@@ -131,18 +139,20 @@ type Bespoke struct {
 func resolveSetup(d DeclaredSetup) (Setup, []string) {
 	var findings []string
 	s := Setup{
-		Verb:         SetupVerb(strings.TrimSpace(d.Verb)),
-		Name:         d.Name,
-		Scopes:       d.Scopes,
-		Audiences:    d.Audiences,
-		GrantTypes:   d.GrantTypes,
-		RedirectURIs: d.RedirectURIs,
-		Email:        d.Email,
-		Role:         d.Role,
-		Password:     d.Password,
-		URL:          d.URL,
-		Want:         d.Want,
-		Note:         d.Note,
+		Verb:                    SetupVerb(strings.TrimSpace(d.Verb)),
+		Name:                    d.Name,
+		Scopes:                  d.Scopes,
+		Audiences:               d.Audiences,
+		GrantTypes:              d.GrantTypes,
+		RedirectURIs:            d.RedirectURIs,
+		PostLogoutRedirectURIs:  d.PostLogoutRedirectURIs,
+		TokenEndpointAuthMethod: d.TokenEndpointAuthMethod,
+		Email:                   d.Email,
+		Role:                    d.Role,
+		Password:                d.Password,
+		URL:                     d.URL,
+		Want:                    d.Want,
+		Note:                    d.Note,
 	}
 
 	switch SetupWhere(strings.TrimSpace(d.Where)) {
@@ -380,10 +390,13 @@ func applyHydraClient(ctx context.Context, s Setup, namespace string, d setupDep
 		"scope":                      strings.Join(s.Scopes, " "),
 		"audience":                   s.Audiences,
 		"redirect_uris":              s.RedirectURIs,
-		"token_endpoint_auth_method": "client_secret_basic",
+		"token_endpoint_auth_method": authMethod(s),
 	}
 	if len(s.GrantTypes) == 0 {
 		payload["grant_types"] = []string{"authorization_code", "refresh_token"}
+	}
+	if len(s.PostLogoutRedirectURIs) > 0 {
+		payload["post_logout_redirect_uris"] = s.PostLogoutRedirectURIs
 	}
 	body, _ := json.Marshal(payload)
 	url := strings.TrimSuffix(base, "/") + "/admin/clients/" + s.Name
@@ -438,6 +451,16 @@ func applyHydraClient(ctx context.Context, s Setup, namespace string, d setupDep
 		}
 	}
 	return nil
+}
+
+// authMethod defaults to client_secret_basic, which is right for a server-side client.
+// A browser client declares "none" instead: it cannot keep a secret, and Hydra refuses
+// the token request for a confidential client with no secret.
+func authMethod(s Setup) string {
+	if s.TokenEndpointAuthMethod != "" {
+		return s.TokenEndpointAuthMethod
+	}
+	return "client_secret_basic"
 }
 
 func truncate(s string, n int) string {
