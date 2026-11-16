@@ -1,0 +1,38 @@
+# The shell-composed verdict/message inventory, frozen on 2026-11-16.
+# Each line is "<markdown> <echo/printf> <task>". This file may only SHRINK:
+# moving a verdict into a Go reporter lowers its line in the same PR, and the
+# ratchet in test/go/message_layer_test.sh keeps it down.
+0 1 tasks/ai-review/feedback.yaml
+0 4 tasks/ai-review/pullrequest.yaml
+0 3 tasks/angular-no-promote/release.yaml
+0 10 tasks/dockerfile-lint/pullrequest.yaml
+0 8 tasks/dotnet-audit/pullrequest.yaml
+0 4 tasks/dotnet-lint/pullrequest.yaml
+8 7 tasks/dotnet-mutants/pullrequest.yaml
+9 7 tasks/dotnet-test/pullrequest.yaml
+0 2 tasks/dotnet/pullrequest.yaml
+0 2 tasks/dotnet/release.yaml
+4 38 tasks/end2end-ui/pullrequest.yaml
+20 111 tasks/end2end/pullrequest.yaml
+0 3 tasks/go-lint/pullrequest.yaml
+0 3 tasks/go-no-promote/release.yaml
+0 4 tasks/go-platform-promote/release.yaml
+5 11 tasks/go-test/pullrequest.yaml
+2 3 tasks/helm/platform-promote.yaml
+0 4 tasks/helm/platform-release.yaml
+0 19 tasks/helm/pullrequest.yaml
+0 2 tasks/helm/release.yaml
+0 3 tasks/kyverno-audit/pullrequest.yaml
+4 9 tasks/ng-test/pullrequest.yaml
+0 2 tasks/npm-audit/pullrequest.yaml
+0 3 tasks/openapi-generation/release.yaml
+1 14 tasks/preview/clear-stuck-release.yaml
+0 2 tasks/qa-gate/pullrequest.yaml
+0 6 tasks/release/cosign-sign.yaml
+0 1 tasks/release/helm-release.yaml
+0 2 tasks/release/next-version.yaml
+0 5 tasks/release/promote-cluster-suffixed.yaml
+0 7 tasks/rust-audit/pullrequest.yaml
+0 3 tasks/rust-lint/pullrequest.yaml
+10 6 tasks/rust-test/pullrequest.yaml
+0 36 tasks/security-scan/dynamic/pullrequest.yaml
