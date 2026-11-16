@@ -321,3 +321,41 @@ func TestExplainShowsResolvedContract(t *testing.T) {
 		t.Fatal("contract file constant moved")
 	}
 }
+
+// A repo whose path contains a character a glob treats specially must still have its
+// pack found. filepath.Glob applies the bracket expression to the WHOLE path, so a
+// repoDir with a '[' in it silently matched nothing — and the checker then reported "no
+// pack scripts" about a repo with 22 of them, which is worse than reporting nothing.
+func TestPackScriptsWithAGlobMetacharacterInThePath(t *testing.T) {
+	dir := t.TempDir()
+	weird := filepath.Join(dir, "repo[1]")
+	if err := os.MkdirAll(filepath.Join(weird, "end2end"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"00-seed-test-data.sh", "01-smoke.sh", "README.md", "1-notnumbered.sh"} {
+		if err := os.WriteFile(filepath.Join(weird, "end2end", n), []byte("#!/bin/bash\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := packScripts(weird)
+	if len(got) != 2 {
+		t.Errorf("packScripts found %d script(s) in a path with a bracket, want 2: %v", len(got), got)
+	}
+}
+
+// The order the runner uses is lexical, and NN- prefixes exist for it.
+func TestPackScriptsIsOrdered(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "end2end"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"03-c.sh", "01-a.sh", "02-b.sh"} {
+		if err := os.WriteFile(filepath.Join(dir, "end2end", n), []byte("#!/bin/bash\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := packScripts(dir)
+	if len(got) != 3 || !strings.HasSuffix(got[0], "01-a.sh") || !strings.HasSuffix(got[2], "03-c.sh") {
+		t.Errorf("packScripts order = %v, want 01, 02, 03", got)
+	}
+}

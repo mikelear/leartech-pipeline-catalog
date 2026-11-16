@@ -268,10 +268,32 @@ func normaliseScript(repoDir, path string) string {
 
 // packScripts returns the 0X-*.sh files the runner would execute, in order.
 func packScripts(repoDir string) []string {
-	matches, _ := filepath.Glob(filepath.Join(repoDir, "end2end", "[0-9][0-9]-*.sh"))
-	sort.Strings(matches)
-	return matches
+	dir := filepath.Join(repoDir, "end2end")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		name := e.Name()
+		// NN-name.sh, by hand rather than by glob: filepath.Glob applies a bracket
+		// expression to the whole path, so a repoDir containing a bracket or a leading
+		// absolute path could silently match nothing — and a checker that reports "no
+		// pack scripts" about a repo with 22 of them is worse than one that reports
+		// nothing.
+		if e.IsDir() || len(name) < 4 || !strings.HasSuffix(name, ".sh") {
+			continue
+		}
+		if !isDigit(name[0]) || !isDigit(name[1]) || name[2] != '-' {
+			continue
+		}
+		out = append(out, filepath.Join(dir, name))
+	}
+	sort.Strings(out)
+	return out
 }
+
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }
 
 var (
 	curlURLCall = regexp.MustCompile(`https?://([A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)`)
