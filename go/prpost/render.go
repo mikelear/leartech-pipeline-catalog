@@ -45,6 +45,16 @@ type Test struct {
 	Message  string `json:"message,omitempty"`
 }
 
+// pct renders a percentage-shaped fact with its unit. The step computes `50.0`; the comment must
+// say `50.0%`. Adding the unit in the renderer means a caller cannot forget it, and it is why
+// the first real posting read "Coverage: 50.0 (threshold 0.0)".
+func pct(v string) string {
+	if v == "" || v == "?" || strings.HasSuffix(v, "%") {
+		return v
+	}
+	return v + "%"
+}
+
 func (f Facts) get(key, missing string) string {
 	if v, ok := f[key]; ok && v != "" {
 		return v
@@ -109,15 +119,15 @@ func renderCoverage(rep Report, f Facts) string {
 	// A percentage that came from an empty profile is not a measurement. Printing "0.0%" for it
 	// is how a scope mismatch spent a year looking like untested code, so the headline says what
 	// happened instead of showing a number nobody earned.
-	headline := "Coverage: " + f.get("coverage", "?")
+	headline := "Coverage: " + pct(f.get("coverage", "?"))
 	if f.get("measured", "") == "nothing" {
 		headline = "Coverage: NOT MEASURED"
 	}
 	fmt.Fprintf(&b, "### %s %s (threshold %s) `[%s]` — %s\n\n",
-		icon(rep.Outcome), headline, f.get("threshold", "?"), rep.Cluster,
+		icon(rep.Outcome), headline, pct(f.get("threshold", "?")), rep.Cluster,
 		f.get("verdict", verdictWord(rep.Outcome)))
 
-	base := f.get("base", "?")
+	base := pct(f.get("base", "?"))
 	switch f.get("delta_status", "") {
 	case "UNAVAILABLE":
 		// The reason matters more than the absence. "unavailable" with no why is what made a
@@ -126,8 +136,8 @@ func renderCoverage(rep Report, f Facts) string {
 			f.get("base_ref", "main"), f.get("delta_reason", "reason not reported"))
 	case "REGRESSED":
 		fmt.Fprintf(&b, ":warning: **Delta vs `%s`**: %s → %s (`%s` — exceeds tolerance `-%s`)\n\n",
-			f.get("base_ref", "main"), base, f.get("coverage", "?"),
-			f.get("delta", "?"), f.get("tolerance", "?"))
+			f.get("base_ref", "main"), base, pct(f.get("coverage", "?")),
+			pct(f.get("delta", "?")), pct(f.get("tolerance", "?")))
 	default:
 		if f.get("delta", "") == "" {
 			fmt.Fprintf(&b, ":information_source: Delta vs `%s`: unavailable — %s\n\n",
@@ -135,7 +145,7 @@ func renderCoverage(rep Report, f Facts) string {
 			break
 		}
 		fmt.Fprintf(&b, ":information_source: Delta vs `%s`: %s → %s (`%s`)\n\n",
-			f.get("base_ref", "main"), base, f.get("coverage", "?"), f.get("delta", "?"))
+			f.get("base_ref", "main"), base, pct(f.get("coverage", "?")), pct(f.get("delta", "?")))
 	}
 
 	b.WriteString("**Lowest-covered functions**\n\n")
@@ -188,11 +198,11 @@ func renderEnd2end(rep Report, f Facts, tests []Test, doc, title string) string 
 // Facts: score, break_at, killed, survived, nocoverage, timeouts, survivors (table body).
 func renderMutants(rep Report, f Facts) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "### %s Stryker.NET `[%s]` — %s%% (%s)\n\n",
-		icon(rep.Outcome), rep.Cluster, f.get("score", "?"), f.get("verdict", verdictWord(rep.Outcome)))
-	fmt.Fprintf(&b, "**Outcomes**: killed=`%s` survived=`%s` no-coverage=`%s` timeout=`%s` (score %s%%)\n\n",
+	fmt.Fprintf(&b, "### %s Stryker.NET `[%s]` — %s (%s)\n\n",
+		icon(rep.Outcome), rep.Cluster, pct(f.get("score", "?")), f.get("verdict", verdictWord(rep.Outcome)))
+	fmt.Fprintf(&b, "**Outcomes**: killed=`%s` survived=`%s` no-coverage=`%s` timeout=`%s` (score %s)\n\n",
 		f.get("killed", "?"), f.get("survived", "?"), f.get("nocoverage", "?"),
-		f.get("timeouts", "?"), f.get("score", "?"))
+		f.get("timeouts", "?"), pct(f.get("score", "?")))
 	b.WriteString("**Top surviving mutations** (gaps in test coverage):\n\n")
 	b.WriteString("| File | Line | Mutator |\n|---|---|---|\n")
 	b.WriteString(strings.TrimRight(f.get("survivors", "| — | — | no survivors |"), "\n"))

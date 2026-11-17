@@ -1,0 +1,25 @@
+{
+  "tool": "coverage",
+  "check": "test",
+  "cluster": "gcp",
+  "outcome": "success",
+  "summary": "Coverage: 50.0% (threshold 0.0%) \u2014 PASS",
+  "metrics": {
+    "coverage": "50.0%",
+    "base": "50.0",
+    "delta": "0.00%",
+    "scope": "./..."
+  },
+  "facts": {
+    "coverage": "50.0",
+    "threshold": "0.0",
+    "base": "50.0",
+    "delta": "0.00",
+    "tolerance": "0.5",
+    "delta_status": "OK",
+    "base_ref": "main",
+    "measured": "ok",
+    "verdict": "PASS",
+    "lowest": "| it-test/lh-test/add.go:6: | main | 0.0% |\n| it-test/lh-test/multiply.go:9: | Uncovered | 0.0% |"
+  }
+}
