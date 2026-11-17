@@ -95,6 +95,14 @@ sed "s|/usr/local/bin/kubectl|$WORK/bin/kubectl|g" "$WORK/steps/end2end-env.sh" 
 mv "$WORK/steps/env.sh" "$WORK/steps/end2end-env.sh"
 
 # e2erun, as the checkers image provides it: writes results.json, exits.
+# A stub prpost. The report step now RENDERS its comment in Go; the rendering is pinned by
+# go/prpost's golden scenarios, so what this harness checks is the plumbing — that the phase
+# supplies the outcome and summary it should. A stub is the right seam: the alternative is a Go
+# toolchain and the whole renderer inside a shell test about phase wiring.
+# The harness cd's to its own directory at the top, so the stub is beside us as ./fake-prpost.sh.
+cp ./fake-prpost.sh "$WORK/ws/bin/prpost"
+chmod +x "$WORK/ws/bin/prpost"
+
 fake_e2erun() {
   {
     printf '#!/bin/bash\n'
@@ -155,6 +163,9 @@ grep -q 'HAS_SCRIPT="1"' "$WORK/ws/.end2end/env.contract" && ok "contract: publi
 run_step end2end-run;      [ "$RC" = 0 ] && ok "run: exits 0 on a passing suite" || { bad "run: exits 0 on a passing suite (got $RC)"; echo "$OUT" | tail -3; }
 run_step end2end-report;   [ "$RC" = 0 ] && ok "report: exits 0 on a passing suite" || { bad "report: exits 0 on a passing suite (got $RC)"; echo "$OUT" | tail -3; }
 echo "$OUT" | grep -q 'PASS: end2end complete' && ok "report: prints the verdict" || bad "report: prints the verdict"
+# The comment is rendered in Go; what this harness checks is that the phase hands it the right
+# OUTCOME. The stub echoes the outcome back, so a phase that always said "failure" would show.
+if echo "$OUT" | grep -q 'outcome=success'; then ok "report: hands the renderer outcome=success"; else bad "report: hands the renderer outcome=success"; echo "$OUT" | tail -6; fi
 
 # 4. a failing suite: the verdict lands in the report step, not the run step
 fresh
@@ -164,6 +175,7 @@ run_step end2end-env; run_step end2end-contract; run_step end2end-run
 [ "$RC" = 0 ] && ok "run: does not decide the verdict" || bad "run: does not decide the verdict (got $RC)"
 run_step end2end-report
 [ "$RC" = 1 ] && ok "report: exits 1 on a failing suite" || bad "report: exits 1 on a failing suite (got $RC)"
+echo "$OUT" | grep -q 'outcome=failure' && ok "report: hands the renderer outcome=failure" || bad "report: hands the renderer outcome=failure"
 
 # 5. a suite that dies without results.json: the report names the step to read
 fresh

@@ -164,6 +164,27 @@ spec:
             # A PR comment is a notification, not a verdict. Delivery must never decide
             # this check: the curl|jq pipe aborts under pipefail when GitHub returns an
             # error object instead of an array (HTTP 503 on 2026-08-17).
+            # UI_RENDER <summary> [failures-file] [outcome] — render in Go, post via post_sticky.
+            UI_RENDER() {
+              local summary="$1" fails="${2:-}" outcome="${3:-failure}" facts
+              facts=$(mktemp)
+              {
+                printf 'counts=%s\n' "$summary"
+                printf 'target=%s\n' "${PREVIEW_URL:-}"
+                if [ -n "${ARTIFACT_LINKS:-}" ]; then
+                  printf 'artifacts=%s\n' "$(printf '%s' "$ARTIFACT_LINKS" | sed 's/^- //' | sed '/^$/d')"
+                fi
+                if [ -n "${LOG_TAIL:-}" ]; then
+                  printf 'logs=%s\n' "$LOG_TAIL"
+                fi
+              } > "$facts"
+              local args=(-tool end2end-ui -check end2end-ui -outcome "$outcome" \
+                          -cluster "${CLUSTER_TAG:-unknown}" -summary "$summary" -facts-file "$facts")
+              if [ -n "$fails" ]; then args+=(-failures-file "$fails"); fi
+              post_sticky "$(/workspace/bin/prpost "${args[@]}" -render)"
+              rm -f "$facts"
+            }
+
             post_sticky() {
               local body="$1"
               if [ -z "$FORGE_API_URL" ] || [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ] || [ -z "$PULL_NUMBER" ]; then
@@ -186,7 +207,10 @@ spec:
             # ── Check if end2end-ui/ exists ─────────────────────────────
             if [ ! -d "end2end-ui" ] || [ -z "$(ls end2end-ui/*.spec.ts 2>/dev/null)" ]; then
               echo "==> no end2end-ui/ specs found — skipping"
-              post_sticky "$(printf '%s\n' "$MARKER" ":grey_question: **End-to-end UI: not configured** \`[$CLUSTER_TAG]\`" "" "No \`end2end-ui/*.spec.ts\` files found. Add Playwright specs to enable browser testing." "" "_Posted by \`tasks/end2end-ui/pullrequest.yaml\`._")"
+              printf '%s\n' \
+                "No \`end2end-ui/*.spec.ts\` files found. Add Playwright specs to enable browser testing." \
+                > /tmp/ui-why
+              UI_RENDER "not configured: no end2end-ui specs" /tmp/ui-why success
               echo "PASS: end2end-ui not configured (opt-in)"
               exit 0
             fi
@@ -240,7 +264,10 @@ spec:
                 if [ "$(date +%s)" -ge "$DEADLINE" ]; then
                   echo "==> gate detail at timeout:"
                   curl -sS -m 5 "$GATE_URL" 2>/dev/null || true
-                  post_sticky "$(printf '%s\n' "$MARKER" ":x: **End-to-end UI: FAIL (preview gate timeout)** \`[$CLUSTER_TAG]\`" "" "preview-gate never reported ready within $((MAX_WAIT / 60)) min." "" "_Posted by \`tasks/end2end-ui/pullrequest.yaml\`._")"
+                  printf '%s\n' \
+                    "preview-gate never reported ready within $((MAX_WAIT / 60)) min." \
+                    > /tmp/ui-why
+                  UI_RENDER "preview gate timeout" /tmp/ui-why failure
                   echo "FAIL: preview gate timeout"
                   exit 1
                 fi
@@ -259,7 +286,10 @@ spec:
                 fi
                 if [ "$STREAK" -lt "$REQUIRED" ]; then
                   if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-                    post_sticky "$(printf '%s\n' "$MARKER" ":x: **End-to-end UI: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" "" "\`${PREVIEW_URL}${HEALTH_PATH}\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." "" "_Posted by \`tasks/end2end-ui/pullrequest.yaml\`._")"
+                    printf '%s\n' \
+                      "\`${PREVIEW_URL}${HEALTH_PATH}\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." \
+                      > /tmp/ui-why
+                    UI_RENDER "preview not ready" /tmp/ui-why failure
                     echo "FAIL: preview never reached stable ready state"
                     exit 1
                   fi
@@ -419,24 +449,11 @@ spec:
             cat "$RESULTS_JSON"
 
             # ── Post sticky comment ─────────────────────────────────────
+            # ARTIFACT_LINKS and LOG_TAIL are read by UI_RENDER as facts.
             LOG_TAIL=$(tail -20 end2end-ui/playwright.log 2>/dev/null | head -15)
 
-            ARTIFACTS_SECTION=""
-            if [ -n "$ARTIFACT_LINKS" ]; then
-              ARTIFACTS_SECTION=$(printf '\n**Artifacts** (screenshots, videos, traces):\n%b\n' "$ARTIFACT_LINKS")
-            fi
-
-            post_sticky "$(printf '%s\n' \
-              "$MARKER" \
-              ":${ICON}: **End-to-end UI: ${VERDICT}** \`[$CLUSTER_TAG]\` — ${SUMMARY}" \
-              "" \
-              "Preview: ${PREVIEW_URL}" \
-              "${ARTIFACTS_SECTION}" \
-              '```' \
-              "$LOG_TAIL" \
-              '```' \
-              "" \
-              "_Posted by \`tasks/end2end-ui/pullrequest.yaml\`._")"
+            if [ "$SUCCESS" = "true" ]; then UI_OUTCOME=success; else UI_OUTCOME=failure; fi
+            UI_RENDER "$SUMMARY" "" "$UI_OUTCOME"
 
             if [ "$SUCCESS" = "true" ]; then
               echo "PASS: end2end-ui complete"

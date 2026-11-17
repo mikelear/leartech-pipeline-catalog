@@ -61,6 +61,18 @@ except FileNotFoundError:
 #          verdict in a sentence.
 markdown = re.compile(r'^"?(###|:x:|:white_check_mark:|:warning:|:fast_forward:|:information_source:|:large_blue_circle:|\| |\*\*)')
 
+# `| sed -n 's/.../.../' | head -1` is a PIPELINE, not a table row, and the table pattern above
+# matches it. A table row's first cell is a word; a pipeline's is a binary. Same discriminator as
+# the curl rule needed — a rule that counts shell plumbing as prose pushes people to keep prose in
+# shell, which inverts the ratchet.
+SHELL_AFTER_PIPE = re.compile(
+    r'^\|\s*(sed|grep|awk|jq|head|tail|sort|cut|tr|wc|curl|cat|xargs|tee|uniq|paste|base64)\b')
+
+def is_markdown(line):
+    if SHELL_AFTER_PIPE.match(line):
+        return False
+    return bool(markdown.match(line)) or '"_Posted by' in line
+
 # NOT every interpolated printf is prose. `printf 'coverage=%s\n' "$TOTAL"` pipes a VALUE; it
 # says nothing to a reader. Counting it would push a step to keep its formatting in shell to
 # avoid the number going up, which inverts the point of the ratchet — the same false-positive
@@ -90,7 +102,7 @@ for f in sorted(glob.glob('tasks/**/*.yaml', recursive=True)):
             script = s.get('script') or ''
             for line in script.splitlines():
                 t2 = line.strip()
-                if markdown.match(t2) or posted in t2:
+                if is_markdown(t2):
                     md += 1
                 if re.match(r'^(echo|printf)\b', t2) and ('$' in t2 or '"' in t2) and is_prose(t2):
                     echos += 1
