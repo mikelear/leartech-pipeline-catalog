@@ -284,3 +284,58 @@ func TestReadFactsFileWins(t *testing.T) {
 		t.Errorf("coverage = %q, want the file's 99.9%%", f["coverage"])
 	}
 }
+
+// The double-wrap defect, measured on console-api#25.
+//
+// end2end-report renders with -render (human + machine block) and then hands that string to
+// prpost again to post it. Before this guard the second call appended a block built from its
+// own defaults, so a FAILED run's comment ended:
+//
+//	"outcome": "success", "summary": "end2end update"
+//
+// — and a reader that takes the last block learns the opposite of what happened.
+//
+// proven-by: TestRender_DoesNotDoubleWrapARenderedBody
+func TestRender_DoesNotDoubleWrapARenderedBody(t *testing.T) {
+	failed := Report{Tool: "end2end", Check: "end2end", Outcome: "failure",
+		Cluster: "gcp", Summary: "2/4 checks passed, 1 failed"}
+	first := Render("end2end", "### :x: End-to-end: FAIL `[gcp]`", failed)
+
+	// The step posts the rendered string again, with no flags of its own.
+	second := Render("end2end", first, Report{Tool: "end2end", Check: "end2end",
+		Outcome: "success", Cluster: "gcp", Summary: "end2end update"})
+
+	if n := strings.Count(second, "```leartech-report"); n != 1 {
+		t.Fatalf("want exactly 1 machine block, got %d\n---\n%s", n, second)
+	}
+	if !strings.Contains(second, `"outcome": "failure"`) {
+		t.Errorf("the surviving block must carry the run's real outcome:\n%s", second)
+	}
+	if strings.Contains(second, "end2end update") {
+		t.Errorf("a defaulted summary must not reach the comment:\n%s", second)
+	}
+}
+
+// The suite emits folded, indented messages; the table flattened them and the machine block
+// did not, so one comment described the same string two ways.
+//
+// proven-by: TestReadTests_FlattensFoldedMessages
+func TestReadTests_FlattensFoldedMessages(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tests.json")
+	// \n inside the JSON string is what the suite emits: a real newline once decoded.
+	body := `[{"name":"fleet-test","status":"skip",` +
+		`"message":"SKIP: STAGING_URL unset. This check is       staging-only: it drives\n` +
+		`the real login flow."}]`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := readTests(path)
+	if len(got) != 1 {
+		t.Fatalf("want 1 test, got %d", len(got))
+	}
+	want := "SKIP: STAGING_URL unset. This check is staging-only: it drives the real login flow."
+	if got[0].Message != want {
+		t.Errorf("message = %q, want %q", got[0].Message, want)
+	}
+}

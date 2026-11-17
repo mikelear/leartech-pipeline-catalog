@@ -287,10 +287,17 @@ func orDash(s string) string {
 
 // oneLine flattens a message into a table cell: pipes escaped, newlines joined, length capped.
 // A raw newline in a markdown table breaks the table and the reader sees one row of nonsense.
+// collapse makes any value one line with single spaces between words.
+//
+// A suite emits folded, indented messages ("This check is       staging-only: ...") and that
+// indentation survives into results.json. This flattens its table cells; the machine block
+// carried the raw string, so the two halves of one comment disagreed about the same value.
+func collapse(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func oneLine(s string) string {
-	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
-	s = strings.ReplaceAll(s, "|", "\\|")
-	s = strings.Join(strings.Fields(s), " ")
+	s = strings.ReplaceAll(collapse(s), "|", "\\|")
 	if len(s) > 300 {
 		return s[:300] + "…"
 	}

@@ -169,10 +169,28 @@ func StickyKey(tool, cluster string) string {
 	return "leartech-" + tool + "-" + cluster
 }
 
+// HasReportBlock reports whether a body already carries a machine block, i.e. whether prpost
+// rendered it.
+//
+// proven-by: TestRender_DoesNotDoubleWrapARenderedBody
+func HasReportBlock(body string) bool {
+	return strings.Contains(body, "```leartech-report")
+}
+
 // Render joins the visual half and the machine block into one comment body.
 //
+// A body that already carries a machine block is returned verbatim. Wrapping it again appends
+// a SECOND block built from this call's defaults, and a reader taking the last one learns the
+// defaults rather than the run: on console-api#25 a failed end2end's comment ended with
+// `"outcome": "success", "summary": "end2end update"` because the step renders with -render
+// and then hands that string back to prpost to post.
+//
 // proven-by: TestRender_PostsVisualAndMachineInOneComment
+// proven-by: TestRender_DoesNotDoubleWrapARenderedBody
 func Render(tool, visual string, rep Report) string {
+	if HasReportBlock(visual) {
+		return strings.TrimRight(visual, "\n") + "\n"
+	}
 	machine, _ := json.MarshalIndent(rep, "", "  ")
 	var out bytes.Buffer
 	if visual != "" {
@@ -374,6 +392,12 @@ func readTests(path string) []Test {
 	if err := json.Unmarshal(b, &tests); err != nil {
 		fmt.Fprintln(os.Stderr, "prpost: -tests-file is not a JSON array of tests:", err)
 		os.Exit(2)
+	}
+	// One value, both halves: the table flattens its cell, so the machine block carries the
+	// same string rather than the suite's folded indentation.
+	// proven-by: TestReadTests_FlattensFoldedMessages
+	for i := range tests {
+		tests[i].Message = collapse(tests[i].Message)
 	}
 	return tests
 }
