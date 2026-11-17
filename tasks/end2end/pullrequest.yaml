@@ -745,6 +745,25 @@ spec:
                 -body-file /dev/stdin <<<"$body"
             }
 
+            # post_report <summary> [failures-file] [outcome] — render in Go, post via post_sticky.
+            # /tmp/e2end-tests.json and /tmp/e2end-doc.md are read when present; a phase runs in its
+            # own container, so elsewhere they are absent by design.
+            post_report() {
+              local summary="$1" fails="${2:-}" outcome="${3:-failure}" facts
+              facts=$(mktemp)
+              {
+                printf 'counts=%s\n' "$summary"
+                printf 'target=%s\n' "${PREVIEW_URL:-}"
+              } > "$facts"
+              local args=(-tool end2end -check end2end -outcome "$outcome" \
+                          -cluster "${CLUSTER_TAG:-unknown}" -summary "$summary" -facts-file "$facts")
+              if [ -f /tmp/e2end-tests.json ]; then args+=(-tests-file /tmp/e2end-tests.json); fi
+              if [ -f /tmp/e2end-doc.md ]; then args+=(-doc-file /tmp/e2end-doc.md); fi
+              if [ -n "$fails" ]; then args+=(-failures-file "$fails"); fi
+              post_sticky "$(/workspace/bin/prpost "${args[@]}" -render)"
+              rm -f "$facts"
+            }
+
             # A PR comment is a notification, not a verdict. Delivery failure must
             # never decide this check: az/end2end went red on 2026-08-17 because a
             # "not configured" note hit HTTP 503 while the step had nothing to test.
@@ -768,6 +787,7 @@ spec:
             }
 
             ED2E_LIB
+
 
             # EXPORTED, not merely assigned. Each phase sources these files and then RUNS
             # the pack as a child process; a plain assignment in a sourced file sets a
@@ -875,50 +895,24 @@ spec:
             # someone and can be argued with in review.
             if [ "$HAS_SCRIPT" = "0" ] && [ "$HAS_OPTOUT" = "1" ]; then
               echo "==> no end2end/run.sh; end2end/NONE declares: $OPTOUT_REASON"
-              body=$(printf '%s\n' \
-                "$MARKER" \
-                ":fast_forward: **End-to-end: SKIPPED (declared)** \`[$CLUSTER_TAG]\`" \
-                "" \
-                "This repo declares it has no end2end suite, in \`end2end/NONE\`:" \
-                "" \
-                "> $OPTOUT_REASON" \
-                "" \
-                "**Nothing was tested against the preview deploy.** This check is green because the" \
+              printf '%s\n' \
+                "Nothing was tested against the preview deploy. This check is green because the" \
                 "absence is declared, not because anything passed. Delete \`end2end/NONE\` and add an" \
                 "executable \`end2end/run.sh\` to change that." \
-                "" \
-                "Contract: \`tasks/end2end/pullrequest.yaml\` in \`leartech-pipeline-catalog\`." \
-                "" \
-                "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
-              post_sticky "$body"
+                > /tmp/e2end-skip-why
+              post_report "SKIPPED (declared): nothing was tested" /tmp/e2end-skip-why success
               echo "SKIPPED: no end2end suite, declared in end2end/NONE — nothing was tested"
               exit 0
             fi
 
             if [ "$HAS_SCRIPT" = "0" ]; then
               echo "==> no executable end2end/run.sh and no end2end/NONE declaration"
-              body=$(printf '%s\n' \
-                "$MARKER" \
-                ":x: **End-to-end: undeclared** \`[$CLUSTER_TAG]\`" \
-                "" \
-                "This repo has neither an executable \`end2end/run.sh\` nor an \`end2end/NONE\` declaration," \
-                "so nothing ran against the preview deploy and nothing says that was intended." \
-                "" \
-                "Pick one:" \
-                "" \
-                "* add \`end2end/run.sh\` (\`chmod +x\`) — it runs against the live preview, with" \
-                "  \`PREVIEW_URL\` and \`PREVIEW_NAMESPACE\` in the environment;" \
-                "* or add \`end2end/NONE\` containing one line saying why this service has no" \
-                "  end2end suite. That keeps the check green while making the gap visible in the" \
-                "  repo and in this comment, instead of looking like a pass." \
-                "" \
-                "This used to report \`PASS: no end2end configured\`, which made \"no tests\" and" \
-                "\"all tests passed\" the same green tick." \
-                "" \
-                "Contract: \`tasks/end2end/pullrequest.yaml\` in \`leartech-pipeline-catalog\`." \
-                "" \
-                "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
-              post_sticky "$body"
+              printf '%s\n' \
+                "This repo has neither an executable \`end2end/run.sh\` nor an \`end2end/NONE\` declaration, so nothing ran against the preview deploy and nothing says that was intended." \
+                "Pick one: add \`end2end/run.sh\` (\`chmod +x\`) and it runs against the live preview with \`PREVIEW_URL\` and \`PREVIEW_NAMESPACE\` in the environment; or add \`end2end/NONE\` with one line saying why this service has no end2end suite." \
+                "This used to report \`PASS: no end2end configured\`, which made \"no tests\" and \"all tests passed\" the same green tick." \
+                > /tmp/e2end-why
+              post_report "undeclared: no end2end/run.sh and no end2end/NONE" /tmp/e2end-why failure
               echo "FAIL: no end2end/run.sh and no end2end/NONE declaration" >&2
               exit 1
             fi
@@ -1024,22 +1018,11 @@ spec:
                       echo "==> deploy run $SIB: $REASON"
                       break ;;
                     Failed|PipelineRunTimeout|CouldntGetTask|Cancelled|PipelineRunCancelled|StoppedRunFinally|CancelledRunFinally)
-                      body=$(printf '%s\n' \
-                        "$MARKER" \
-                        ":x: **End-to-end: not run (the deploy of this commit did not finish)** \`[$CLUSTER_TAG]\`" \
-                        "" \
-                        "\`pipelinerun/$SIB\` — the \`pr\` run that deploys the preview for" \
-                        "\`${PULL_PULL_SHA:0:8}\` — ended as **$REASON**, so the namespace holds" \
-                        "either nothing or the previous build." \
-                        "" \
-                        "This refuses rather than probing, because a health probe cannot tell a" \
-                        "fresh pod from a stale one — both answer 200. Testing the last build and" \
-                        "reporting it against this commit is worse than not testing: on" \
-                        "\`leartech-artifact-api\` #17 it failed a scope gate that the commit under" \
-                        "test had already fixed." \
-                        "" \
-                        "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
-                      post_sticky "$body"
+                      printf '%s\n' \
+                        "\`pipelinerun/${SIB}\` — the \`pr\` run that deploys the preview for \`${PULL_PULL_SHA:0:8}\` — ended as **${REASON}**, so the namespace holds either nothing or the previous build." \
+                        "This refuses rather than probing, because a health probe cannot tell a fresh pod from a stale one — both answer 200. Testing the last build and reporting it against this commit is worse than not testing: on \`leartech-artifact-api\` #17 it failed a scope gate that the commit under test had already fixed." \
+                        > /tmp/e2end-why
+                      post_report "not run: the deploy of this commit ended as ${REASON}" /tmp/e2end-why failure
                       echo "FAIL: deploy run $SIB ended as $REASON — refusing to test the previous build" >&2
                       exit 1 ;;
                   esac
@@ -1251,15 +1234,11 @@ spec:
                 if [ "$(date +%s)" -ge "$DEADLINE" ]; then
                   echo "==> gate detail at timeout:"
                   curl -sS -m 5 "$GATE_URL" 2>/dev/null || true
-                  body=$(printf '%s\n' \
-                    "$MARKER" \
-                    ":x: **End-to-end: FAIL (preview gate timeout)** \`[$CLUSTER_TAG]\`" \
-                    "" \
+                  printf '%s\n' \
                     "preview-gate never reported ready within $((MAX_WAIT / 60)) min." \
-                    "Gate detail: \`$(curl -sS -m 5 "$GATE_URL" 2>/dev/null || echo 'unreachable')\`" \
-                    "" \
-                    "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
-                  post_sticky "$body"
+                    "Gate detail: $(curl -sS -m 5 "$GATE_URL" 2>/dev/null || echo 'unreachable')" \
+                    > /tmp/e2end-why
+                  post_report "preview gate timeout" /tmp/e2end-why failure
                   echo "FAIL: preview gate timeout"
                   exit 1
                 fi
@@ -1362,17 +1341,11 @@ spec:
                 fi
                 if [ "$STREAK" -lt "$REQUIRED" ]; then
                   if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-                    body=$(printf '%s\n' \
-                      "$MARKER" \
-                      ":x: **End-to-end: FAIL (preview not ready)** \`[$CLUSTER_TAG]\`" \
-                      "" \
+                    printf '%s\n' \
                       "\`$PROBE_BASE$HEALTH_PATH\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." \
-                      "" \
-                      "Candidates tried: \`$HEALTH_CANDIDATES\`. If this service serves a different" \
-                      "path, set \`END2END_HEALTH_PATH\` in its \`.lighthouse/jenkins-x/end2end.yaml\`." \
-                      "" \
-                      "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
-                    post_sticky "$body"
+                      "Candidates tried: \`$HEALTH_CANDIDATES\`. If this service serves a different path, set \`END2END_HEALTH_PATH\` in its \`.lighthouse/jenkins-x/end2end.yaml\`." \
+                      > /tmp/e2end-why
+                    post_report "preview never reached stable ready state" /tmp/e2end-why failure
                     echo "FAIL: preview never reached stable ready state"
                     exit 1
                   fi
@@ -1545,30 +1518,37 @@ spec:
             # phases below have nothing to do and exit 0 rather than run the suite.
             # proven-by: end2end-runner/phases_test.sh
             [ "$HAS_SCRIPT" = "1" ] || { echo "==> no end2end suite in this repo (declared); this phase is a no-op"; exit 0; }
+            # Posting goes through post_sticky, not prpost directly: the retry and the
+            # delivery-does-not-decide-the-check behaviour live there.
+            END2END_RENDER() {  # END2END_RENDER <outcome> <summary> [failures-file]
+              local outcome="$1" summary="$2" fails="${3:-}"
+              {
+                printf 'counts=%s\n' "$summary"
+                printf 'target=%s\n' "${PREVIEW_URL:-}"
+              } > /tmp/e2end-facts
+              local args=(-tool end2end -check end2end -outcome "$outcome" \
+                          -cluster "$CLUSTER_TAG" -summary "$summary" -facts-file /tmp/e2end-facts)
+              if [ -f /tmp/e2end-tests.json ]; then args+=(-tests-file /tmp/e2end-tests.json); fi
+              if [ -f /tmp/e2end-doc.md ]; then args+=(-doc-file /tmp/e2end-doc.md); fi
+              if [ -n "$fails" ]; then args+=(-failures-file "$fails"); fi
+              /workspace/bin/prpost "${args[@]}" -render
+            }
+
             if [ ! -f end2end/results.json ]; then
-              body=$(printf '%s\n' \
-                "$MARKER" \
-                ":x: **End-to-end: FAIL (no results.json)** \`[$CLUSTER_TAG]\`" \
-                "" \
-                "\`end2end/run.sh\` exited $SCRIPT_EXIT without writing \`end2end/results.json\`. See the \`end2end-run\` step logs for script output." \
-                "" \
+              printf '%s\n' \
+                "\`end2end/run.sh\` exited ${SCRIPT_EXIT} without writing \`end2end/results.json\`. See the \`end2end-run\` step logs for script output." \
                 "The script must emit \`end2end/results.json\` per the schema in \`tasks/end2end/pullrequest.yaml\` so the sticky PR comment can render." \
-                "" \
-                "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
-              post_sticky "$body"
+                > /tmp/e2end-fails
+              post_sticky "$(END2END_RENDER failure "no results.json (run.sh exited ${SCRIPT_EXIT})" /tmp/e2end-fails)"
               echo "FAIL: no results.json — end2end/run.sh exited $SCRIPT_EXIT; see the end2end-run step logs"
               exit 1
             fi
 
             if ! jq -e . end2end/results.json >/dev/null 2>&1; then
-              body=$(printf '%s\n' \
-                "$MARKER" \
-                ":x: **End-to-end: FAIL (results.json malformed)** \`[$CLUSTER_TAG]\`" \
-                "" \
+              printf '%s\n' \
                 "\`end2end/results.json\` is not valid JSON. See the \`end2end-run\` step logs." \
-                "" \
-                "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
-              post_sticky "$body"
+                > /tmp/e2end-fails
+              post_sticky "$(END2END_RENDER failure "results.json malformed" /tmp/e2end-fails)"
               echo "FAIL: results.json malformed — see the end2end-run step logs"
               exit 1
             fi
@@ -1576,19 +1556,11 @@ spec:
             SUCCESS=$(jq -r '.success' end2end/results.json)
             SUMMARY=$(jq -r '.summary // "(no summary)"' end2end/results.json)
 
-            TEST_ROWS=$(jq -r '.tests[]? |
-              "| `\(.name)` | " +
-              (if .status=="pass" then ":white_check_mark: pass"
-               elif .status=="fail" then ":x: fail"
-               else ":large_blue_circle: \(.status)" end) +
-              " | \(.duration_ms // 0)ms | \(.message // "") |"' end2end/results.json)
-            [ -z "$TEST_ROWS" ] && TEST_ROWS="| — | — | — | (no tests emitted) |"
-
-            if [ "$SUCCESS" = "true" ]; then
-              ICON="white_check_mark"; VERDICT="PASS"
-            else
-              ICON="x"; VERDICT="FAIL"
-            fi
+            # The per-item rows as typed input; the renderer owns the table and flattens cells.
+            jq '[.tests[]? | {name: .name,
+                              status: .status,
+                              duration: (((.duration_ms // 0) | tostring) + "ms"),
+                              message: (.message // "")}]' end2end/results.json > /tmp/e2end-tests.json
 
             # metadata.doc — OPTIONAL markdown the suite emits for humans.
             #
@@ -1602,26 +1574,10 @@ spec:
             # Emitted rather than hand-written so it cannot drift: if the behaviour
             # changes the suite fails, and whatever it prints next describes the new
             # behaviour.
-            DOC=$(jq -r '.metadata.doc // empty' end2end/results.json 2>/dev/null || true)
-            if [ -n "$DOC" ]; then
-              DOC_BLOCK=$(printf '%s\n' "" "<details><summary>What this run measured</summary>" "" "$DOC" "" "</details>")
-            else
-              DOC_BLOCK=""
-            fi
+            jq -r '.metadata.doc // empty' end2end/results.json > /tmp/e2end-doc.md 2>/dev/null || : > /tmp/e2end-doc.md
 
-            body=$(printf '%s\n' \
-              "$MARKER" \
-              ":${ICON}: **End-to-end: ${VERDICT}** \`[$CLUSTER_TAG]\` — ${SUMMARY}" \
-              "" \
-              "Preview: ${PREVIEW_URL}" \
-              "" \
-              "| Test | Status | Duration | Message |" \
-              "|---|---|---|---|" \
-              "${TEST_ROWS}" \
-              "${DOC_BLOCK}" \
-              "" \
-              "_Posted by \`tasks/end2end/pullrequest.yaml\`._")
-            post_sticky "$body"
+            if [ "$SUCCESS" = "true" ]; then OUTCOME=success; else OUTCOME=failure; fi
+            post_sticky "$(END2END_RENDER "$OUTCOME" "$SUMMARY")"
 
             # ── coverage counters, REPORT ONLY ──────────────────────────────
             #

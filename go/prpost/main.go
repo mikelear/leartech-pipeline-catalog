@@ -66,6 +66,7 @@ func main() {
 	cluster := flag.String("cluster", envOr("CLUSTER_ID", ""), "cluster tag")
 	summary := flag.String("summary", "", "one-line summary for humans")
 	failures := flag.String("failures", "", "comma-separated failure lines")
+	failuresFile := flag.String("failures-file", "", "path to one failure per line (preferred for free text)")
 	targetURL := flag.String("target-url", "", "log/pipeline URL")
 	metricsRaw := flag.String("metrics", "", "k=v,k=v")
 	file := flag.String("body-file", "", "optional path: markdown body for the visual half")
@@ -92,6 +93,9 @@ func main() {
 		if f = strings.TrimSpace(f); f != "" {
 			rep.Failures = append(rep.Failures, f)
 		}
+	}
+	for _, f := range readLines(*failuresFile) {
+		rep.Failures = append(rep.Failures, f)
 	}
 	if *metricsRaw != "" {
 		rep.Metrics = map[string]string{}
@@ -316,13 +320,9 @@ func bearerForForge(ctx context.Context) string {
 
 // parseFacts reads k=v pairs, one per LINE.
 //
-// Not comma-separated: a fact's value is free text — a git clone error, a markdown table row —
-// and a comma inside it would silently become the start of the next fact. A newline is a
-// separator a reason cannot contain, and one fact per line is readable in a task YAML.
-//
-// A malformed pair is skipped rather than fatal: the renderer substitutes a placeholder for a
-// missing key, so the comment reports what it did not understand instead of the step dying at
-// the last moment.
+// One k=v per line, because a value is free text: a comma inside a git clone error would
+// silently start the next fact. A malformed pair is skipped, and the renderer shows a
+// placeholder for the missing key.
 func parseFacts(raw string) Facts {
 	if raw == "" {
 		return nil
@@ -412,4 +412,23 @@ func renderFromInput(in input) string {
 		Version: "1",
 	}
 	return Render(in.Tool, RenderVisual(in.Tool, rep, in.Facts, in.Tests, in.Doc), rep)
+}
+
+// readLines reads a file as one value per line, dropping blanks.
+func readLines(path string) []string {
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path) // #nosec G304 -- the caller's own temp file
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "prpost: -failures-file:", err)
+		os.Exit(2)
+	}
+	var out []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }

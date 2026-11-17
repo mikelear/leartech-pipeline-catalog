@@ -1,0 +1,13 @@
+{
+  "tool": "end2end-ui",
+  "check": "end2end-ui",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "7/8 browser tests passed",
+  "facts": {
+    "counts": "7/8 browser tests passed",
+    "target": "https://leartech-auth-ui-pr111.jx.leartech.com",
+    "artifacts": "- :camera: [consent persists screenshot](https://storage.example/gcp/pr111/consent.png)\n- :mag: [consent persists trace](https://storage.example/gcp/pr111/consent.zip)",
+    "logs": "[playwright] 8 tests, 1 failed\n  expect(received).toBeVisible()\n    the consent banner did not appear"
+  }
+}

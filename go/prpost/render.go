@@ -158,7 +158,8 @@ func renderCoverage(rep Report, f Facts) string {
 // renderEnd2end is the checklist report: how many checks ran, which failed, and the doc
 // fragment the suite itself wrote.
 //
-// Facts: target (the preview URL), passed, total, skipped, passed_word.
+// Facts: counts (e.g. "4/4 checks passed"), target (the preview URL), artifacts
+// (markdown links), logs (a fenced tail of output).
 func renderEnd2end(rep Report, f Facts, tests []Test, doc, title string) string {
 	var b strings.Builder
 	head := fmt.Sprintf("%s **%s: %s** `[%s]`", icon(rep.Outcome), title,
@@ -178,11 +179,20 @@ func renderEnd2end(rep Report, f Facts, tests []Test, doc, title string) string 
 				orDash(t.Duration), oneLine(t.Message))
 		}
 	}
+	if a := strings.TrimSpace(f.get("artifacts", "")); a != "" {
+		b.WriteString("\n**Artifacts** (screenshots, videos, traces):\n\n")
+		b.WriteString(a)
+		b.WriteString("\n")
+	}
 	if len(rep.Failures) > 0 {
 		b.WriteString("\n")
 		for _, fl := range rep.Failures {
 			fmt.Fprintf(&b, "- %s\n", oneLine(fl))
 		}
+	}
+	// The log tail goes in a fence above the doc block, unflattened: the lines are the point.
+	if lg := strings.TrimRight(f.get("logs", ""), "\n"); lg != "" {
+		b.WriteString("\n```\n" + lg + "\n```\n")
 	}
 	if doc = strings.TrimSpace(doc); doc != "" {
 		b.WriteString("\n<details><summary>What this run measured</summary>\n\n")
