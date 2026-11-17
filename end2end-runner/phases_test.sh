@@ -192,6 +192,94 @@ else
   echo "$OUT" | tail -6
 fi
 
+# 6. the await phase: the deploy of THIS commit failed, so it refuses to test the
+#    previous build.
+#
+# This is the route that was silently wrong before: the phase used to fall back to
+# whatever pod was in the namespace and report its result against the new commit. On
+# leartech-artifact-api#17 that failed a scope gate the commit under test had already
+# fixed. The refinement is that a health probe cannot tell a fresh pod from a stale one —
+# both answer 200 — so the phase asks the run that deploys instead.
+fresh
+printf '#!/bin/bash\necho ran\n' > "$WORK/src/end2end/run.sh"; chmod +x "$WORK/src/end2end/run.sh"
+fake_e2erun "$PASS_JSON" 0
+run_step end2end-env
+run_step end2end-contract
+
+# A kubectl that answers the two questions this route asks: which pipelinerun deploys this
+# commit, and how did it end. Anything else (services, deployments) is empty, which is the
+# honest answer for a namespace that never got a fresh deploy.
+cat > "$WORK/bin/kubectl" <<'KEOF'
+#!/bin/sh
+case "$*" in
+  *"get pipelineruns"*) echo "pr-run-failed" ;;
+  *"get pipelinerun pr-run-failed"*) echo "Failed" ;;
+  *) : ;;
+esac
+exit 0
+KEOF
+chmod +x "$WORK/bin/kubectl"
+PULL_PULL_SHA=deadbeefdeadbeef run_step end2end-await
+if [ "$RC" = 1 ] && echo "$OUT" | grep -q 'ended as'; then
+  ok "await: refuses to test the previous build when this commit's deploy failed"
+else
+  bad "await: refuses to test the previous build (rc=$RC)"
+  echo "$OUT" | tail -4
+fi
+# ...and the comment it posts is rendered by the Go path, with the reason as a failure line.
+echo "$OUT" | grep -q 'outcome=failure' && ok "await: hands the renderer outcome=failure" || { bad "await: hands the renderer outcome=failure"; echo "$OUT" | tail -6; }
+
+# restore the permissive stub for any later route
+printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/kubectl"
+chmod +x "$WORK/bin/kubectl"
+
+# 7. the await phase: a REQUIRED gate that never reports ready.
+#
+# leartech-auth-ui#111's failure. Three deployments were ready, the version matched, and the
+# gate held the preview closed for ten minutes on a probe URL that 404s — a per-repo helmfile
+# value. The gate's own JSON is the diagnosis, so the phase has to put it in the comment
+# instead of reducing it to "never returned 3 consecutive 200s".
+fresh
+printf '#!/bin/bash\necho ran\n' > "$WORK/src/end2end/run.sh"; chmod +x "$WORK/src/end2end/run.sh"
+cat > "$WORK/src/end2end/preview.yaml" <<'YEOF'
+preview:
+  healthPath: /health
+  service: leartech-auth-ui
+  gate: required
+YEOF
+fake_e2erun "$PASS_JSON" 0
+run_step end2end-env
+run_step end2end-contract
+
+# curl: the gate answers 503 (present, not ready), and its detail body carries the reason.
+cat > "$WORK/bin/curl" <<'CEOF'
+#!/bin/sh
+case "$*" in
+  *"%{http_code}"*) printf '503'; exit 0 ;;
+  *-sSf*|*" -f "*) exit 22 ;;
+  *) printf '{"ready":false,"message":"timeout after 600s: http_probe: probe returned 404"}'; exit 0 ;;
+esac
+CEOF
+chmod +x "$WORK/bin/curl"
+
+END2END_HEALTH_TIMEOUT=1 GATE_DETECT_TIMEOUT=1 PULL_PULL_SHA=deadbeefdeadbeef run_step end2end-await
+if [ "$RC" = 1 ] && echo "$OUT" | grep -q 'preview gate timeout'; then
+  ok "await: a required gate that never opens fails the phase"
+else
+  bad "await: a required gate that never opens fails the phase (rc=$RC)"
+  echo "$OUT" | tail -4
+fi
+# The gate's own message must survive into the report — it is the whole diagnosis.
+echo "$OUT" | grep -q 'probe returned 404' && ok "await: the gate's detail reaches the comment" || { bad "await: the gate's detail reaches the comment"; echo "$OUT" | tail -6; }
+
+# restore the permissive curl for any later route
+cat > "$WORK/bin/curl" <<'CEOF'
+#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in -o) shift; : > "$1";; esac; shift; done
+exit 0
+CEOF
+chmod +x "$WORK/bin/curl"
+
 echo
 if [ "$fail" -ne 0 ]; then
   echo "FAIL: $fail assertion(s)."
