@@ -1,0 +1,22 @@
+{
+  "tool": "coverage",
+  "check": "test",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "Coverage: 0.0% (threshold 60.0%) \u2014 FAIL",
+  "failures": [
+    "COVERAGE_SCOPE=./internal/... matched no packages, so this run measured nothing"
+  ],
+  "metrics": {
+    "coverage": "0.0%",
+    "scope": "./internal/..."
+  },
+  "facts": {
+    "coverage": "0.0%",
+    "threshold": "60.0%",
+    "delta_status": "UNAVAILABLE",
+    "delta_reason": "COVERAGE_SCOPE=./internal/... matched no packages \u2014 this run measured nothing, which reports as 0.0%",
+    "lowest": "| \u2014 | \u2014 | no packages matched the scope |",
+    "measured": "nothing"
+  }
+}

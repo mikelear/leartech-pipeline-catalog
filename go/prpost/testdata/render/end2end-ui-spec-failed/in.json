@@ -1,0 +1,25 @@
+{
+  "tool": "end2end-ui",
+  "check": "end2end-ui",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "7/8 browser tests passed",
+  "facts": {
+    "counts": "7/8 browser tests passed",
+    "target": "https://leartech-auth-ui-pr111.jx.leartech.com"
+  },
+  "tests": [
+    {
+      "name": "login renders",
+      "status": "pass",
+      "duration": "1.2s",
+      "message": "OK"
+    },
+    {
+      "name": "consent persists",
+      "status": "fail",
+      "duration": "4.8s",
+      "message": "expect(received).toBeVisible() \u2014 the consent banner did not appear"
+    }
+  ]
+}

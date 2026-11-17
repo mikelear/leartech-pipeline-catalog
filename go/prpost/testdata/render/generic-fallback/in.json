@@ -1,0 +1,11 @@
+{
+  "tool": "some-new-check",
+  "check": "new",
+  "cluster": "az",
+  "outcome": "failure",
+  "summary": "2 of 5 sub-checks failed",
+  "failures": [
+    "a.go:12 unused variable",
+    "b.go:40 missing error check"
+  ]
+}

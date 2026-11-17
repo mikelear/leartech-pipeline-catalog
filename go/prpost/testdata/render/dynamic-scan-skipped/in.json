@@ -1,0 +1,11 @@
+{
+  "tool": "dynamic-scan",
+  "check": "dynamic-scan",
+  "cluster": "gcp",
+  "outcome": "pending",
+  "summary": "skipped: preview not ready in 900s",
+  "facts": {
+    "why": "The preview did not become ready within 900s, so no scan ran. Re-run with `/test dynamic-security-scan` once it is deployed.",
+    "scanners": "Nikto + Nuclei did not execute."
+  }
+}

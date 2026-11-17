@@ -1,0 +1,14 @@
+{
+  "tool": "coverage",
+  "check": "test",
+  "cluster": "az",
+  "outcome": "success",
+  "summary": "Coverage: 100.0% (threshold 0%) \u2014 PASS",
+  "facts": {
+    "coverage": "100.0%",
+    "threshold": "0%",
+    "delta_status": "UNAVAILABLE",
+    "delta_reason": "no main branch on the base repo yet",
+    "lowest": "| \u2014 | \u2014 | all functions \u2265 100% |"
+  }
+}

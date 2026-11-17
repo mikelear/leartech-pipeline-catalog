@@ -1,0 +1,11 @@
+{
+  "tool": "end2end",
+  "check": "end2end",
+  "cluster": "gcp",
+  "outcome": "success",
+  "summary": "no end2end suite, declared in end2end/NONE \u2014 nothing was tested",
+  "facts": {
+    "counts": "SKIPPED (declared)",
+    "target": "https://thing-pr9.jx.leartech.com"
+  }
+}

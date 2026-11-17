@@ -1,0 +1,25 @@
+{
+  "tool": "coverage",
+  "check": "test",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "Coverage: 42.1% (threshold 60.0%) \u2014 FAIL",
+  "failures": [
+    "coverage 42.1% < 60.0% floor"
+  ],
+  "metrics": {
+    "coverage": "42.1%",
+    "base": "42.0%",
+    "delta": "0.10%",
+    "scope": "./..."
+  },
+  "facts": {
+    "coverage": "42.1%",
+    "threshold": "60.0%",
+    "base": "42.0%",
+    "delta": "0.10%",
+    "tolerance": "0.5%",
+    "delta_status": "OK",
+    "lowest": "| internal/x.go | X | 10.0% |"
+  }
+}

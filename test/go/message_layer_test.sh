@@ -60,6 +60,25 @@ except FileNotFoundError:
 #   echo — an echo/printf that interpolates something. That is how a value becomes a
 #          verdict in a sentence.
 markdown = re.compile(r'^"?(###|:x:|:white_check_mark:|:warning:|:fast_forward:|:information_source:|:large_blue_circle:|\| |\*\*)')
+
+# NOT every interpolated printf is prose. `printf 'coverage=%s\n' "$TOTAL"` pipes a VALUE; it
+# says nothing to a reader. Counting it would push a step to keep its formatting in shell to
+# avoid the number going up, which inverts the point of the ratchet — the same false-positive
+# lesson as the curl rule firing on "curl failed".
+# After stripping the conversions and separators, a bare key name is data: `coverage=%s`
+# says a value to a file, `Coverage: %s%%` says something to a person.
+DATA_ONLY = re.compile(r'^[a-z_]+$')
+
+def is_prose(line):
+    """True when an echo/printf's own text would be read by a person."""
+    m = re.match(r'^(?:echo|printf)\s+([\'"])(.*?)\1', line)
+    if not m:
+        # printf with an unquoted or variable format: assume prose, since we cannot tell.
+        return True
+    fmt = m.group(2)
+    stripped = re.sub(r'%[-#0-9.]*[a-zA-Z]|\\n|\\t|\\\\', '', fmt)
+    stripped = stripped.strip(' \'"=')
+    return not DATA_ONLY.match(stripped)
 posted = '"_Posted by'
 
 current = {}
@@ -73,7 +92,7 @@ for f in sorted(glob.glob('tasks/**/*.yaml', recursive=True)):
                 t2 = line.strip()
                 if markdown.match(t2) or posted in t2:
                     md += 1
-                if re.match(r'^(echo|printf)\b', t2) and ('$' in t2 or '"' in t2):
+                if re.match(r'^(echo|printf)\b', t2) and ('$' in t2 or '"' in t2) and is_prose(t2):
                     echos += 1
     if md or echos:
         current[f] = (md, echos)

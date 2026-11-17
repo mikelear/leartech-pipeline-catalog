@@ -1,0 +1,25 @@
+{
+  "tool": "coverage",
+  "check": "test",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "Coverage: 33.3% (threshold 0%) \u2014 FAIL",
+  "failures": [
+    "coverage dropped -66.70% vs origin/main (tolerance -0.5%)"
+  ],
+  "metrics": {
+    "coverage": "33.3%",
+    "base": "100.0%",
+    "delta": "-66.70%",
+    "scope": "./..."
+  },
+  "facts": {
+    "coverage": "33.3%",
+    "threshold": "0%",
+    "base": "100.0%",
+    "delta": "-66.70%",
+    "tolerance": "0.5%",
+    "delta_status": "REGRESSED",
+    "lowest": "| extra.go | UnusedPR | 0.0% |"
+  }
+}

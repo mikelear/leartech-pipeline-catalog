@@ -1,0 +1,37 @@
+{
+  "tool": "end2end",
+  "check": "end2end",
+  "cluster": "gcp",
+  "outcome": "success",
+  "summary": "4/4 checks passed",
+  "facts": {
+    "counts": "4/4 checks passed",
+    "target": "https://thing-pr9.jx.leartech.com"
+  },
+  "tests": [
+    {
+      "name": "smoke",
+      "status": "pass",
+      "duration": "503ms",
+      "message": "OK"
+    },
+    {
+      "name": "audience",
+      "status": "pass",
+      "duration": "765ms",
+      "message": "A\u2019s token refused by B, B\u2019s refused by A"
+    },
+    {
+      "name": "auth-refusals",
+      "status": "pass",
+      "duration": "110ms",
+      "message": "OK"
+    },
+    {
+      "name": "suppliers",
+      "status": "pass",
+      "duration": "142ms",
+      "message": "OK"
+    }
+  ]
+}

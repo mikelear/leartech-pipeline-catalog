@@ -17,7 +17,7 @@
 0 3 tasks/go-lint/pullrequest.yaml
 0 3 tasks/go-no-promote/release.yaml
 0 4 tasks/go-platform-promote/release.yaml
-5 11 tasks/go-test/pullrequest.yaml
+5 8 tasks/go-test/pullrequest.yaml
 2 3 tasks/helm/platform-promote.yaml
 0 4 tasks/helm/platform-release.yaml
 0 19 tasks/helm/pullrequest.yaml

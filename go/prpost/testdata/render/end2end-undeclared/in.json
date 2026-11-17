@@ -1,0 +1,15 @@
+{
+  "tool": "end2end",
+  "check": "end2end",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "no end2end/run.sh and no end2end/NONE declaration",
+  "facts": {
+    "counts": "nothing ran"
+  },
+  "failures": [
+    "This repo has neither an executable `end2end/run.sh` nor an `end2end/NONE` declaration, so nothing ran against the preview and nothing says that was intended.",
+    "Pick one: add `end2end/run.sh` (chmod +x), or add `end2end/NONE` with one line saying why this service has no end2end suite.",
+    "This used to report \"PASS: no end2end configured\", which made \"no tests\" and \"all tests passed\" the same green tick."
+  ]
+}
