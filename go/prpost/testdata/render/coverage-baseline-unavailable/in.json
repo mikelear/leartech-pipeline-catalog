@@ -1,0 +1,19 @@
+{
+  "tool": "coverage",
+  "check": "test",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "Coverage: 0.0% (threshold 60.0%) \u2014 FAIL",
+  "metrics": {
+    "coverage": "0.0%",
+    "scope": "./..."
+  },
+  "facts": {
+    "coverage": "0.0%",
+    "threshold": "60.0%",
+    "delta_status": "UNAVAILABLE",
+    "delta_reason": "clone of https://github.com/it-test/lh-private.git@main: remote: Repository not found.",
+    "base_ref": "main",
+    "lowest": "| \u2014 | \u2014 | all functions \u2265 100% |"
+  }
+}

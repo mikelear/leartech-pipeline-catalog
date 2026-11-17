@@ -1,0 +1,17 @@
+{
+  "tool": "end2end",
+  "check": "end2end",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "2/5 checks passed, 16 skipped",
+  "failures": [
+    "19 of 21 scripts exited 77: neither PREVIEW_URL nor STAGING_URL was set, so the runner handed them an empty environment"
+  ],
+  "metrics": {
+    "passed": "2",
+    "skipped": "16"
+  },
+  "facts": {
+    "counts": "2/5 checks passed, 16 skipped"
+  }
+}

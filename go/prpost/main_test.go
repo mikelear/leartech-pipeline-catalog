@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -155,4 +157,130 @@ func TestUpsertGitea_StickyByMarker(t *testing.T) {
 
 type capturedReq struct {
 	Method, URL, Body string
+}
+
+// The machine half must carry the same detail as the human half. An agent reading
+// `outcome: failure, summary: 1/4 checks passed` has no way to learn WHICH check failed
+// unless the tests are in the block too — it would have to parse the markdown beside it,
+// which is the coupling the two-payload design exists to avoid.
+func TestRender_MachineBlockCarriesTheTests(t *testing.T) {
+	tests := []Test{
+		{Name: "smoke", Status: "pass", Duration: "503ms", Message: "OK"},
+		{Name: "audience", Status: "fail", Duration: "765ms", Message: "BINDING BROKEN"},
+	}
+	rep := Report{Tool: "end2end", Check: "end2end", Outcome: "failure", Cluster: "gcp",
+		Summary: "1/2 checks passed", Tests: tests, Version: "1"}
+	body := Render("end2end", "whatever", rep)
+
+	open := strings.Index(body, "```leartech-report\n")
+	close_ := strings.Index(body[open:], "\n```")
+	var back Report
+	if err := json.Unmarshal([]byte(body[open+len("```leartech-report\n"):open+close_]), &back); err != nil {
+		t.Fatalf("machine block does not decode: %v", err)
+	}
+	if len(back.Tests) != 2 {
+		t.Fatalf("machine block has %d test(s), want 2 — an agent cannot see which check failed", len(back.Tests))
+	}
+	if back.Tests[1].Name != "audience" || back.Tests[1].Status != "fail" {
+		t.Errorf("machine block lost the failing row: %+v", back.Tests[1])
+	}
+}
+
+// A cell with a pipe or a newline breaks a markdown table into nonsense rows. The estate's
+// real messages contain both (a jq filter, a multi-line failure tail).
+func TestOneLineFlattensACell(t *testing.T) {
+	cases := map[string]string{
+		"a | b":                  `a \| b`,
+		"line one\nline two":     "line one line two",
+		"  spaced   out  ":       "spaced out",
+		strings.Repeat("x", 400): strings.Repeat("x", 300) + "…",
+	}
+	for in, want := range cases {
+		if got := oneLine(in); got != want {
+			t.Errorf("oneLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A fact the step did not supply renders a placeholder, never nothing. An empty string in a
+// sentence reads as a formatting glitch; a "?" reads as a missing input.
+func TestMissingFactsRenderPlaceholders(t *testing.T) {
+	out := RenderVisual("coverage", Report{Outcome: "success", Cluster: "gcp"}, Facts{}, nil, "")
+	for _, want := range []string{"Coverage: ?", "threshold ?", "unavailable — reason not reported"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing fact did not render %q:\n%s", want, out)
+		}
+	}
+}
+
+// A percentage that came from an empty profile is not a measurement, and the headline must
+// not print it as one.
+func TestCoverageHeadlineSaysNotMeasured(t *testing.T) {
+	out := RenderVisual("coverage", Report{Outcome: "failure", Cluster: "gcp"},
+		Facts{"coverage": "0.0%", "threshold": "60.0%", "measured": "nothing"}, nil, "")
+	if !strings.Contains(out, "NOT MEASURED") {
+		t.Errorf("an unmeasured run should not print a percentage:\n%s", out)
+	}
+	if strings.Contains(out, "Coverage: 0.0%") {
+		t.Errorf("the headline still shows 0.0%%:\n%s", out)
+	}
+}
+
+// An unknown tool must still post something truthful. A new step gets a plain comment before
+// it gets a designed one, and the golden suite makes "no renderer yet" visible.
+func TestUnknownToolFallsBack(t *testing.T) {
+	// Tool set on the Report as well as passed as the dispatch key: that is what a caller has,
+	// and the renderer reads the Report.
+	out := RenderVisual("brand-new-check", Report{Tool: "brand-new-check", Outcome: "failure",
+		Cluster: "az", Summary: "3 of 5 sub-checks failed", Failures: []string{"a: bad"}},
+		Facts{}, nil, "")
+	for _, want := range []string{":x:", "brand-new-check", "3 of 5", "a: bad"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("fallback omitted %q:\n%s", want, out)
+		}
+	}
+}
+
+// A facts FILE with a multi-line value: `lowest` is a markdown table, transported as one line
+// with a two-character \n. Without the unescape every table row would carry a literal
+// backslash-n, which looks like a rendering bug and is a transport one.
+func TestReadFactsUnescapesNewlines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "facts")
+	body := "coverage=82.3%\nthreshold=60.0%\n" +
+		`lowest=| a.go | Do | 41.2% |\n| b.go | Publish | 58.0% |` + "\n" +
+		"delta_reason=clone failed, could not read Username\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f := readFacts("", path)
+	if got := f["lowest"]; strings.Count(got, "\n") != 1 {
+		t.Errorf("lowest has %d newline(s), want 1 — the rows must be real line breaks:\n%q",
+			strings.Count(got, "\n"), got)
+	}
+	if strings.Contains(f["lowest"], `\n`) {
+		t.Errorf("lowest still carries an escape: %q", f["lowest"])
+	}
+	// A comma is data, not a separator. This value is a real git error.
+	if !strings.Contains(f["delta_reason"], "clone failed, could not read Username") {
+		t.Errorf("delta_reason lost its comma or its text: %q", f["delta_reason"])
+	}
+	if f["coverage"] != "82.3%" {
+		t.Errorf("coverage = %q", f["coverage"])
+	}
+}
+
+// The file wins over the inline flag, so a caller migrating from -facts to -facts-file cannot
+// accidentally get half of each.
+func TestReadFactsFileWins(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "facts")
+	if err := os.WriteFile(path, []byte("coverage=99.9%\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := readFacts("coverage=11.1%", path)
+	if f["coverage"] != "99.9%" {
+		t.Errorf("coverage = %q, want the file's 99.9%%", f["coverage"])
+	}
 }

@@ -1,0 +1,17 @@
+{
+  "tool": "mutants",
+  "check": "dotnet-mutants",
+  "cluster": "gcp",
+  "outcome": "success",
+  "summary": "Mutation score 78% (>= 70% threshold)",
+  "facts": {
+    "score": "78",
+    "break_at": "70",
+    "killed": "142",
+    "survived": "3",
+    "nocoverage": "0",
+    "timeouts": "1",
+    "survivors": "| `Client.cs` | `==` \u2192 `!=` | Equality |\n| `Guard.cs` | removed `if` | Statement |",
+    "verdict": "78% (\u2265 70% threshold)"
+  }
+}

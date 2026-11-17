@@ -1,0 +1,43 @@
+{
+  "tool": "end2end",
+  "check": "end2end",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "1/3 checks passed, 1 skipped",
+  "metrics": {
+    "passed": "1",
+    "failed": "2",
+    "skipped": "1"
+  },
+  "facts": {
+    "counts": "1/3 checks passed, 1 skipped",
+    "target": "https://leartech-console-api-pr24.jx.leartech.com"
+  },
+  "tests": [
+    {
+      "name": "smoke",
+      "status": "pass",
+      "duration": "628ms",
+      "message": "OK"
+    },
+    {
+      "name": "fleet-test",
+      "status": "skip",
+      "duration": "2ms",
+      "message": "STAGING_URL unset, so this is a PR/preview context. This check is staging-only."
+    },
+    {
+      "name": "cross-service-audience",
+      "status": "fail",
+      "duration": "765ms",
+      "message": "CROSS-SERVICE AUDIENCE BINDING BROKEN"
+    },
+    {
+      "name": "auth-refusals",
+      "status": "fail",
+      "duration": "110ms",
+      "message": "05-auth-refusals.sh: line 105: python3: command not found"
+    }
+  ],
+  "doc": "### Cross-service audience binding\n\n| token minted for | at `preview` | at `preview-peer` |\n|---|---|---|\n| `leartech-console-api` | **200** | **401** |"
+}

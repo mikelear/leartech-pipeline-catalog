@@ -1,0 +1,21 @@
+{
+  "tool": "end2end",
+  "check": "end2end",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "1/4 checks passed",
+  "failures": [
+    "auth-refusals FAIL: python3: command not found \u2014 the runtime image carries jq and authtoken, not an interpreter"
+  ],
+  "facts": {
+    "counts": "1/4 checks passed"
+  },
+  "tests": [
+    {
+      "name": "auth-refusals",
+      "status": "fail",
+      "duration": "110ms",
+      "message": "python3: command not found"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "tool": "end2end",
+  "check": "end2end",
+  "cluster": "gcp",
+  "outcome": "failure",
+  "summary": "preview-gate never reported ready within 10 min",
+  "failures": [
+    "gate detail: timeout after 600s: http_probe: probe 'https://hydra-pr111.jx.leartech.com/.well-known/openid-configuration' returned 404"
+  ],
+  "facts": {
+    "counts": "the gate refused"
+  }
+}

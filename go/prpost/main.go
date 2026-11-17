@@ -37,15 +37,19 @@ import (
 
 // Report is the machine-readable half of every post.
 type Report struct {
-	Tool      string            `json:"tool"`
-	Check     string            `json:"check"` // the check context this post speaks for
-	Outcome   string            `json:"outcome"`
-	Cluster   string            `json:"cluster,omitempty"`
-	Summary   string            `json:"summary"`
-	Failures  []string          `json:"failures,omitempty"`
-	Metrics   map[string]string `json:"metrics,omitempty"`
-	TargetURL string            `json:"target_url,omitempty"`
-	Version   string            `json:"version"`
+	Tool     string            `json:"tool"`
+	Check    string            `json:"check"` // the check context this post speaks for
+	Outcome  string            `json:"outcome"`
+	Cluster  string            `json:"cluster,omitempty"`
+	Summary  string            `json:"summary"`
+	Failures []string          `json:"failures,omitempty"`
+	Metrics  map[string]string `json:"metrics,omitempty"`
+	// Tests is the per-item detail behind the table, in the machine block as well as the
+	// markdown. Without it an agent can read "1/4 checks passed" and has no way to learn
+	// which one, so it would have to parse the markdown it was given alongside.
+	Tests     []Test `json:"tests,omitempty"`
+	TargetURL string `json:"target_url,omitempty"`
+	Version   string `json:"version"`
 }
 
 func envOr(k, d string) string {
@@ -65,10 +69,18 @@ func main() {
 	targetURL := flag.String("target-url", "", "log/pipeline URL")
 	metricsRaw := flag.String("metrics", "", "k=v,k=v")
 	file := flag.String("body-file", "", "optional path: markdown body for the visual half")
+	factsRaw := flag.String("facts", "", "k=v tool-specific values, one per line")
+	factsFile := flag.String("facts-file", "", "path to the k=v facts file; a value may be multi-line")
+	testsFile := flag.String("tests-file", "", "path to a JSON array of {name,status,duration,message}")
+	docFile := flag.String("doc-file", "", "path to markdown appended below the table")
+	renderOnly := flag.Bool("render", false, "print the comment body and exit; post nothing")
 	api := flag.String("api", envOr("FORGE_API_URL", ""), "leartech-forge-api base URL")
 	flag.Parse()
 
-	if *tool == "" || *outcome == "" || (*api == "" && envOr("FORGE_KIND", "") == "") {
+	// -render posts nothing, so it needs no forge. That is deliberate: a golden test and a
+	// consumer debugging "what would this say" both run with no credentials.
+	if *tool == "" || *outcome == "" ||
+		(!*renderOnly && *api == "" && envOr("FORGE_KIND", "") == "") {
 		fmt.Fprintln(os.Stderr, "prpost: -tool, -outcome and FORGE_API_URL/-api (or FORGE_KIND=gitea) are required")
 		os.Exit(2)
 	}
@@ -90,24 +102,39 @@ func main() {
 		}
 	}
 	visual := *summary
-	if *file != "" {
+	switch {
+	case *file != "":
 		b, err := os.ReadFile(*file)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "prpost:", err)
 			os.Exit(2)
 		}
 		visual = string(b)
+	case *factsRaw != "" || *factsFile != "" || *testsFile != "" || *docFile != "":
+		// No hand-written body: render the markdown from typed input. A caller that keeps
+		// passing -body-file is unchanged, so this is opt-in per step and can be adopted one
+		// at a time rather than in a flag day.
+		visual = RenderVisual(*tool, rep, readFacts(*factsRaw, *factsFile), readTests(*testsFile), readDoc(*docFile))
 	}
 
 	owner := envOr("REPO_OWNER", "")
 	name := envOr("REPO_NAME", "")
 	pr := envOr("PULL_NUMBER", "")
-	if owner == "" || name == "" || pr == "" {
+	if !*renderOnly && (owner == "" || name == "" || pr == "") {
 		fmt.Fprintln(os.Stderr, "prpost: REPO_OWNER, REPO_NAME and PULL_NUMBER are required")
 		os.Exit(2)
 	}
 
+	// The tests go into the machine block as well: one value, both halves.
+	rep.Tests = readTests(*testsFile)
+
 	body := Render(*tool, visual, rep)
+	if *renderOnly {
+		// The same string the forge receives, on stdout. The golden tests diff THIS, so they
+		// exercise the rendered artefact rather than a re-implementation of it.
+		fmt.Print(body)
+		os.Exit(0)
+	}
 	key := StickyKey(*tool, *cluster)
 	if kind := envOr("FORGE_KIND", ""); kind == "gitea" || kind == "forgejo" {
 		server := envOr("FORGE_SERVER", "")
@@ -285,4 +312,104 @@ func bearerForForge(ctx context.Context) string {
 		return ""
 	}
 	return out.AccessToken
+}
+
+// parseFacts reads k=v pairs, one per LINE.
+//
+// Not comma-separated: a fact's value is free text — a git clone error, a markdown table row —
+// and a comma inside it would silently become the start of the next fact. A newline is a
+// separator a reason cannot contain, and one fact per line is readable in a task YAML.
+//
+// A malformed pair is skipped rather than fatal: the renderer substitutes a placeholder for a
+// missing key, so the comment reports what it did not understand instead of the step dying at
+// the last moment.
+func parseFacts(raw string) Facts {
+	if raw == "" {
+		return nil
+	}
+	f := Facts{}
+	for _, kv := range strings.Split(raw, "\n") {
+		if k, v, ok := strings.Cut(kv, "="); ok && strings.TrimSpace(k) != "" {
+			f[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	return f
+}
+
+// readFacts prefers the file, and unescapes a literal `\n` inside a value.
+//
+// `lowest` is a markdown table; it arrives as one line with `\n` where the row breaks are.
+// Without the unescape the renderer would emit a table with backslash-n in every row, which
+// looks like a rendering bug and is a transport one.
+func readFacts(inline, path string) Facts {
+	if path != "" {
+		b, err := os.ReadFile(path) // #nosec G304 -- the caller's own temp file
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "prpost: -facts-file:", err)
+			os.Exit(2)
+		}
+		inline = string(b)
+	}
+	f := parseFacts(inline)
+	for k, v := range f {
+		if strings.Contains(v, `\n`) {
+			f[k] = strings.ReplaceAll(v, `\n`, "\n")
+		}
+	}
+	return f
+}
+
+// readTests reads the JSON array a table-shaped tool writes. An unreadable file is a hard
+// error: a table that silently becomes empty reports "nothing ran", which is itself a verdict.
+func readTests(path string) []Test {
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path) // #nosec G304 -- path is the caller's own temp file
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "prpost: -tests-file:", err)
+		os.Exit(2)
+	}
+	var tests []Test
+	if err := json.Unmarshal(b, &tests); err != nil {
+		fmt.Fprintln(os.Stderr, "prpost: -tests-file is not a JSON array of tests:", err)
+		os.Exit(2)
+	}
+	return tests
+}
+
+func readDoc(path string) string {
+	if path == "" {
+		return ""
+	}
+	b, err := os.ReadFile(path) // #nosec G304
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "prpost: -doc-file:", err)
+		os.Exit(2)
+	}
+	return string(b)
+}
+
+// input is one scenario, as the golden tests and the CLI both express it.
+type input struct {
+	Tool     string            `json:"tool"`
+	Check    string            `json:"check"`
+	Cluster  string            `json:"cluster"`
+	Outcome  string            `json:"outcome"`
+	Summary  string            `json:"summary"`
+	Failures []string          `json:"failures,omitempty"`
+	Metrics  map[string]string `json:"metrics,omitempty"`
+	Facts    Facts             `json:"facts,omitempty"`
+	Tests    []Test            `json:"tests,omitempty"`
+	Doc      string            `json:"doc,omitempty"`
+}
+
+// renderFromInput is the whole pipeline for one report, minus the network.
+func renderFromInput(in input) string {
+	rep := Report{
+		Tool: in.Tool, Check: in.Check, Outcome: in.Outcome, Cluster: in.Cluster,
+		Summary: in.Summary, Failures: in.Failures, Metrics: in.Metrics, Tests: in.Tests,
+		Version: "1",
+	}
+	return Render(in.Tool, RenderVisual(in.Tool, rep, in.Facts, in.Tests, in.Doc), rep)
 }

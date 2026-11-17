@@ -1,0 +1,22 @@
+{
+  "tool": "coverage",
+  "check": "test",
+  "cluster": "gcp",
+  "outcome": "success",
+  "summary": "Coverage: 82.3% (threshold 60.0%) \u2014 PASS",
+  "metrics": {
+    "coverage": "82.3%",
+    "base": "84.0%",
+    "delta": "-1.70%",
+    "scope": "./..."
+  },
+  "facts": {
+    "coverage": "82.3%",
+    "threshold": "60.0%",
+    "base": "84.0%",
+    "delta": "-1.70%",
+    "tolerance": "0.5%",
+    "delta_status": "OK",
+    "lowest": "| internal/handlers/admin.go | Onboard | 41.2% |\n| internal/bus/publish.go | Publish | 58.0% |"
+  }
+}

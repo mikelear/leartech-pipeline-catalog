@@ -270,31 +270,56 @@ spec:
               # the table is useful even on well-tested repos). Skips the
               # `total:` summary row.
               LOWEST=$(go tool cover -func=cover.out \
-                | awk 'NR>1 && $1!="total:" && $NF!="100.0%" {printf "| `%s` | `%s` | %s |\n", $1, $2, $NF}' \
+                | awk 'NR>1 && $1!="total:" && $NF!="100.0%" {printf "| %s | %s | %s |\n", $1, $2, $NF}' \
                 | sort -t '|' -k4 -g \
                 | head -5)
               [ -z "$LOWEST" ] && LOWEST="| — | — | all functions ≥ 100% |"
 
               BASE_REF="${PULL_BASE_REF:-main}"
-              if [ "$BASE_STATUS" = "UNAVAILABLE" ]; then
-                DELTA_LINE="_Delta vs \`${BASE_REF}\`: unavailable — ${BASE_WHY:-reason not reported}_"
-              elif [ "$BASE_STATUS" = "REGRESSED" ]; then
-                DELTA_LINE=":warning: **Delta vs \`${BASE_REF}\`**: ${BASE_TOTAL}% → ${TOTAL}% (\`${BASE_DELTA}%\` — exceeds tolerance \`-${DELTA_TOL}%\`)"
-              else
-                DELTA_LINE=":information_source: Delta vs \`${BASE_REF}\`: ${BASE_TOTAL}% → ${TOTAL}% (\`${BASE_DELTA}%\`)"
-              fi
 
-              # ONE poster, not eight curl blocks: go/prpost (the catalog's Go
-              # tool) upserts the sticky comment through leartech-forge-api and
-              # appends the machine-readable leartech-report block for agents.
-              # Same sticky key per cluster as the old marker, so existing
-              # comments are adopted, not duplicated.
-              VISUAL_FILE=/tmp/coverage-visual.md
+              # The markdown is RENDERED IN GO from these facts, not printed here. The wording
+              # of a coverage verdict was 8 lines of printf with no test, which is where
+              # "0.0% (threshold 60%)" for a scope that measured nothing came from, and
+              # "Delta vs main: unavailable" with no reason for a whole forge.
+              #
+              # What stays here is what only this step knows: the numbers, and whether the run
+              # measured anything at all. `measured=nothing` is the second of those — a
+              # percentage from an empty profile is not a measurement, and the renderer says so
+              # instead of printing it.
+              # The mk's own scope-miss check exits before this, but a step that reports on what
+              # was measured has to be able to say "nothing was" — so count the statements in the
+              # profile itself rather than trusting a number to reach us.
+              STATEMENTS=$(grep -vc '^mode:' cover.out 2>/dev/null || echo 0)
+              MEASURED="ok"
+              [ "$STATEMENTS" = "0" ] && MEASURED="nothing"
+
+              DELTA_STATUS="${BASE_STATUS:-UNAVAILABLE}"
+              DELTA_REASON="${BASE_WHY:-}"
+
+              # The facts go in a FILE, one k=v per line, and prpost renders the markdown from
+              # them. Two reasons: `lowest` is a multi-line markdown table, which no shell string
+              # survives intact through YAML, and `delta_reason` is free text from a git error
+              # that can contain anything. A file has neither problem.
+              #
+              # This also removes the last hand-written markdown from this task. The wording of a
+              # coverage verdict was 8 lines of printf with no test, which is where
+              # "0.0% (threshold 60%)" for a scope that measured nothing came from.
+              FACTS_FILE=/tmp/coverage-facts
               {
-                printf '### :%s: Coverage: %s%% (threshold %s%%) `[%s]` — %s\n\n' "$ICON" "$TOTAL" "$THRESHOLD" "$CLUSTER_TAG" "$VERDICT"
-                printf '%s\n\n' "$DELTA_LINE"
-                printf '**Lowest-covered functions**\n\n| File | Function | Coverage |\n|---|---|---|\n%s\n' "${LOWEST}"
-              } > "$VISUAL_FILE"
+                printf 'coverage=%s\n' "$TOTAL"
+                printf 'threshold=%s\n' "$THRESHOLD"
+                printf 'base=%s\n' "${BASE_TOTAL:-?}"
+                printf 'delta=%s\n' "${BASE_DELTA:-?}"
+                printf 'tolerance=%s\n' "$DELTA_TOL"
+                printf 'delta_status=%s\n' "$DELTA_STATUS"
+                printf 'delta_reason=%s\n' "$DELTA_REASON"
+                printf 'base_ref=%s\n' "$BASE_REF"
+                printf 'measured=%s\n' "$MEASURED"
+                printf 'verdict=%s\n' "$VERDICT"
+                # The table's row breaks are written as a two-character \n so the value stays one
+                # line in the file; prpost unescapes them. A real newline here would end the fact.
+                printf 'lowest=%s\n' "$(printf '%s' "$LOWEST" | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g')"
+              } > "$FACTS_FILE"
 
               /workspace/bin/prpost \
                 -tool coverage -check test \
@@ -302,7 +327,7 @@ spec:
                 -cluster "$CLUSTER_TAG" \
                 -summary "Coverage: ${TOTAL}% (threshold ${THRESHOLD}%) — ${VERDICT}" \
                 -metrics "coverage=${TOTAL}%,base=${BASE_TOTAL:-?},delta=${BASE_DELTA:-?}%,scope=${SCOPE}" \
-                -body-file "$VISUAL_FILE"
+                -facts-file "$FACTS_FILE"
             else
               echo "==> FORGE_API_URL or PULL_NUMBER unset; skipping PR coverage comment"
             fi
