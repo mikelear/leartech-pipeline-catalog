@@ -1,0 +1,3 @@
+# a placeholder that deploys is a credential
+database:
+  password: todo

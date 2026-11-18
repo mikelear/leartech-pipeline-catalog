@@ -1,0 +1,48 @@
+#!/bin/sh
+# chartstd_test.sh — the Ship Proven chart standard, run as a guard here.
+#
+# The checker lives in go/chartstd and judges what a chart RENDERS, because every
+# rule in docs/chart-standard.md is about the object the cluster receives. This
+# guard proves the checker itself still fires: the fixtures under
+# go/chartstd/testdata are shapes this estate has actually shipped, and each one
+# must produce exactly the rule it is filed under.
+#
+# Why a guard and not only `go test`: the catalog's presubmit runs these shell
+# files, and a Go test that nobody invokes is the "runner nothing runs" the helm
+# task already refuses. If the Go suite ever stops being wired up, this line goes
+# red instead of quiet.
+set -eu
+
+root=$(cd "$(dirname "$0")/../.." && pwd)
+cd "$root/go/chartstd"
+
+command -v go >/dev/null || { echo "SKIP: no go toolchain in this image"; exit 0; }
+
+echo "=== chartstd: the chart standard (S1b, S2, S3, S4, S5, S6) ==="
+go test ./... || { echo "FAIL: chartstd's own suite is red"; exit 1; }
+
+# The five shapes, one line each, so a regression names the rule that stopped
+# firing rather than "a test failed".
+check() {
+  dir=$1; want=$2
+  out=$(go run . -render "testdata/$dir/render.yaml" 2>&1 || true)
+  case "$out" in
+    *"$want"*) echo "  ok   $dir -> $want" ;;
+    *) echo "FAIL: $dir no longer produces $want"; echo "$out" | sed 's/^/    /'; exit 1 ;;
+  esac
+}
+
+check clean ""
+check console-api-default-store S1b
+check double-claim S3
+check data-and-template S4
+check workload-identity S6
+
+# S5 is a source rule, so it needs the chart directory as well.
+out=$(go run . -render testdata/todo-password/render.yaml -chart testdata/todo-password 2>&1 || true)
+case "$out" in
+  *S5*) echo "  ok   todo-password -> S5" ;;
+  *) echo "FAIL: todo-password no longer produces S5"; echo "$out" | sed 's/^/    /'; exit 1 ;;
+esac
+
+echo "=== ok ==="

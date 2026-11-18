@@ -1,0 +1,16 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: half-enumerated
+  namespace: demo
+spec:
+  secretStoreRef: { name: leartech-secrets, kind: ClusterSecretStore }
+  target: { name: half-enumerated, creationPolicy: Owner }
+  data:
+    - secretKey: email
+      remoteRef: { key: a }
+    - secretKey: password
+      remoteRef: { key: b }
+  template:
+    data:
+      email: "{{ .email }}"

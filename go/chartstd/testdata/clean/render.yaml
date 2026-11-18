@@ -1,0 +1,31 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: app-db
+  namespace: demo
+spec:
+  secretStoreRef:
+    name: leartech-secrets
+    kind: ClusterSecretStore
+  target:
+    name: app-db
+    creationPolicy: Owner
+  data:
+    - secretKey: dsn
+      remoteRef:
+        key: app-db-dsn-staging
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: demo
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          env:
+            - name: DSN
+              valueFrom:
+                secretKeyRef: { name: app-db, key: dsn }
