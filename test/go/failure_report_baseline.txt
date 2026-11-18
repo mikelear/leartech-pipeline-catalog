@@ -1,0 +1,25 @@
+# Tasks that can exit non-zero and post nothing to the PR, frozen 2026-11-18.
+#
+# Every line here is a finding on mikelear/leartech-console-api#31: a red check
+# whose only message was Lighthouse's generic "the following test failed, say
+# /retest", with the actual reason sitting in a log nobody was told to open.
+#
+# This file may only SHRINK. Fixing a task means giving it a report on its failure
+# branch (tasks/go-lint/pullrequest.yaml is the worked example: onError: continue
+# on the failing step, a report step that reads the recorded exit code) and
+# deleting its line here in the same PR.
+#
+# Two of these post from inside an image, where the catalog cannot see it:
+# tasks/security-scan/* delegates to /app/static-scan.sh in security-tools, which
+# does comment. It is not in this list for that reason, and that is worth knowing
+# before treating the list as a complete inventory of what reports.
+tasks/ai-review/pullrequest.yaml
+tasks/dockerfile-lint/pullrequest.yaml
+tasks/dotnet-audit/pullrequest.yaml
+tasks/go-platform-promote/release.yaml
+tasks/helm/platform-promote.yaml
+tasks/helm/platform-release.yaml
+tasks/helm/pullrequest.yaml
+tasks/openapi-generation/release.yaml
+tasks/preview/clear-stuck-release.yaml
+tasks/release/cosign-sign.yaml
