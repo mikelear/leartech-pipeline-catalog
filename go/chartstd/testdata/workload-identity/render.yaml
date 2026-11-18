@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app
+  namespace: demo
+  annotations:
+    iam.gke.io/gcp-service-account: app@product-first.iam.gserviceaccount.com

@@ -1,0 +1,19 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: console-api-db-credentials
+  namespace: demo
+spec:
+  secretStoreRef: { name: leartech-secrets, kind: ClusterSecretStore }
+  target: { name: database-credentials, creationPolicy: Owner }
+  data: [{ secretKey: dsn, remoteRef: { key: x } }]
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: plan-api-db-credentials
+  namespace: demo
+spec:
+  secretStoreRef: { name: leartech-secrets, kind: ClusterSecretStore }
+  target: { name: database-credentials, creationPolicy: Owner }
+  data: [{ secretKey: dsn, remoteRef: { key: y } }]
