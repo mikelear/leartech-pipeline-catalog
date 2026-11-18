@@ -211,6 +211,23 @@ func checkObjects(docs []obj, wantStore string) []Finding {
 	return out
 }
 
+// proven-by: TestRulesFireOnRealEstateShapes
+//
+// boolDefault matches a boolean gate written through sprig `default`, e.g.
+// `(.Values.x.enabled | default true)`.
+//
+// proven-by: TestRulesFireOnRealEstateShapes
+//
+// sprig's `default` returns the fallback when the value is EMPTY, and `false` is
+// empty, so such an option has one reachable value. Measured on a three-line
+// chart (2026-11-18): `default true` -> RENDERS with enabled:false; `ne (toString
+// …) "false"` -> SKIPPED, which is what the author meant.
+//
+// It is a source rule, not a render rule, because the bug is invisible in the
+// render that the author looked at: they set the value they believed in, and the
+// object appeared or did not, and either way it agreed with the default.
+var boolDefault = regexp.MustCompile(`\|\s*default\s+(true|false)\b`)
+
 var (
 	secretKey = regexp.MustCompile(`(?i)^\s*[a-z0-9_.-]*(password|passwd|secret|token|clientsecret|apikey|api_key)[a-z0-9_.-]*\s*:\s*(.+)$`)
 	// Values that read like a secret but are not: a reference, an env name, a
@@ -271,12 +288,46 @@ func checkValues(chartDir string) []Finding {
 	return out
 }
 
+// proven-by: TestRulesFireOnRealEstateShapes
+//
+// checkTemplates applies S8.
+func checkTemplates(chartDir string) []Finding {
+	var out []Finding
+	tpls, _ := filepath.Glob(filepath.Join(chartDir, "templates", "*.yaml"))
+	for _, t := range tpls {
+		b, err := os.ReadFile(t) // #nosec G304 -- path comes from our own glob
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "chartstd: %v\n", err)
+			continue
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			m := boolDefault.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			out = append(out, Finding{"S8", fmt.Sprintf("%s:%d", t, i+1), fmt.Sprintf(
+				"`| default %s` on a boolean. sprig treats false as empty, so the option "+
+					"can only ever be %s — setting it to the other value changes nothing. "+
+					"Drop the default (values.yaml already carries it), or test "+
+					"`ne (toString .Values.x) \"false\"`.", m[1], m[1])})
+		}
+	}
+	return out
+}
+
 func main() {
 	var renders multiFlag
 	var chart, wantStore string
+	var tplRules bool
 	flag.Var(&renders, "render", "rendered manifest file (`-` for stdin); repeatable, and all files "+
 		"are checked together so a Secret claimed by two charts is caught")
 	flag.StringVar(&chart, "chart", "", "chart directory, for the source rules (S5)")
+	flag.BoolVar(&tplRules, "templates", false,
+		"also apply the source rules that need the templates (S8: a boolean gate "+
+			"written through sprig default). Needs -chart.")
 	flag.StringVar(&wantStore, "store", "",
 		"the external-secrets store this estate supplies (S1). Required for a meaningful "+
 			"run: without it the tool can only see a store that rendered EMPTY, not a store "+
@@ -321,11 +372,14 @@ func main() {
 	findings := checkObjects(all, wantStore)
 	if chart != "" {
 		findings = append(findings, checkValues(chart)...)
+		if tplRules {
+			findings = append(findings, checkTemplates(chart)...)
+		}
 	}
 
 	if len(findings) == 0 {
 		fmt.Printf("==> chartstd: %d object(s) from %d render(s), no findings "+
-			"(S2, S3, S4, S5, S6, S1b)\n", len(all), len(renders))
+			"(S1b, S2, S3, S4, S5, S6, S8)\n", len(all), len(renders))
 		return
 	}
 	for _, f := range findings {
