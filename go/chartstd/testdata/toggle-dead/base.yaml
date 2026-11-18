@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: app, namespace: demo }
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: { name: app-db, namespace: demo }
+spec:
+  secretStoreRef: { name: leartech-secrets, kind: ClusterSecretStore }
+  target: { name: app-db, creationPolicy: Owner }

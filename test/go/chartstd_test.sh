@@ -22,7 +22,7 @@ cd "$root/go/chartstd"
 
 command -v go >/dev/null || { echo "SKIP: no go toolchain in this image"; exit 0; }
 
-echo "=== chartstd: the chart standard (S1b, S2, S3, S4, S5, S6, S8) ==="
+echo "=== chartstd: the chart standard (S1b, S2, S3, S4, S5, S6, S8, T1, T2) ==="
 go test ./... || { echo "FAIL: chartstd's own suite is red"; exit 1; }
 
 # The five shapes, one line each, so a regression names the rule that stopped
@@ -56,6 +56,34 @@ out=$(go run . -store leartech-secrets -render testdata/todo-password/render.yam
 case "$out" in
   *S5*) echo "  ok   todo-password -> S5" ;;
   *) echo "FAIL: todo-password no longer produces S5"; echo "$out" | sed 's/^/    /'; exit 1 ;;
+esac
+
+# T1/T2: a declared off-switch must actually remove the object. toggle-dead is
+# console-api#32 verbatim; toggle-stale is a declaration nothing satisfies.
+toggle_case() {
+  dir=$1; want=$2
+  out=$(go run . -store leartech-secrets \
+    -render "testdata/$dir/base.yaml" \
+    -toggles "testdata/$dir/toggles.yaml" \
+    -render-off "testdata/$dir/off.yaml" 2>&1 || true)
+  case "$out" in
+    *"$want"*) echo "  ok   $dir -> $want" ;;
+    *) echo "FAIL: $dir no longer produces $want"; echo "$out" | sed 's/^/    /'; exit 1 ;;
+  esac
+}
+
+toggle_case toggle-dead T2
+toggle_case toggle-stale T1
+
+# And the working chart must stay quiet, or the check cries wolf on the charts
+# that are correct.
+out=$(go run . -store leartech-secrets -render testdata/toggle-works/base.yaml \
+  -toggles testdata/toggle-works/toggles.yaml \
+  -render-off testdata/toggle-works/off.yaml 2>&1 || true)
+case "$out" in
+  *"T1 testdata/"*|*"T2 testdata/"*)
+    echo "FAIL: toggle-works reports a toggle finding"; echo "$out" | sed 's/^/    /'; exit 1 ;;
+  *) echo "  ok   toggle-works stays quiet" ;;
 esac
 
 echo "=== ok ==="

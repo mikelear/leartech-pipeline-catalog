@@ -81,6 +81,32 @@ spec:
                 echo "FAIL: $dir rendered nothing." >&2
                 exit 1
               }
+
+              # The behavioural half: render each declared off-switch flipped. A
+              # switch nobody flips in a test is a switch nobody has checked, and
+              # the failure is silent in both directions.
+              #
+              # The declaration is parsed by chartstd, not by a heredoc here: a
+              # Python block inside a `script: |` is the exact thing that broke
+              # this repo's YAML for three days in May.
+              decl="$dir/chart-standard-toggles.yaml"
+              printf '%s\n' "$name" > "/workspace/renders/$name.toggles"
+              if [ -f "$decl" ]; then
+                i=0
+                chartstd -list-toggles "$decl" > /tmp/toggles.txt || {
+                  echo "FAIL: cannot read $decl" >&2
+                  exit 1
+                }
+                while IFS='|' read -r path off; do
+                  [ -n "$path" ] || continue
+                  i=$((i+1))
+                  echo "==> helm template $dir --set $path=$off (toggle $i)"
+                  helm template chart-standard "$dir" "${values[@]}" \
+                    --set "$path=$off" \
+                    > "/workspace/renders/$name.off.$i.yaml"
+                done < /tmp/toggles.txt
+                printf '%s\n' "$i" > "/workspace/renders/$name.togglecount"
+              fi
             done
             ls -l /workspace/renders
 
@@ -101,8 +127,27 @@ spec:
               exit 1
             }
             args=()
-            for f in /workspace/renders/*.yaml; do args+=(-render "$f"); done
+            # Base renders only: a *.off.N.yaml is a flipped render and would be
+            # judged as an object set of its own, inventing findings.
+            for f in /workspace/renders/*.yaml; do
+              case "$f" in *.off.*) continue ;; esac
+              args+=(-render "$f")
+            done
             for c in charts/*/; do args+=(-chart "${c%/}"); done
+            args+=(-templates)
+            for decl in charts/*/chart-standard-toggles.yaml; do
+              [ -f "$decl" ] || continue
+              name=$(basename "$(dirname "$decl")")
+              args+=(-toggles "$decl")
+              n=0
+              [ -f "/workspace/renders/$name.togglecount" ] && \
+                n=$(cat "/workspace/renders/$name.togglecount")
+              i=0
+              while [ "$i" -lt "$n" ]; do
+                i=$((i+1))
+                args+=(-render-off "/workspace/renders/$name.off.$i.yaml")
+              done
+            done
             set +e
             chartstd -store "$CHART_STORE" "${args[@]}" \
               > /workspace/.chartstd.log 2>&1
