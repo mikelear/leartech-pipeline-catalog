@@ -138,6 +138,59 @@ func TestClaimsAcrossSeparateRendersCollide(t *testing.T) {
 // drift into agreeing with a wrong default.
 const wantStore = "leartech-secrets"
 
+// T1 and T2 are the behavioural half of the standard: a switch the chart CLAIMS
+// has to actually remove the object. mikelear/leartech-console-api#32 is
+// toggle-dead — the render with `enabled: false` still contains the ExternalSecret.
+//
+// proven-by: TestToggleMustRemoveTheObject
+func TestToggleMustRemoveTheObject(t *testing.T) {
+	cases := []struct {
+		dir  string
+		want string // "" means clean
+	}{
+		{dir: "toggle-works"},
+		{dir: "toggle-dead", want: "T2"},
+		{dir: "toggle-stale", want: "T1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.dir, func(t *testing.T) {
+			base := mustLoad(t, filepath.Join("testdata", tc.dir, "base.yaml"))
+			off := mustLoad(t, filepath.Join("testdata", tc.dir, "off.yaml"))
+			decl, err := loadToggles(filepath.Join("testdata", tc.dir, "toggles.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			findings := checkToggles("toggles.yaml", decl, base, [][]obj{off})
+			if tc.want == "" {
+				if len(findings) != 0 {
+					t.Fatalf("must be clean, got %v", findings)
+				}
+				return
+			}
+			for _, f := range findings {
+				if f.Rule == tc.want {
+					return
+				}
+			}
+			t.Fatalf("want %s, got %v", tc.want, findings)
+		})
+	}
+}
+
+func mustLoad(t *testing.T, path string) []obj {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	docs, err := load(path, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return docs
+}
+
 func contains(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {

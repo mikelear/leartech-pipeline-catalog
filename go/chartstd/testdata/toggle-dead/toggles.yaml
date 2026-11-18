@@ -1,0 +1,5 @@
+toggles:
+  - path: database.externalSecret.enabled
+    off: "false"
+    removes: ExternalSecret/app-db
+    why: console-api#32 — the switch must actually remove it
