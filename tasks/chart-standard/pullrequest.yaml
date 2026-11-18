@@ -1,0 +1,154 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: chart-standard
+spec:
+  pipelineSpec:
+    tasks:
+    - name: chart-standard
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          workingDir: /workspace/source
+        params:
+        # The external-secrets store this estate supplies, from config/secrets.yaml.
+        # NO DEFAULT, deliberately: S1 is "never name a store in a default", so the
+        # gate that enforces it cannot ship one either. A task that defaulted to
+        # leartech-secrets would pass every chart in this estate while enforcing
+        # nothing about the chart that names a different store.
+        - name: CHART_STORE
+          type: string
+          description: >-
+            The ClusterSecretStore every ExternalSecret in this repo must name. Read it
+            from config/secrets.yaml and pass it explicitly.
+        # A chart of ours refuses to render without its required values (auth.issuer,
+        # aiGateway.url, ...) — that is the standard working, not a bug. So the render
+        # needs the same minimum the deploy does.
+        #
+        # It must contain ONLY required values and deploy toggles. A file that also
+        # sets the values a rule is about would make the check measure the file
+        # instead of the chart: override the store here and S1 always passes.
+        - name: CHART_VALUES
+          type: string
+          description: >-
+            Path to a values file supplying the chart's REQUIRED values (repo-relative).
+            Required values and deploy toggles only — never a value a rule judges.
+          default: ""
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+
+        # Tier 1, first half: does the chart render at all, and under what values?
+        #
+        # jx-boot carries helm 3.15.1 and the chart's dependencies come from there;
+        # the checker binary lives in the checkers image, so render here and judge
+        # next door. -render is repeatable and the checker judges every render
+        # TOGETHER, because the Secret collision that matters (S3) is between two
+        # charts in one namespace.
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.126
+          name: render
+          resources: {}
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+            shopt -s nullglob
+            mkdir -p /workspace/renders
+
+            charts=(charts/*/Chart.yaml)
+            if [ ${#charts[@]} -eq 0 ]; then
+              echo "==> no charts/*/Chart.yaml in this repo; nothing for chart-standard to do"
+              # A repo with no chart is not a failure of this gate — but it must SAY
+              # so, because a green run over nothing is the failure mode this estate
+              # keeps re-learning. The step writes a marker the next one reads.
+              touch /workspace/renders/NONE
+              exit 0
+            fi
+
+            for c in "${charts[@]}"; do
+              dir=$(dirname "$c"); name=$(basename "$dir")
+              echo "==> helm dependency build $dir"
+              helm dependency build "$dir"
+              echo "==> helm lint $dir"
+              helm lint "$dir"
+              values=()
+              if [ -n "${CHART_VALUES:-}" ]; then
+                test -f "$CHART_VALUES" || {
+                  echo "FAIL: CHART_VALUES=$CHART_VALUES does not exist in this repo." >&2
+                  echo "      A render with the wrong values proves nothing about the chart." >&2
+                  exit 1
+                }
+                values=(-f "$CHART_VALUES")
+                echo "==> helm template $dir (required values from $CHART_VALUES)"
+              else
+                echo "==> helm template $dir (chart defaults)"
+              fi
+              helm template chart-standard "$dir" "${values[@]}" > "/workspace/renders/$name.yaml"
+              test -s "/workspace/renders/$name.yaml" || {
+                echo "FAIL: $dir rendered nothing. A chart that renders empty objects is not" >&2
+                echo "      a clean chart; the judge would then check nothing at all." >&2
+                exit 1
+              }
+            done
+            ls -l /workspace/renders
+
+        - image: ghcr.io/mikelear/leartech-checkers:0.24.14
+          name: chart-standard
+          resources: {}
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+            shopt -s nullglob
+            if [ -f /workspace/renders/NONE ]; then
+              echo "==> no chart in this repo; chart-standard reports nothing to check"
+              exit 0
+            fi
+            command -v chartstd >/dev/null || {
+              echo "FAIL: chartstd missing from ghcr.io/mikelear/leartech-checkers:0.24.14." >&2
+              echo "      Bump the pin to a release that carries it; the image build asserts" >&2
+              echo "      every checker binary is executable, so this means a stale pin." >&2
+              exit 1
+            }
+            # Source rules (S5) need the chart directory, not the render, so it is
+            # passed per chart. The render rules run once over every render.
+            args=()
+            for f in /workspace/renders/*.yaml; do args+=(-render "$f"); done
+            for c in charts/*/; do args+=(-chart "${c%/}"); done
+            chartstd -store "$CHART_STORE" "${args[@]}"
+        # Reports what this run judged, in the estate's usual shape: a reader should
+        # not have to open logs to learn which charts were covered.
+        - image: ghcr.io/mikelear/leartech-checkers:0.24.14
+          name: chart-standard-report
+          resources: {}
+          script: |
+            #!/usr/bin/env bash
+            set -uo pipefail
+            [ -f /workspace/renders/NONE ] && exit 0
+            count=$(ls /workspace/renders/*.yaml 2>/dev/null | wc -l | tr -d ' ')
+            echo "==> chart-standard judged $count chart render(s) against store $CHART_STORE"
+            for f in /workspace/renders/*.yaml; do
+              echo "    $(basename "$f" .yaml): $(grep -c '^kind:' "$f") object(s)"
+            done
+      podTemplate:
+        tolerations:
+        - key: sku
+          operator: Equal
+          value: build
+          effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 20m0s
+status: {}

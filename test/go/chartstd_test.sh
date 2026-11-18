@@ -1,6 +1,10 @@
 #!/bin/sh
 # chartstd_test.sh — the Ship Proven chart standard, run as a guard here.
 #
+# The store every fixture is judged against is the one this estate supplies from
+# config/secrets.yaml; -store is required, because "never name a store in a
+# default" can only be judged against the store that is actually supplied.
+#
 # The checker lives in go/chartstd and judges what a chart RENDERS, because every
 # rule in docs/chart-standard.md is about the object the cluster receives. This
 # guard proves the checker itself still fires: the fixtures under
@@ -25,7 +29,7 @@ go test ./... || { echo "FAIL: chartstd's own suite is red"; exit 1; }
 # firing rather than "a test failed".
 check() {
   dir=$1; want=$2
-  out=$(go run . -render "testdata/$dir/render.yaml" 2>&1 || true)
+  out=$(go run . -store leartech-secrets -render "testdata/$dir/render.yaml" 2>&1 || true)
   case "$out" in
     *"$want"*) echo "  ok   $dir -> $want" ;;
     *) echo "FAIL: $dir no longer produces $want"; echo "$out" | sed 's/^/    /'; exit 1 ;;
@@ -33,13 +37,14 @@ check() {
 }
 
 check clean ""
-check console-api-default-store S1b
+check console-api-default-store S1
+check empty-store S1b
 check double-claim S3
 check data-and-template S4
 check workload-identity S6
 
 # S5 is a source rule, so it needs the chart directory as well.
-out=$(go run . -render testdata/todo-password/render.yaml -chart testdata/todo-password 2>&1 || true)
+out=$(go run . -store leartech-secrets -render testdata/todo-password/render.yaml -chart testdata/todo-password 2>&1 || true)
 case "$out" in
   *S5*) echo "  ok   todo-password -> S5" ;;
   *) echo "FAIL: todo-password no longer produces S5"; echo "$out" | sed 's/^/    /'; exit 1 ;;

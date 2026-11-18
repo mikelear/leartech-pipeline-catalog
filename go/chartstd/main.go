@@ -117,7 +117,7 @@ func externalSecretTarget(o obj) (target, policy, store string, hasTemplateData 
 }
 
 // checkObjects applies the render rules to one chart's documents.
-func checkObjects(docs []obj) []Finding {
+func checkObjects(docs []obj, wantStore string) []Finding {
 	var out []Finding
 	// claimant maps "ns/name" to the object that claimed it, so a collision
 	// names BOTH sides rather than just the second one seen.
@@ -141,10 +141,23 @@ func checkObjects(docs []obj) []Finding {
 					"sets BOTH spec.data and spec.template.data. ESO drops spec.data once " +
 						"template.data exists, so the keys spec.data names are silently absent."})
 			}
-			if store == "" {
+			switch {
+			case store == "":
 				out = append(out, Finding{"S1b", "ExternalSecret " + where,
 					"renders an empty secretStoreRef.name — the value was not supplied and " +
 						"templated to nothing. It must be a required value (S1)."})
+			case wantStore != "" && store != wantStore:
+				// S1. The chart rendered a store name nobody supplied as config: it
+				// came from a default in the template or a literal in values.yaml, and
+				// both put a store in git that this cluster may not have. console-api
+				// shipped `storeRef: cluster-secret-store`, a store that exists
+				// nowhere here, and the failure surfaced as
+				// "could not get secret data from provider" on an object that read
+				// correct.
+				out = append(out, Finding{"S1", "ExternalSecret " + where, fmt.Sprintf(
+					"secretStoreRef.name is %q, not %q. A store named in a default or in "+
+						"values is a promise this cluster does not keep; it must come from the "+
+						"required value in config/secrets.yaml.", store, wantStore)})
 			}
 			if target != "" {
 				key := o.NS + "/" + target
@@ -260,11 +273,22 @@ func checkValues(chartDir string) []Finding {
 
 func main() {
 	var renders multiFlag
-	var chart string
+	var chart, wantStore string
 	flag.Var(&renders, "render", "rendered manifest file (`-` for stdin); repeatable, and all files "+
 		"are checked together so a Secret claimed by two charts is caught")
 	flag.StringVar(&chart, "chart", "", "chart directory, for the source rules (S5)")
+	flag.StringVar(&wantStore, "store", "",
+		"the external-secrets store this estate supplies (S1). Required for a meaningful "+
+			"run: without it the tool can only see a store that rendered EMPTY, not a store "+
+			"that rendered the wrong name")
 	flag.Parse()
+
+	if wantStore == "" {
+		fmt.Fprintln(os.Stderr, "chartstd: -store is required. Naming the store is the whole "+
+			"point of S1: \"never name a store in a default\" can only be judged against the "+
+			"store the estate actually supplies. Pass the value from config/secrets.yaml.")
+		os.Exit(2)
+	}
 
 	if len(renders) == 0 {
 		fmt.Fprintln(os.Stderr, "chartstd: -render is required "+
@@ -294,7 +318,7 @@ func main() {
 		all = append(all, docs...)
 	}
 
-	findings := checkObjects(all)
+	findings := checkObjects(all, wantStore)
 	if chart != "" {
 		findings = append(findings, checkValues(chart)...)
 	}
