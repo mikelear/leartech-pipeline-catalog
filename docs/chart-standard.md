@@ -171,3 +171,34 @@ a gate rather than a note:
   estate has 35 charts and 0 test suites; that number is the finding.
 - the standard expects a **fixture per rule**: a chart that fails one rule for one reason. A rule
   whose failure has never been observed is a rule nobody has tested.
+
+
+## Sibling gate: the status context a consumer declares
+
+The chart standard judges a chart. This one judges the **chain from a status a PR
+shows to the comment that explains it**, which lives across two repos:
+
+```
+consumer .lighthouse/jenkins-x/triggers.yaml  context: "audit"
+  -> source audit.yaml --uses--> tasks/dotnet-audit/pullrequest.yaml
+    -> that task posts nothing
+```
+
+Measured on `leartech-dotnet-service-template` (2026-11-18): **`pr`, `lint` and
+`audit` are served by tasks that post no comment at all**, so a red one shows only
+Lighthouse's generic "the following test failed" — the `console-api#31` shape,
+generalised to three checks on every PR in that repo.
+
+`go/triggersync` walks the three hops and reports:
+
+| finding | means |
+|---|---|
+| context served by a task that posts under another `-check` | the comment exists and its marker names something no status carries |
+| context served by a task that posts nothing | a red check with no explanation |
+| duplicate context | two checks share one status; whichever finishes last decides the colour |
+| source file missing | the status never runs, and reads as a failed check |
+| `NOTE` (not a failure) | the task posts **inside its image** (`security-tools`, `ai-review`); unverified rather than absent |
+
+Run it where the triggers file is: `triggersync -repo . -catalog <checkout>`. A
+`NOTE` is deliberately not a failure — a checker that cries wolf is switched off
+within a week, which is the lesson of every rule that had to be narrowed here.

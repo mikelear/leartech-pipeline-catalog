@@ -1,0 +1,70 @@
+apiVersion: config.lighthouse.jenkins-x.io/v1alpha1
+kind: TriggerConfig
+spec:
+  presubmits:
+  # Build + preview deploy
+  - name: pr
+    context: "pr"
+    always_run: true
+    source: pullrequest.yaml
+
+  # Quality gates
+  - name: lint
+    context: "lint"
+    always_run: true
+    source: lint.yaml
+  - name: test
+    context: "test"
+    always_run: true
+    source: test.yaml
+  - name: audit
+    context: "audit"
+    always_run: true
+    source: audit.yaml
+
+  # Security gates
+  - name: security-scan
+    context: "security-scan"
+    always_run: true
+    source: security-scan/pullrequest.yaml
+  - name: image-scan
+    context: "image-scan"
+    always_run: true
+    source: security-scan/image-scan.yaml
+  - name: dynamic-scan
+    context: "dynamic-scan"
+    always_run: true
+    source: security-scan/dynamic/pullrequest.yaml
+
+  # AI review (leartech standards-grading on every PR)
+  - name: ai-review
+    context: "ai-review"
+    always_run: true
+    source: ai-review/pullrequest.yaml
+
+  # End-to-end smoke against the preview deploy.
+  # `optional: true` until the smoke is stable — the catalog task posts a
+  # PR comment either way; we don't block merges on smoke fluctuations
+  # until the regression baseline is solid (matches Go template's stance).
+  - name: end2end
+    context: "end2end"
+    always_run: true
+    optional: true
+    source: end2end.yaml
+
+  # Manual ai-feedback re-run on demand: comment `/ai-feedback` on a PR
+  # to re-grade. Same convention as auth-service / Go template.
+  - name: ai-feedback
+    context: ai-feedback
+    always_run: false
+    optional: true
+    trigger: "(?m)^/ai-feedback"
+    rerun_command: "/ai-feedback"
+    source: ai-review/feedback.yaml
+
+  postsubmits:
+  - name: release
+    context: release
+    source: release.yaml
+    branches:
+    - ^main$
