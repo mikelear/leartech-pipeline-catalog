@@ -229,3 +229,31 @@ GSM problem.
 **Proven by a source rule** (`-templates`), because the bug is invisible in the render the
 author looked at: they set the value they believed in and the object agreed with the
 default either way.
+
+### T1/T2 — an off-switch must be proven by rendering it off
+
+S8 catches the *spelling* of the bug in #32. It cannot catch the class: any chart
+whose off-switch does nothing, whatever the reason. The only evidence that survives
+an author believing the switch works is **rendering both ways and comparing**.
+
+So a chart declares its switches next to itself:
+
+```yaml
+# charts/<chart>/chart-standard-toggles.yaml
+toggles:
+  - path: database.externalSecret.enabled
+    off: "false"
+    removes: ExternalSecret/leartech-console-api-db
+    why: console-api#32 — the switch must actually remove it
+```
+
+the task renders `--set-string <path>=<off>` per toggle, and `chartstd` asserts:
+
+| rule | finding |
+|---|---|
+| **T1** | the declared object is not in the DEFAULT render — the declaration is stale, or the default already has it off and nothing is proven |
+| **T2** | the object is **still there** with the switch off — the value cannot express the off state (`console-api#32` verbatim) |
+| **T3** (note) | an `*.enabled` key in `values.yaml` that no declaration covers: an off-switch nobody has flipped in a test |
+
+T3 is deliberately a note. Every chart in this estate has undeclared switches, and
+the useful first step is to make them **countable** rather than to red everything.

@@ -328,11 +328,43 @@ func main() {
 	flag.BoolVar(&tplRules, "templates", false,
 		"also apply the source rules that need the templates (S8: a boolean gate "+
 			"written through sprig default). Needs -chart.")
+	var toggleDecl, listToggles string
+	var offRenders multiFlag
+	var toggleNotes bool
+	flag.StringVar(&listToggles, "list-toggles", "",
+		"print `<path>|<off>` per declared toggle and exit, so a shell step does not have "+
+			"to parse the declaration itself")
+	flag.StringVar(&toggleDecl, "toggles", "",
+		"chart-standard-toggles.yaml declaring the off-switches the chart claims to have. "+
+			"Needs -render (the default render) and one -render-off per toggle, in the "+
+			"same order.")
+	flag.Var(&offRenders, "render-off",
+		"the render with one toggle flipped (`--set <path>=<off>`); repeatable, one per "+
+			"declared toggle, in declaration order")
+	flag.BoolVar(&toggleNotes, "toggle-notes", false,
+		"report `*.enabled` keys in values.yaml that no toggle declaration covers (a "+
+			"NOTE, not a failure). Needs -chart.")
 	flag.StringVar(&wantStore, "store", "",
 		"the external-secrets store this estate supplies (S1). Required for a meaningful "+
 			"run: without it the tool can only see a store that rendered EMPTY, not a store "+
 			"that rendered the wrong name")
 	flag.Parse()
+
+	if listToggles != "" {
+		decl, err := loadToggles(listToggles)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "chartstd:", err)
+			os.Exit(2)
+		}
+		for _, t := range decl {
+			off := t.Off
+			if off == "" {
+				off = "false"
+			}
+			fmt.Printf("%s|%s\n", t.Path, off)
+		}
+		return
+	}
 
 	if wantStore == "" {
 		fmt.Fprintln(os.Stderr, "chartstd: -store is required. Naming the store is the whole "+
@@ -370,6 +402,45 @@ func main() {
 	}
 
 	findings := checkObjects(all, wantStore)
+	var notes []Finding
+
+	if toggleDecl != "" {
+		decl, err := loadToggles(toggleDecl)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "chartstd:", err)
+			os.Exit(2)
+		}
+		if len(offRenders) != len(decl) {
+			fmt.Fprintf(os.Stderr, "chartstd: %d toggle(s) declared but %d -render-off "+
+				"file(s) given. Pairing them by position is the only way to know which "+
+				"flip removed which object, so a mismatch cannot be checked.\n",
+				len(decl), len(offRenders))
+			os.Exit(2)
+		}
+		var offs [][]obj
+		for _, p := range offRenders {
+			f, err := os.Open(p) // #nosec G304
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "chartstd:", err)
+				os.Exit(2)
+			}
+			docs, err := load(p, f)
+			f.Close()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "chartstd:", err)
+				os.Exit(2)
+			}
+			offs = append(offs, docs)
+		}
+		findings = append(findings, checkToggles(toggleDecl, decl, all, offs)...)
+		if chart != "" {
+			// T3 is a NOTE. Every chart here carries undeclared switches, and the
+			// first useful thing is to count them rather than red on all of them.
+			notes = append(notes, undeclaredSwitches(chart, decl)...)
+		}
+	} else if toggleNotes && chart != "" {
+		notes = append(notes, undeclaredSwitches(chart, nil)...)
+	}
 	if chart != "" {
 		findings = append(findings, checkValues(chart)...)
 		if tplRules {
@@ -377,9 +448,16 @@ func main() {
 		}
 	}
 
+	for _, n := range notes {
+		fmt.Println("NOTE", n)
+	}
+	if len(notes) > 0 {
+		fmt.Printf("     %d undeclared off-switch(es) — notes, not failures\n", len(notes))
+	}
+
 	if len(findings) == 0 {
 		fmt.Printf("==> chartstd: %d object(s) from %d render(s), no findings "+
-			"(S1b, S2, S3, S4, S5, S6, S8)\n", len(all), len(renders))
+			"(S1b, S2, S3, S4, S5, S6, S8, T1, T2)\n", len(all), len(renders))
 		return
 	}
 	for _, f := range findings {
