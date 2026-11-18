@@ -1,0 +1,9 @@
+spec:
+  pipelineSpec:
+    tasks:
+    - name: t
+      taskSpec:
+        steps:
+        - name: report
+          script: |
+            prpost -tool test -check test -outcome failure

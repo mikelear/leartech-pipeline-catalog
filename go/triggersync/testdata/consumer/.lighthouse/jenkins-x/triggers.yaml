@@ -1,0 +1,19 @@
+apiVersion: config.lighthouse.jenkins-x.io/v1alpha1
+kind: TriggerConfig
+spec:
+  presubmits:
+  - name: test
+    context: "test"
+    source: test.yaml
+  - name: audit
+    context: "audit"
+    source: audit.yaml
+  - name: end2end
+    context: "end2end"
+    source: end2end.yaml
+  - name: dup-a
+    context: "test"
+    source: test.yaml
+  - name: missing
+    context: "gone"
+    source: absent.yaml
