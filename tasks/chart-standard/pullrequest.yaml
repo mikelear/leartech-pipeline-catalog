@@ -35,6 +35,19 @@ spec:
           description: >-
             The ClusterSecretStore every ExternalSecret in this repo must name. Read it
             from config/secrets.yaml and pass it explicitly.
+        # A chart of ours refuses to render without its required values (auth.issuer,
+        # aiGateway.url, ...) — that is the standard working, not a bug. So the render
+        # needs the same minimum the deploy does.
+        #
+        # It must contain ONLY required values and deploy toggles. A file that also
+        # sets the values a rule is about would make the check measure the file
+        # instead of the chart: override the store here and S1 always passes.
+        - name: CHART_VALUES
+          type: string
+          description: >-
+            Path to a values file supplying the chart's REQUIRED values (repo-relative).
+            Required values and deploy toggles only — never a value a rule judges.
+          default: ""
         steps:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
@@ -72,8 +85,19 @@ spec:
               helm dependency build "$dir"
               echo "==> helm lint $dir"
               helm lint "$dir"
-              echo "==> helm template $dir (chart defaults)"
-              helm template chart-standard "$dir" > "/workspace/renders/$name.yaml"
+              values=()
+              if [ -n "${CHART_VALUES:-}" ]; then
+                test -f "$CHART_VALUES" || {
+                  echo "FAIL: CHART_VALUES=$CHART_VALUES does not exist in this repo." >&2
+                  echo "      A render with the wrong values proves nothing about the chart." >&2
+                  exit 1
+                }
+                values=(-f "$CHART_VALUES")
+                echo "==> helm template $dir (required values from $CHART_VALUES)"
+              else
+                echo "==> helm template $dir (chart defaults)"
+              fi
+              helm template chart-standard "$dir" "${values[@]}" > "/workspace/renders/$name.yaml"
               test -s "/workspace/renders/$name.yaml" || {
                 echo "FAIL: $dir rendered nothing. A chart that renders empty objects is not" >&2
                 echo "      a clean chart; the judge would then check nothing at all." >&2
