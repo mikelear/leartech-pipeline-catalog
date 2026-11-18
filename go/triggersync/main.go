@@ -3,7 +3,7 @@
 // The status context a PR sees ("audit", "test", "end2end") is declared in the
 // consumer's .lighthouse/jenkins-x/triggers.yaml, and the comment that explains a
 // red check is posted by the CATALOG task that source points at. Nothing checks
-// that the two agree, and they cannot both be read from one repo:
+// that the two agree, and no single repo holds both halves:
 //
 //	consumer: context "audit" -> source audit.yaml -> uses: tasks/dotnet-audit
 //	catalog:  tasks/dotnet-audit/pullrequest.yaml -> posts nothing at all

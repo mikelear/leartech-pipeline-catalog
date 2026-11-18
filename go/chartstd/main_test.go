@@ -21,6 +21,7 @@ func TestRulesFireOnRealEstateShapes(t *testing.T) {
 		dir       string
 		wantRules []string
 		chart     bool
+		templates bool
 	}{
 		{dir: "clean"},
 		{dir: "console-api-default-store", wantRules: []string{"S1"}},
@@ -29,6 +30,9 @@ func TestRulesFireOnRealEstateShapes(t *testing.T) {
 		{dir: "data-and-template", wantRules: []string{"S4"}},
 		{dir: "workload-identity", wantRules: []string{"S6"}},
 		{dir: "todo-password", wantRules: []string{"S5"}, chart: true},
+		// The console-api line, verbatim: `enabled: false` cannot disable the
+		// object because sprig's `default` treats false as empty.
+		{dir: "bool-default", wantRules: []string{"S8"}, chart: true, templates: true},
 	}
 
 	for _, tc := range cases {
@@ -45,6 +49,9 @@ func TestRulesFireOnRealEstateShapes(t *testing.T) {
 			findings := checkObjects(docs, wantStore)
 			if tc.chart {
 				findings = append(findings, checkValues(filepath.Join("testdata", tc.dir))...)
+			}
+			if tc.templates {
+				findings = append(findings, checkTemplates(filepath.Join("testdata", tc.dir))...)
 			}
 
 			got := map[string]bool{}

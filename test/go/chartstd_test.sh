@@ -22,7 +22,7 @@ cd "$root/go/chartstd"
 
 command -v go >/dev/null || { echo "SKIP: no go toolchain in this image"; exit 0; }
 
-echo "=== chartstd: the chart standard (S1b, S2, S3, S4, S5, S6) ==="
+echo "=== chartstd: the chart standard (S1b, S2, S3, S4, S5, S6, S8) ==="
 go test ./... || { echo "FAIL: chartstd's own suite is red"; exit 1; }
 
 # The five shapes, one line each, so a regression names the rule that stopped
@@ -42,6 +42,14 @@ check empty-store S1b
 check double-claim S3
 check data-and-template S4
 check workload-identity S6
+
+# S8 needs the templates, so it needs the chart directory as well as the render.
+out=$(go run . -store leartech-secrets -render testdata/bool-default/render.yaml \
+  -chart testdata/bool-default -templates 2>&1 || true)
+case "$out" in
+  *S8*) echo "  ok   bool-default -> S8" ;;
+  *) echo "FAIL: bool-default no longer produces S8"; echo "$out" | sed 's/^/    /'; exit 1 ;;
+esac
 
 # S5 is a source rule, so it needs the chart directory as well.
 out=$(go run . -store leartech-secrets -render testdata/todo-password/render.yaml -chart testdata/todo-password 2>&1 || true)
