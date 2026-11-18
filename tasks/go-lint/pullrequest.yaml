@@ -87,7 +87,65 @@ spec:
             cp "$MK_URL" /tmp/leartech-go.mk
 
             echo "==> make -f /tmp/leartech-go.mk lint"
-            make -f /tmp/leartech-go.mk lint
+            # The reason a lint run failed is in this log and nowhere else: the
+            # PR gets Lighthouse's generic "the following test failed" table,
+            # which names no cause. So the log is kept for the report step and
+            # the exit code is recorded rather than propagated, because a
+            # non-zero exit here would stop the task before anything can post.
+            set +e
+            make -f /tmp/leartech-go.mk lint > /workspace/.lint.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.lint.log
+            if [ "$rc" -ne 0 ]; then
+              printf '%s\n' "$rc" > /workspace/.lint.rc
+            fi
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.24.14
+          name: report
+          resources: {}
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+            - name: FORGE_API_URL
+              value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+            - name: LEARTECH_AUTH_SERVER_URL
+              value: https://hydra-sp-infra.jx.leartech.com
+            - name: LEARTECH_AUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_ID
+                  optional: true
+            - name: LEARTECH_AUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_SECRET
+                  optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            [ -f /workspace/.lint.rc ] || { echo "==> lint passed; nothing to report"; exit 0; }
+            rc=$(cat /workspace/.lint.rc)
+            # The first failing target plus its own message, because that is what
+            # decides whether a person can act: comment-gate names file:line, a
+            # golangci failure names the linter and the file.
+            first=$(grep -nE "^(FAIL|make: \*\*\*|.*Error: )" /workspace/.lint.log | head -1 | cut -d: -f2-)
+            {
+              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '`make lint` exited %s.%s\n\n' "$rc" "${first:+ First reason: \`$first\`}"
+              printf '<details><summary>Last 40 lines of the log</summary>\n\n```\n'
+              tail -n 40 /workspace/.lint.log
+              printf '```\n\n</details>\n'
+            } > /tmp/body.md
+            prpost -tool lint -check lint -outcome failure -cluster "${CLUSTER_ID:?}"               -summary "make lint exited $rc" -body-file /tmp/body.md \
+              || echo "==> WARNING: could not deliver the lint comment; the check still fails"
+            exit "$rc"
   podTemplate:
     tolerations:
     - key: sku

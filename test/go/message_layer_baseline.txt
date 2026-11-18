@@ -15,7 +15,7 @@
 0 2 tasks/dotnet/release.yaml
 4 38 tasks/end2end-ui/pullrequest.yaml
 0 111 tasks/end2end/pullrequest.yaml
-0 3 tasks/go-lint/pullrequest.yaml
+0 6 tasks/go-lint/pullrequest.yaml
 0 3 tasks/go-no-promote/release.yaml
 0 4 tasks/go-platform-promote/release.yaml
 0 8 tasks/go-test/pullrequest.yaml
