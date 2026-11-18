@@ -23,7 +23,8 @@ func TestRulesFireOnRealEstateShapes(t *testing.T) {
 		chart     bool
 	}{
 		{dir: "clean"},
-		{dir: "console-api-default-store", wantRules: []string{"S1b"}},
+		{dir: "console-api-default-store", wantRules: []string{"S1"}},
+		{dir: "empty-store", wantRules: []string{"S1b"}},
 		{dir: "double-claim", wantRules: []string{"S3"}},
 		{dir: "data-and-template", wantRules: []string{"S4"}},
 		{dir: "workload-identity", wantRules: []string{"S6"}},
@@ -41,7 +42,7 @@ func TestRulesFireOnRealEstateShapes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			findings := checkObjects(docs)
+			findings := checkObjects(docs, wantStore)
 			if tc.chart {
 				findings = append(findings, checkValues(filepath.Join("testdata", tc.dir))...)
 			}
@@ -112,7 +113,7 @@ func TestClaimsAcrossSeparateRendersCollide(t *testing.T) {
 	// target name": one doc from each side is enough to prove the collision.
 	docs := append(first, first[0])
 
-	findings := checkObjects(docs)
+	findings := checkObjects(docs, wantStore)
 	var s3 int
 	for _, f := range findings {
 		if f.Rule == "S3" {
@@ -124,6 +125,11 @@ func TestClaimsAcrossSeparateRendersCollide(t *testing.T) {
 			s3, findings)
 	}
 }
+
+// The store every fixture is judged against: the one this estate supplies from
+// config/secrets.yaml. Named here rather than in a chart so the fixtures cannot
+// drift into agreeing with a wrong default.
+const wantStore = "leartech-secrets"
 
 func contains(list []string, s string) bool {
 	for _, v := range list {

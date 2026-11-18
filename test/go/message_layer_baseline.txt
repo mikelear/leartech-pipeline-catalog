@@ -5,6 +5,7 @@
 0 1 tasks/ai-review/feedback.yaml
 0 4 tasks/ai-review/pullrequest.yaml
 0 3 tasks/angular-no-promote/release.yaml
+0 12 tasks/chart-standard/pullrequest.yaml
 0 10 tasks/dockerfile-lint/pullrequest.yaml
 0 8 tasks/dotnet-audit/pullrequest.yaml
 0 4 tasks/dotnet-lint/pullrequest.yaml
