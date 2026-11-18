@@ -48,34 +48,58 @@ except FileNotFoundError:
 # `prpost` inside an `if [ success ]` branch does not count, so the check looks
 # for the tool name anywhere in the file and leaves the branch analysis to the
 # person fixing it, whose PR will show the comment or not.
+# A task can fail two ways, and the narrow definition only saw the first:
+#
+#   explicit  `exit 1` — a branch the author wrote
+#   implicit  `set -e` and a command that fails — how MOST tasks fail
+#
+# tasks/dotnet and tasks/dotnet-lint fail from their build command under `set -e`,
+# so they were invisible to this guard while triggersync correctly reported them.
 FAILS = re.compile(r'^\s*exit\s+[1-9]', re.M)
+IMPLICIT = re.compile(r'^\s*set\s+-[a-z]*e', re.M)
 REPORTS = re.compile(r'\b(prpost|post_sticky|post_report)\b')
 
-can_fail_silently = []
+explicit_silent = []
+implicit_silent = []
+total = 0
 for f in sorted(glob.glob('tasks/**/*.yaml', recursive=True)):
     src = open(f).read()
     if 'kind: PipelineRun' not in src:
         continue
-    if not FAILS.search(src):
-        continue
+    total += 1
+    explicit = bool(FAILS.search(src))
+    implicit = bool(IMPLICIT.search(src))
     if REPORTS.search(src):
         continue
-    can_fail_silently.append(f)
+    if explicit:
+        explicit_silent.append(f)
+    elif implicit:
+        implicit_silent.append(f)
 
-print(f'  {len(can_fail_silently)} task(s) can exit non-zero and post nothing to the PR')
+print(f'  {len(explicit_silent)} of {total} task(s) exit explicitly and post nothing '
+      f'(the ratchet below)')
+if implicit_silent:
+    # An inventory, never a failure. 28 tasks fail from a command under `set -e`
+    # with no literal `exit 1`, and pretending that is not the same problem would
+    # be worse than the narrow rule it replaces. Failing on all 28 at once would
+    # make the ratchet a cliff nobody climbs.
+    print(f'  {len(implicit_silent)} more fail IMPLICITLY (set -e, no literal exit) and '
+          f'post nothing — same symptom, not yet ratcheted:')
+    for f in implicit_silent:
+        print(f'       {f}')
 print()
 
-new = [f for f in can_fail_silently if f not in baseline]
-fixed = [f for f in sorted(baseline) if f not in can_fail_silently]
+new_ = [f for f in explicit_silent if f not in baseline]
+fixed = [f for f in sorted(baseline) if f not in explicit_silent]
 
 if fixed:
     print('  NOTE these now report — delete their line from the baseline:')
     for f in fixed:
         print(f'       {f}')
 
-if new:
+if new_:
     print('FAIL the set of silent failures grew:')
-    for f in new:
+    for f in new_:
         print(f'       {f}')
     print()
     print('A step that fails without telling the PR is the shape that made')

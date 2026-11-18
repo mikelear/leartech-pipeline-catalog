@@ -202,3 +202,30 @@ generalised to three checks on every PR in that repo.
 Run it where the triggers file is: `triggersync -repo . -catalog <checkout>`. A
 `NOTE` is deliberately not a failure — a checker that cries wolf is switched off
 within a week, which is the lesson of every rule that had to be narrowed here.
+
+### S8 — a boolean gate must not be written through sprig's `default`
+
+```yaml
+{{- if and .Values.database.enabled (.Values.database.externalSecret.enabled | default true) }}
+```
+
+`sprig`'s `default` returns the fallback when the value is **empty**, and `false` is
+empty. So `database.externalSecret.enabled: false` evaluates to **true** and the object
+renders anyway: the option is inexpressible. Measured on a three-line chart:
+
+```
+a: {{ if (.Values.enabled | default true) }}RENDERS{{ else }}SKIPPED{{ end }}   -> RENDERS
+b: {{ if .Values.enabled }}RENDERS{{ else }}SKIPPED{{ end }}                    -> SKIPPED
+c: {{ if ne (toString .Values.enabled) "false" }}RENDERS{{ else }}SKIPPED{{ end }} -> SKIPPED
+```
+
+Found in `leartech-console-api` (`mikelear/leartech-console-api#32`), where it cost
+**three days of a whole world not syncing**: three places set `enabled: false` in the
+belief it worked, and nothing could override the value from outside — `helm template -f`
+with the value, a helmfile `set:`, and a dedicated values file all rendered unchanged.
+The visible symptom was `secret "leartech-console-api-db" not found`, which reads as a
+GSM problem.
+
+**Proven by a source rule** (`-templates`), because the bug is invisible in the render the
+author looked at: they set the value they believed in and the object agreed with the
+default either way.
