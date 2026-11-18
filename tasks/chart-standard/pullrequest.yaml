@@ -31,7 +31,6 @@ spec:
           description: >-
             The ClusterSecretStore every ExternalSecret in this repo must name. Read it
             from config/secrets.yaml and pass it explicitly.
-        # Required values and deploy toggles only; never a value a rule judges.
         - name: CHART_VALUES
           type: string
           description: >-
@@ -162,10 +161,7 @@ spec:
             set -uo pipefail
             [ -f /workspace/.chartstd.rc ] || { echo "==> chart-standard passed; nothing to report"; exit 0; }
             rc=$(cat /workspace/.chartstd.rc)
-            # The findings ARE the message: each names the rule, the object, and
-            # the failure the rule prevents. A red check quoting Lighthouse's
-            # "the following test failed" instead is the shape this step exists to
-            # remove.
+            # The findings are the message.
             {
               printf '### :x: Chart standard: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
               printf 'Store judged against: `%s`. Each finding names the rule and what it prevents.%s\n\n' "$CHART_STORE" "${CHART_VALUES:+ Values: \`$CHART_VALUES\`.}"
