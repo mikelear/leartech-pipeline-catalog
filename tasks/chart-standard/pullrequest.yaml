@@ -25,23 +25,13 @@ spec:
               memory: 512Mi
           workingDir: /workspace/source
         params:
-        # The external-secrets store this estate supplies, from config/secrets.yaml.
-        # NO DEFAULT, deliberately: S1 is "never name a store in a default", so the
-        # gate that enforces it cannot ship one either. A task that defaulted to
-        # leartech-secrets would pass every chart in this estate while enforcing
-        # nothing about the chart that names a different store.
+        # No default: see docs/chart-standard.md S1.
         - name: CHART_STORE
           type: string
           description: >-
             The ClusterSecretStore every ExternalSecret in this repo must name. Read it
             from config/secrets.yaml and pass it explicitly.
-        # A chart of ours refuses to render without its required values (auth.issuer,
-        # aiGateway.url, ...) — that is the standard working, not a bug. So the render
-        # needs the same minimum the deploy does.
-        #
-        # It must contain ONLY required values and deploy toggles. A file that also
-        # sets the values a rule is about would make the check measure the file
-        # instead of the chart: override the store here and S1 always passes.
+        # Required values and deploy toggles only; never a value a rule judges.
         - name: CHART_VALUES
           type: string
           description: >-
@@ -53,13 +43,7 @@ spec:
           name: ""
           resources: {}
 
-        # Tier 1, first half: does the chart render at all, and under what values?
-        #
-        # jx-boot carries helm 3.15.1 and the chart's dependencies come from there;
-        # the checker binary lives in the checkers image, so render here and judge
-        # next door. -render is repeatable and the checker judges every render
-        # TOGETHER, because the Secret collision that matters (S3) is between two
-        # charts in one namespace.
+        # Render here (jx-boot carries helm), judge next door (checkers image).
         - image: ghcr.io/jenkins-x/jx-boot:3.17.126
           name: render
           resources: {}
@@ -72,9 +56,7 @@ spec:
             charts=(charts/*/Chart.yaml)
             if [ ${#charts[@]} -eq 0 ]; then
               echo "==> no charts/*/Chart.yaml in this repo; nothing for chart-standard to do"
-              # A repo with no chart is not a failure of this gate — but it must SAY
-              # so, because a green run over nothing is the failure mode this estate
-              # keeps re-learning. The step writes a marker the next one reads.
+              # Say so rather than pass quietly; the next step reads this marker.
               touch /workspace/renders/NONE
               exit 0
             fi
@@ -123,14 +105,20 @@ spec:
               echo "      every checker binary is executable, so this means a stale pin." >&2
               exit 1
             }
-            # Source rules (S5) need the chart directory, not the render, so it is
-            # passed per chart. The render rules run once over every render.
+            # S5 reads the source; the render rules run once over all renders.
             args=()
             for f in /workspace/renders/*.yaml; do args+=(-render "$f"); done
             for c in charts/*/; do args+=(-chart "${c%/}"); done
-            chartstd -store "$CHART_STORE" "${args[@]}"
-        # Reports what this run judged, in the estate's usual shape: a reader should
-        # not have to open logs to learn which charts were covered.
+            set +e
+            chartstd -store "$CHART_STORE" "${args[@]}" > /workspace/.chartstd.log 2>&1
+            rc=$?
+            set -e
+            cat /workspace/.chartstd.log
+            if [ "$rc" -ne 0 ]; then
+              printf '%s\n' "$rc" > /workspace/.chartstd.rc
+            fi
+          onError: continue
+        # A reader should not have to open logs to learn what was covered.
         - image: ghcr.io/mikelear/leartech-checkers:0.24.14
           name: chart-standard-report
           resources: {}
@@ -143,7 +131,54 @@ spec:
             for f in /workspace/renders/*.yaml; do
               echo "    $(basename "$f" .yaml): $(grep -c '^kind:' "$f") object(s)"
             done
-      podTemplate:
+            - image: ghcr.io/mikelear/leartech-checkers:0.24.14
+          name: report
+          resources: {}
+          env:
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tekton-git
+                  key: password
+                  optional: true
+            - name: FORGE_API_URL
+              value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+            - name: LEARTECH_AUTH_SERVER_URL
+              value: https://hydra-sp-infra.jx.leartech.com
+            - name: LEARTECH_AUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_ID
+                  optional: true
+            - name: LEARTECH_AUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-prpost-oauth
+                  key: CLIENT_SECRET
+                  optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            [ -f /workspace/.chartstd.rc ] || { echo "==> chart-standard passed; nothing to report"; exit 0; }
+            rc=$(cat /workspace/.chartstd.rc)
+            # The findings ARE the message: each names the rule, the object, and
+            # the failure the rule prevents. A red check quoting Lighthouse's
+            # "the following test failed" instead is the shape this step exists to
+            # remove.
+            {
+              printf '### :x: Chart standard: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'Store judged against: `%s`. Each finding names the rule and what it prevents.%s\n\n' "$CHART_STORE" "${CHART_VALUES:+ Values: \`$CHART_VALUES\`.}"
+              printf '```\n'
+              grep -vE "^(FAIL: |$)" /workspace/.chartstd.log | head -n 40
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool chart-standard -check chart-standard -outcome failure \
+              -cluster "${CLUSTER_ID:?}" -summary "chart-standard: $(grep -c '^S[0-9]' /workspace/.chartstd.log) finding(s)" \
+              -body-file /tmp/body.md \
+              || echo "==> WARNING: could not deliver the chart-standard comment; the check still fails"
+            exit "$rc"
+  podTemplate:
         tolerations:
         - key: sku
           operator: Equal
