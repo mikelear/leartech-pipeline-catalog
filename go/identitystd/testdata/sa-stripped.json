@@ -1,0 +1,7 @@
+{
+  "items": [
+    {"metadata": {"name": "external-secrets", "namespace": "secret-infra",
+      "annotations": {"app.kubernetes.io/managed-by": "Helm"}}},
+    {"metadata": {"name": "argocd-repo-server", "namespace": "argocd"}}
+  ]
+}

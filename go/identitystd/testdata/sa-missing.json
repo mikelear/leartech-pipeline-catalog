@@ -1,0 +1,6 @@
+{
+  "items": [
+    {"metadata": {"name": "argocd-repo-server", "namespace": "argocd",
+      "annotations": {"iam.gke.io/gcp-service-account": "argo-gsa@product-first.iam.gserviceaccount.com"}}}
+  ]
+}
