@@ -110,6 +110,8 @@ spec:
           # `feedback_pr_pytest_step_must_set_e`.
           script: |
             #!/bin/sh
+            set +e
+            (
             set -e
             pip install uv --quiet
             # Frozen install preferred; fall back to a fresh resolve if
@@ -124,6 +126,89 @@ spec:
             # propagates via `set -e`.
             uv run coverage run -m pytest -v
             uv run coverage report
+            ) > /workspace/.python-test.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.python-test.log
+            printf '%s\n' "$rc" > /workspace/.python-test.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            [ -f /workspace/.python-test.rc ] && rc=$(cat /workspace/.python-test.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo "==> tests passed; nothing to report"
+              exit 0
+            fi
+            gate="pytest"
+            grep -q "Would reformat" /workspace/.python-test.log && gate="ruff format"
+            grep -qE "^(Found [0-9]+ error|[a-z0-9_/.]+\.[a-z]+:[0-9]+:[0-9]+: )" \
+              /workspace/.python-test.log && gate="ruff check"
+            grep -qE "^(FAILED|E   )" /workspace/.python-test.log && gate="pytest"
+            grep -qE "^(error|ERROR): |No solution found|Because " /workspace/.python-test.log \
+              && gate="uv sync"
+            {
+              printf '### :x: Test: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'Failed at `%s` (exit %s).\n\n' "$gate" "$rc"
+              printf '```\n'
+              case "$gate" in
+                "ruff format")
+                  grep -E "^Would reformat|^[0-9]+ file" /workspace/.python-test.log | head -n 20 || true
+                  ;;
+                "ruff check")
+                  grep -E "^[a-zA-Z0-9_/.]+\.[a-z]+:[0-9]+:[0-9]+:|^Found" \
+                    /workspace/.python-test.log | head -n 25 || true
+                  ;;
+                "pytest")
+                  grep -E "^(FAILED|E  )|^short test summary" /workspace/.python-test.log \
+                    | head -n 25 || true
+                  ;;
+                *)
+                  grep -E "error|Because|No solution" /workspace/.python-test.log | head -n 15 || true
+                  ;;
+              esac
+              printf '%s\n' '---'
+              tail -n 25 /workspace/.python-test.log
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool test -check test -outcome failure -cluster "${CLUSTER_ID:?}" \
+              -summary "$gate exited $rc" -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
         - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources:
@@ -139,6 +224,7 @@ spec:
           script: |
             #!/busybox/sh
             set -e
+            [ -f /workspace/.python-test.rc ] && exit 0
             source .jx/variables.sh
             cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
             # Layer cache shared with release builds — PR snapshots warm

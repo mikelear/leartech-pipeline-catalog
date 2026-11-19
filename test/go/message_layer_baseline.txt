@@ -31,6 +31,7 @@
 0 5 tasks/npm-audit/pullrequest.yaml
 0 3 tasks/openapi-generation/release.yaml
 0 14 tasks/preview/clear-stuck-release.yaml
+0 4 tasks/python-build-only/pullrequest.yaml
 0 2 tasks/qa-gate/pullrequest.yaml
 0 6 tasks/release/cosign-sign.yaml
 0 1 tasks/release/helm-release.yaml
