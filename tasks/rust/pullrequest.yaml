@@ -45,6 +45,8 @@ spec:
               memory: 1Gi
           script: |
             #!/bin/bash
+            set +e
+            (
             set -e
             apt-get update -qq && apt-get install -y -qq --no-install-recommends \
               git make pkg-config libssl-dev libpq-dev build-essential >/dev/null
@@ -57,6 +59,75 @@ spec:
             # Debug build for PR (release optimisations live in release.yaml).
             # BUILD_TARGET lets monorepos point cargo at a non-default crate.
             cargo build --locked ${BUILD_TARGET:+--package $BUILD_TARGET}
+            ) > /workspace/.cargo-build.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.cargo-build.log
+            printf '%s\n' "$rc" > /workspace/.cargo-build.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            [ -f /workspace/.cargo-build.rc ] && rc=$(cat /workspace/.cargo-build.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo "==> build passed; nothing to report"
+              exit 0
+            fi
+            gate="cargo build"
+            grep -qE "^error: failed to (load|select) source|^error: failed to get .* as a dependency" \
+              /workspace/.cargo-build.log && gate="cargo fetch"
+            {
+              printf '### :x: Build: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'Failed at `%s` (exit %s).\n\n' "$gate" "$rc"
+              printf '```\n'
+              if [ "$gate" = "cargo fetch" ]; then
+                grep -E "^error" /workspace/.cargo-build.log | head -n 15 || true
+              else
+                grep -E "^error(\[|:)|^  --> |^warning: unused" /workspace/.cargo-build.log \
+                  | head -n 25 || true
+              fi
+              printf '%s\n' '---'
+              tail -n 25 /workspace/.cargo-build.log
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool build -check build -outcome failure -cluster "${CLUSTER_ID:?}" \
+              -summary "$gate exited $rc" -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
         - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources:
@@ -75,6 +146,7 @@ spec:
                   optional: true
           script: |
             #!/busybox/sh
+            [ -f /workspace/.cargo-build.rc ] && exit 0
             source .jx/variables.sh
             cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
             # Layer cache shared with release builds — PR snapshots warm the
@@ -97,6 +169,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             set -e
+            [ -f /workspace/.cargo-build.rc ] && exit 0
             source .jx/variables.sh
             jx preview create
   podTemplate:
