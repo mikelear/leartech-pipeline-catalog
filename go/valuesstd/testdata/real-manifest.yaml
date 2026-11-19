@@ -1,0 +1,185 @@
+source_project: product-first
+keys:
+- key: agent-eval-gateway-key
+  mode: copy
+  why: 'shared/global: one value for every customer'
+- key: ai-gateway-e2e-all-models-key
+  mode: copy
+  why: 'shared/global: one value for every customer'
+- key: ai-review-gateway-key
+  mode: copy
+  why: 'shared: gateway key, same for every customer'
+- key: alertmanager-slack-bot-token
+  mode: copy
+  why: 'shared: our Slack workspace'
+- key: auth-hydra-dsn-sp-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-hydra-dsn-sp-plan-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-hydra-secrets-cookie-sp-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-hydra-secrets-cookie-sp-plan-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-hydra-secrets-system-sp-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-hydra-secrets-system-sp-plan-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-mongodb-password-sp-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-mongodb-password-sp-plan-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-postgresql-password-sp-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-postgresql-password-sp-plan-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-postgresql-postgres-password-sp-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-postgresql-postgres-password-sp-plan-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-service-db-dsn-sp-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-service-db-dsn-sp-plan-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-service-internal-client-secret
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-service-test-user-email-sp-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-service-test-user-email-sp-plan-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-service-test-user-password-sp-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: auth-service-test-user-password-sp-plan-infra
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: claude-api-key
+  mode: copy
+  why: 'shared: our provider key'
+- key: code-audit-gateway-key
+  mode: copy
+  why: 'shared/global: one value for every customer'
+- key: console-api-db-dsn-ship-proven
+  mode: generate
+  why: "BLOCKED: nobody has decided which database console-api uses \u2014 see UMBRELLA-ROLLOUT-RESULT.md \xA74"
+- key: cosign-private-key
+  mode: copy
+  why: "shared: OUR signing key \u2014 customers verify against it"
+- key: cosign-public-key
+  mode: copy
+  why: 'shared: paired with the private key above'
+- key: deepseek-api-key
+  mode: copy
+  why: 'shared: our provider key'
+- key: dockerhub-config-json
+  mode: copy
+  why: 'shared/global: one value for every customer'
+- key: forge-build-token
+  mode: copy
+  why: 'shared/global: the forge build token the release pipeline pushes with'
+- key: forge-keeper-token-forgejo
+  mode: copy
+  why: 'shared/global: the forge keeper bot token'
+- key: forge-webhook-hmac-forgejo
+  mode: copy
+  why: 'shared/global: forge webhook HMAC, Lighthouse validates against it'
+- key: forgejo-liveforge-token
+  mode: copy
+  why: 'shared: forge API token'
+- key: forgejo-provisioning-token
+  mode: copy
+  why: "property-bearing secret \u2014 copied from the source project"
+- key: leartech-code-review-bot-pat
+  mode: copy
+  why: 'shared: our review bot'
+- key: leartech-ship-proven-umbrella-leartech-console-api-database-url
+  mode: generate
+  note: not in the source project
+  why: 'per-cluster value: must be unique to this cluster'
+- key: lighthouse-pr-events-internal-client-secret
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: maestro-internal-client-secret
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: notification-graph-client-secret
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: openapi-pkg-gen-auth-token
+  mode: copy
+  why: 'shared: structured, pairs with the user above'
+- key: openapi-pkg-gen-user
+  mode: copy
+  why: 'shared: structured (username/password JSON)'
+- key: plan-catalog-internal-client-secret
+  mode: generate
+  why: 'per-cluster value: must be unique to this cluster'
+- key: plan-review-gateway-key
+  mode: copy
+  why: 'shared/global: one value for every customer'
+- key: renovate-github-token
+  mode: copy
+  why: 'shared: our renovate PAT'
+- key: sp-infra-maestro-mongodb
+  mode: derived
+  why: "composed from the mongo password + service DNS \u2014 see 31-derive-secrets.sh; a random value is a valid\
+    \ URL with the WRONG password"
+- key: sp-infra-redis-sentinels
+  mode: copy
+  why: 'shared/global: one value for every customer'
+- key: test-artifacts-writer-key
+  mode: copy
+  why: 'shared/global: one value for every customer'
+- key: tf-jx-usable-bird-grafana-admin
+  mode: copy
+  why: "structured JSON (username/password) \u2014 copied under its existing name; see the follow-up note in the\
+    \ manifest"
+- key: tf-jx-usable-bird-jx-admin-user
+  mode: copy
+  why: 'cluster-named: copy under this cluster''s name'
+- key: tf-jx-usable-bird-jx-basic-auth-htpasswd
+  mode: copy
+  why: 'cluster-named: copy under this cluster''s name'
+- key: tf-jx-usable-bird-jx-basic-auth-user
+  mode: copy
+  why: 'cluster-named: copy under this cluster''s name'
+- key: tf-jx-usable-bird-jx-maven-settings
+  mode: copy
+  why: "JSON with settingsXml + securityXml properties \u2014 must be copied, not random"
+- key: tf-jx-usable-bird-jx-pipeline-user
+  mode: copy
+  why: 'cluster-named: copy under this cluster''s name'
+- key: tf-jx-usable-bird-lighthouse-hmac
+  mode: copy
+  why: 'cluster-named: copy under this cluster''s name'
+- key: tf-jx-usable-bird-lighthouse-oauth
+  mode: copy
+  why: 'cluster-named: copy under this cluster''s name'
+- key: tf-jx-usable-bird-policy-reporter-config
+  mode: copy
+  why: 'cluster-named: copy under this cluster''s name'
+- key: tf-jx-usable-bird-policy-reporter-ui-config
+  mode: copy
+  why: 'cluster-named: copy under this cluster''s name'
+- key: tf-jx-usable-bird-policy-reporter-ui-default-cluster
+  mode: copy
+  why: 'cluster-named: copy under this cluster''s name'
+- key: tf-jx-usable-bird-tekton-container-registry-auth
+  mode: copy
+  why: 'cluster-named: copy under this cluster''s name'

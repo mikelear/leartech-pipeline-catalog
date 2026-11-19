@@ -1,0 +1,113 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: values-standard
+spec:
+  pipelineSpec:
+    tasks:
+    - name: values-standard
+      resources: {}
+      params:
+      - name: MANIFEST
+        value: bootstrap/secrets.yaml
+      - name: DERIVE
+        value: bootstrap/31-derive-secrets.sh
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.2
+          name: values-standard
+          resources: {}
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+            if [ ! -f "$MANIFEST" ]; then
+              echo "==> no $MANIFEST in this repo; nothing for values-standard to do"
+              exit 0
+            fi
+            test -f "$DERIVE" || echo "==> no $DERIVE; every \`derived\` key will be reported"
+            set +e
+            valuesstd -manifest "$MANIFEST" -derive "$DERIVE" > /workspace/.valuesstd.log 2>&1
+            rc=$?
+            set -e
+            cat /workspace/.valuesstd.log
+            if [ "$rc" -ne 0 ]; then
+              printf '%s\n' "$rc" > /workspace/.valuesstd.rc
+            fi
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.2
+          name: report
+          resources: {}
+          env:
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            if [ ! -f /workspace/.valuesstd.rc ]; then
+              echo "==> values-standard passed; nothing to report"
+              exit 0
+            fi
+            rc=$(cat /workspace/.valuesstd.rc)
+            findings=$(grep -cE '^V[0-9] ' /workspace/.valuesstd.log || true)
+            {
+              printf '### :x: Secrets manifest: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '`%s` declares %s key(s) whose class disagrees with who writes them.\n\n' \
+                "$MANIFEST" "$findings"
+              printf '```\n'
+              grep -E '^V[0-9] ' /workspace/.valuesstd.log | head -n 30
+              printf '```\n\n'
+              printf 'Each rule names the failure it prevents. See docs/secrets-manifest.md.\n'
+            } > /tmp/body.md
+            prpost -tool values-standard -check values-standard -outcome failure \
+              -cluster "${CLUSTER_ID:?}" -summary "secrets manifest: $findings finding(s)" \
+              -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 15m0s
+status: {}

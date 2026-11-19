@@ -1,0 +1,8 @@
+{
+  "items": [
+    {"metadata": {"name": "external-secrets", "namespace": "secret-infra",
+      "annotations": {"iam.gke.io/gcp-service-account": "external-secrets-sa@product-first.iam.gserviceaccount.com"}}},
+    {"metadata": {"name": "argocd-repo-server", "namespace": "argocd",
+      "annotations": {"iam.gke.io/gcp-service-account": "argo-gsa@product-first.iam.gserviceaccount.com"}}}
+  ]
+}

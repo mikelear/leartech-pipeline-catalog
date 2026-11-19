@@ -37,3 +37,4 @@
 0 3 tasks/rust-lint/pullrequest.yaml
 10 6 tasks/rust-test/pullrequest.yaml
 0 36 tasks/security-scan/dynamic/pullrequest.yaml
+0 4 tasks/values-standard/pullrequest.yaml
