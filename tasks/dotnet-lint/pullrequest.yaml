@@ -53,6 +53,8 @@ spec:
                   optional: true
           script: |
             #!/bin/bash
+            set +e
+            (
             set -e
             apt-get update -qq && apt-get install -y -qq --no-install-recommends \
               git make ca-certificates >/dev/null
@@ -79,6 +81,73 @@ spec:
             dotnet build $SOLUTION --no-restore --configuration Debug
 
             echo "==> lint complete"
+            ) > /workspace/.dotnet-lint.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.dotnet-lint.log
+            printf '%s\n' "$rc" > /workspace/.dotnet-lint.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.8
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            [ -f /workspace/.dotnet-lint.rc ] && rc=$(cat /workspace/.dotnet-lint.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo "==> lint passed; nothing to report"
+              exit 0
+            fi
+            # the LAST marker: earlier gates succeeded
+            gate=$(grep -oE "==> dotnet (restore|format|build)" /workspace/.dotnet-lint.log \
+              | tail -n 1 | awk '{print $3}')
+            gate=${gate:-unknown}
+            {
+              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'Failed at `dotnet %s` (exit %s).\n\n' "$gate" "$rc"
+              printf '```\n'
+              grep -E "(error|warning) [A-Z]{2,4}[0-9]{3,}|error:|NU[0-9]+" \
+                /workspace/.dotnet-lint.log | head -n 20 || true
+              printf '%s\n' '---'
+              tail -n 30 /workspace/.dotnet-lint.log
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool dotnet-lint -check dotnet-lint -outcome failure \
+              -cluster "${CLUSTER_ID:?}" -summary "dotnet $gate exited $rc" \
+              -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
   podTemplate:
     tolerations:
     - key: sku
