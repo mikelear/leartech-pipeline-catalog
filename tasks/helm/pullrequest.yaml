@@ -97,7 +97,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.chart-lint.rc
           onError: continue
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.36.6
+        - image: ghcr.io/mikelear/leartech-checkers:0.36.9
           name: chart-standard
           resources: {}
           script: |
@@ -203,7 +203,7 @@ spec:
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.36.6
+        - image: ghcr.io/mikelear/leartech-checkers:0.36.9
           name: comment-gate
           resources: {}
           script: |
@@ -219,15 +219,28 @@ spec:
             # existing comments are not a blocker and the ratchet closes as files
             # are touched.
             git remote -v >/dev/null 2>&1 || { echo "==> no git remote; skipping"; exit 0; }
+            BASE="origin/${PULL_BASE_REF:-main}"
+            # The diff this gate is about to read. Added after
+            # leartech-ship-proven-umbrella#137, where the same tree, base and
+            # binary counted 0 locally and 1 in the pipeline — a run has to be able
+            # to say which diff it read before anyone can explain a count.
+            echo "==> HEAD       $(git rev-parse --short HEAD)"
+            echo "==> $BASE $(git rev-parse --short "$BASE" 2>/dev/null || echo '(unresolved)')"
+            echo "==> merge-base $(git merge-base "$BASE" HEAD 2>/dev/null | cut -c1-8 || echo '(none: shallow clone has no merge base)')"
+            echo "==> added comment lines the gate will count (first 20):"
+            { git diff --unified=0 "$BASE"...HEAD 2>/dev/null \
+                || git diff --unified=0 "$BASE" 2>/dev/null; } \
+              | grep -E '^\+[[:space:]]*(//|#|--)' | grep -vE '^\+\+\+' \
+              | head -20 | sed 's/^/    /'
             set +e
-            commentgate -base "origin/${PULL_BASE_REF:-main}" 2>&1 | tee /workspace/.comment-gate.log
+            commentgate -base "$BASE" 2>&1 | tee /workspace/.comment-gate.log
             rc=${PIPESTATUS[0]}
             set -e
             printf '%s\n' "$rc" > /workspace/.comment-gate.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.36.6
+        - image: ghcr.io/mikelear/leartech-checkers:0.36.9
           name: report
           resources: {}
           env:
