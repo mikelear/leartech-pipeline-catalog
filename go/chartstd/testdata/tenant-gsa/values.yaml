@@ -1,0 +1,4 @@
+leartech-console-api:
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: console-api-gsm-writer@product-first.iam.gserviceaccount.com

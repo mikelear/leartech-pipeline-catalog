@@ -86,4 +86,32 @@ case "$out" in
   *) echo "  ok   toggle-works stays quiet" ;;
 esac
 
+# S10: a released chart carries no tenant-specific default. tenant-gsa and
+# tenant-project are the umbrella's two shipped defects; tenant-clean holds
+# estate furniture (our repo refs, our FQDN) that must NOT be flagged.
+tenant_case() {
+  dir=$1; want=$2
+  out=$(go run . -tenant "testdata/$dir" 2>&1 || true)
+  case "$out" in
+    *FAIL*)
+      if [ "$want" = "fail" ]; then
+        echo "  ok   $dir -> S10"
+      else
+        echo "FAIL: $dir should be clean"; echo "$out" | sed 's/^/    /'; exit 1
+      fi
+      ;;
+    *)
+      if [ "$want" = "clean" ]; then
+        echo "  ok   $dir stays clean"
+      else
+        echo "FAIL: $dir no longer reports S10"; exit 1
+      fi
+      ;;
+  esac
+}
+
+tenant_case tenant-gsa fail
+tenant_case tenant-project fail
+tenant_case tenant-clean clean
+
 echo "=== ok ==="
