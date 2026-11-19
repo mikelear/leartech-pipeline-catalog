@@ -48,6 +48,8 @@ spec:
               memory: 1Gi
           script: |
             #!/bin/sh
+            set +e
+            (
             set -e
             # Kaniko does its own npm install inside the Dockerfile; this
             # step exists mainly to catch dependency-resolution issues
@@ -56,6 +58,69 @@ spec:
             # still lag upstream.
             apk add --no-cache git
             npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+            ) > /workspace/.ng-build.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.ng-build.log
+            printf '%s\n' "$rc" > /workspace/.ng-build.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            [ -f /workspace/.ng-build.rc ] && rc=$(cat /workspace/.ng-build.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo "==> dependency install passed; nothing to report"
+              exit 0
+            fi
+            {
+              printf '### :x: Build: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '`npm ci` / `npm install` failed (exit %s) before the image build.\n' "$rc"
+              printf 'Usually a peer-dependency conflict, a registry auth problem, or a\n'
+              printf 'lockfile that no longer matches package.json.\n\n'
+              printf '```\n'
+              grep -E "^npm (error|ERR!)" /workspace/.ng-build.log | head -n 25 || true
+              printf '%s\n' '---'
+              tail -n 20 /workspace/.ng-build.log
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool build -check build -outcome failure -cluster "${CLUSTER_ID:?}" \
+              -summary "npm install exited $rc" -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
         - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources:
@@ -64,6 +129,7 @@ spec:
               memory: 2Gi
           script: |
             #!/busybox/sh
+            [ -f /workspace/.ng-build.rc ] && exit 0
             source .jx/variables.sh
             cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
             # Layer cache — see angular/release.yaml for rationale. PR builds
@@ -85,6 +151,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             set -e
+            [ -f /workspace/.ng-build.rc ] && exit 0
             source .jx/variables.sh
             jx preview create
   podTemplate:
