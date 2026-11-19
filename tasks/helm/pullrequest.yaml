@@ -262,8 +262,18 @@ spec:
             set -uo pipefail
             rc=0
             failed=""
+            # Say what each step recorded, always. The first version of this step
+            # exited 1 on a run where all four graded steps had exited 0 and printed
+            # only a delivery warning, so the failure explained nothing -- the exact
+            # defect this step exists to remove.
             for step in chart-lint chart-standard chart-tests comment-gate; do
-              if [ -f "/workspace/.$step.rc" ] && [ "$(cat "/workspace/.$step.rc")" -ne 0 ]; then
+              if [ ! -f "/workspace/.$step.rc" ]; then
+                echo "    $step: no rc recorded (the step exited before grading)"
+                continue
+              fi
+              v=$(cat "/workspace/.$step.rc")
+              echo "    $step: exit $v"
+              if [ "$v" -ne 0 ]; then
                 rc=1
                 failed="$failed $step"
               fi
@@ -284,9 +294,11 @@ spec:
                 printf '```\n'
               done
             } > /tmp/body.md
-            prpost -tool pr -check pr -outcome failure -cluster "${CLUSTER_ID:?}" \
-              -summary "chart checks failed:$failed" -body-file /tmp/body.md \
-              || echo "==> WARNING: comment not delivered; the check still fails"
+            if ! prpost -tool pr -check pr -outcome failure -cluster "${CLUSTER_ID:?}" \
+                 -summary "chart checks failed:$failed" -body-file /tmp/body.md 2>&1; then
+              echo "==> WARNING: comment not delivered (prpost's own error is above);"
+              echo "    the check result stands on the steps, not on delivery"
+            fi
             exit "$rc"
 
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/preview/clear-stuck-release.yaml@main
