@@ -42,7 +42,7 @@ spec:
           resources: {}
 
         # Render here (jx-boot carries helm), judge next door (checkers image).
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.126
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
           name: render
           resources: {}
           script: |

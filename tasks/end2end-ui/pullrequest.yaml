@@ -107,7 +107,7 @@ spec:
             chmod +x /workspace/bin/prpost
             test -x /workspace/bin/prpost
             echo "==> provided /workspace/bin/prpost"
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.126
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
           name: jx-variables
           resources: {}
           script: |

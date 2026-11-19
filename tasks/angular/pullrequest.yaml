@@ -34,7 +34,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.126
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
           name: jx-variables
           resources: {}
           script: |
@@ -145,7 +145,7 @@ spec:
           name: ""
           resources: {}
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.126
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
           name: promote-jx-preview
           resources: {}
           script: |

@@ -140,7 +140,7 @@ spec:
             test -x /workspace/bin/prpost
             test -f /workspace/bin/leartech-go.mk
             echo "==> provided /workspace/bin/{prpost,leartech-go.mk}"
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.126
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
           name: jx-variables
           resources: {}
           script: |
