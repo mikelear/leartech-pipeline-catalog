@@ -115,6 +115,20 @@
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)[\\s\\S]*?[:=]\\s*\"?\\$?\\{?[A-Z_]*:?-?(?<currentValue>v[0-9][^\"\\s}]*)"
       ]
+    },
+    {
+      "description": "The golangci-lint version is asserted in FOUR places by test/go/version_pin_test.sh: two image refs (already covered by the docker managers above) and two plain strings \u2014 GOLANGCI_VERSION in the shared mk, and the README's version table. Without this, renovate bumps the images only and its own PR fails the guard (measured on #323). datasource=github-releases with extractVersion strips the `v` the image tag carries and the mk does not.",
+      "customType": "regex",
+      "fileMatch": [
+        "^go/leartech-go\\.mk$",
+        "^README\\.md$"
+      ],
+      "matchStrings": [
+        "renovate: datasource=github-releases depName=golangci/golangci-lint\\s*\\nGOLANGCI_VERSION \\?= (?<currentValue>[0-9][0-9.]*)",
+        "renovate: datasource=github-releases depName=golangci/golangci-lint --\\>\\s*\\n\\| `golangci-lint` \\| `(?<currentValue>[0-9][0-9.]*)`"
+      ],
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v?(?<version>.*)$"
     }
   ]
 }
