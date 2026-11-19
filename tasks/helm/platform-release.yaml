@@ -121,6 +121,29 @@ spec:
             # A stable per-repo name gives natural de-duplication: a release
             # while a run is in flight does not stack another, and the finished
             # one is cleared by the next release.
+            # WHICH SCOPE. `renovate-pin-targets` watches only the repos that pin
+            # something (the four umbrellas + the two build-cluster repos) with
+            # `force.schedule: []`, so a release moves its own pins and nothing
+            # else. `renovate` — the estate-wide job over 57 repos — is the
+            # fallback for a cluster whose GitOps has not taken the new release.
+            #
+            # Kicking the estate job from every release is why, on 2026-11-19,
+            # `leartech-dotnet-service-template#18` took three new SHAs in ninety
+            # minutes: each estate run rebased every open dependency branch, and
+            # each rebase is a commit, which runs the whole presubmit set on both
+            # clusters.
+            SCOPE=""
+            for candidate in renovate-pin-targets renovate; do
+              if kubectl -n jx get cronjob "$candidate" >/dev/null 2>&1; then
+                SCOPE="$candidate"
+                break
+              fi
+            done
+            if [ -z "$SCOPE" ]; then
+              echo "::WARN no renovate cronjob on this cluster; nothing to kick"
+              exit 0
+            fi
+            echo "==> kicking $SCOPE"
             JOB="renovate-after-${REPO_NAME:-release}"
             if kubectl -n jx get job "${JOB}" >/dev/null 2>&1; then
               done_=$(kubectl -n jx get job "${JOB}" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}')
@@ -133,7 +156,7 @@ spec:
               echo "==> ${JOB} is still running for this repo — not stacking another (it will pick the tag up)"
             else
               rc=0
-              kubectl -n jx create job --from=cronjob/renovate "${JOB}" || rc=$?
+              kubectl -n jx create job --from=cronjob/"${SCOPE}" "${JOB}" || rc=$?
               if [ "$rc" -ne 0 ]; then
                 echo "::WARN renovate trigger exited ${rc}; the Monday cron will pick up the bump"
               else
