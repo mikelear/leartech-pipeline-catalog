@@ -70,7 +70,13 @@ func tenantFindings(chartDir string) []Finding {
 	path := filepath.Join(chartDir, "values.yaml")
 	b, err := os.ReadFile(path) // #nosec G304 -- the operator names the chart
 	if err != nil {
-		return nil
+		// A chart whose values cannot be read is NOT a clean chart. Returning no
+		// findings made `chartstd -tenant /nonexistent` exit 0 saying "carries no
+		// tenant-specific default" -- the silent-zero defect the standard exists to
+		// remove, found by a docker mount that had not mounted.
+		return []Finding{{"S10", chartDir, fmt.Sprintf(
+			"no readable values.yaml (%v). A chart whose values cannot be read has "+
+				"not been judged, and passing it reads as judged and clean", err)}}
 	}
 
 	var vals map[string]any
