@@ -115,15 +115,36 @@ spec:
           script: |
             #!/bin/sh
             set -eo pipefail
-            if ! kubectl -n jx get cronjob renovate-toolsets >/dev/null 2>&1; then
-              echo "==> no cronjob/renovate-toolsets on this cluster."
-              echo "    Renovate runs on GCP only, so there is nothing to dispatch"
-              echo "    here. The GCP release of this same commit does the bump."
+            # WHICH SCOPE TO KICK, in order of correctness.
+            #
+            # renovate-catalog is scoped to THIS repo (`repositories` is one
+            # entry) with `force.schedule: []`, so the one-shot runs now over the
+            # catalog and nothing else — it does not start an estate-wide run;
+            # the weekly `renovate` CronJob still owns that.
+            #
+            # renovate-toolsets is the OLD target and is scoped to
+            # `leartech-automated-agent`, which is why the pin did not move for
+            # seven releases: the catalog published an image and kicked a run that
+            # renovates somebody else. Kept as a fallback so this step keeps
+            # working on a cluster whose GitOps has not taken the new release yet.
+            SCOPE=""
+            for candidate in renovate-catalog renovate-toolsets; do
+              if kubectl -n jx get cronjob "$candidate" >/dev/null 2>&1; then
+                SCOPE="$candidate"
+                break
+              fi
+            done
+            if [ -z "$SCOPE" ]; then
+              echo "==> neither cronjob/renovate-catalog nor cronjob/renovate-toolsets"
+              echo "    exists on this cluster. Renovate and its GitHub token live on"
+              echo "    GCP only, so there is nothing to dispatch here; the GCP release"
+              echo "    of this same commit does the bump."
               exit 0
             fi
+            [ "$SCOPE" = "renovate-catalog" ] || echo "==> NOTE: renovate-catalog is not on this cluster yet; falling back to $SCOPE, which is scoped to leartech-automated-agent and will NOT move this repo's pin"
             JOB="renovate-after-checkers-$(date +%s)"
-            echo "==> dispatching renovate: job/$JOB"
-            kubectl -n jx create job "$JOB" --from=cronjob/renovate-toolsets
+            echo "==> dispatching $SCOPE: job/$JOB"
+            kubectl -n jx create job "$JOB" --from=cronjob/"$SCOPE"
   podTemplate:
     tolerations:
     - key: sku
