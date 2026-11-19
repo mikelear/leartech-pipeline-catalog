@@ -72,13 +72,45 @@ spec:
               echo "      a repo with no chart should not be using it."
               exit 1
             fi
+            mkdir -p /workspace/renders
             for c in "${charts[@]}"; do
-              dir=$(dirname "$c")
+              dir=$(dirname "$c"); name=$(basename "$dir")
               echo "==> helm dependency build $dir"
               helm dependency build "$dir"
               echo "==> helm lint $dir"
               helm lint "$dir"
+              helm template chart-standard "$dir" > "/workspace/renders/$name.yaml"
+              test -s "/workspace/renders/$name.yaml" || {
+                echo "FAIL: $dir rendered nothing." >&2
+                exit 1
+              }
             done
+
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: chart-standard
+          resources: {}
+          script: |
+            #!/usr/bin/env bash
+            set -uo pipefail
+            shopt -s nullglob
+            rc=0
+            # chartstd is the only place S1-S10 are enforced. This task is where
+            # every umbrella's PR arrives, and it did not invoke it — which is how
+            # 0.0.130 shipped a tenant GSA and a tenant project to every customer
+            # while the standard said it could not.
+            for c in charts/*/Chart.yaml; do
+              dir=$(dirname "$c"); name=$(basename "$dir")
+              echo "==> chartstd -tenant $dir"
+              chartstd -tenant "$dir" || rc=1
+              if [ -f "/workspace/renders/$name.yaml" ]; then
+                echo "==> chartstd -store (render rules) $dir"
+                args=(-store leartech-secrets -render "/workspace/renders/$name.yaml" \
+                      -chart "$dir" -templates)
+                [ -f "$dir/chart-standard-toggles.yaml" ] && args+=(-toggles "$dir/chart-standard-toggles.yaml")
+                chartstd "${args[@]}" || rc=1
+              fi
+            done
+            [ "$rc" -eq 0 ] || { echo "FAIL: the chart standard found something above" >&2; exit 1; }
 
         # The chart's own tests are Go, and no single image has both the Go
         # toolchain and helm: jx-boot:3.16.59 carries helm 3.15.1 and curl but

@@ -1,0 +1,2 @@
+# Tasks that run `helm template` but never call chartstd, frozen 2026-11-19.
+# This file may only SHRINK.

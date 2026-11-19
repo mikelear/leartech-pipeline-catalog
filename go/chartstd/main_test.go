@@ -191,6 +191,31 @@ func mustLoad(t *testing.T, path string) []obj {
 	return docs
 }
 
+// S10 covers what S6 cannot: a tenant-specific DEFAULT in a released chart. The
+// three fixtures are the real umbrella's two defects and a legitimate chart that
+// must stay quiet -- mikelear/* repo refs and our own FQDNs are estate furniture,
+// not tenant identity, and flagging them is how a rule gets switched off.
+//
+// proven-by: TestTenantDefaultIsReported
+func TestTenantDefaultIsReported(t *testing.T) {
+	cases := []struct {
+		dir  string
+		want int
+	}{
+		{dir: "tenant-gsa", want: 1},
+		{dir: "tenant-project", want: 1},
+		{dir: "tenant-clean", want: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.dir, func(t *testing.T) {
+			got := tenantFindings(filepath.Join("testdata", tc.dir))
+			if len(got) != tc.want {
+				t.Fatalf("want %d finding(s), got %d: %v", tc.want, len(got), got)
+			}
+		})
+	}
+}
+
 func contains(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {

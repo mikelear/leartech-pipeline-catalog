@@ -328,9 +328,13 @@ func main() {
 	flag.BoolVar(&tplRules, "templates", false,
 		"also apply the source rules that need the templates (S8: a boolean gate "+
 			"written through sprig default). Needs -chart.")
-	var toggleDecl, listToggles string
+	var toggleDecl, listToggles, tenantCheck string
 	var offRenders multiFlag
 	var toggleNotes bool
+	flag.StringVar(&tenantCheck, "tenant", "",
+		"a chart directory whose values.yaml must carry no tenant-specific default "+
+			"(S10: a GSA email, or a `which project` key holding a literal). Runs alone and "+
+			"exits, so a consumer repo with no chart-standard task still gets this check.")
 	flag.StringVar(&listToggles, "list-toggles", "",
 		"print `<path>|<off>` per declared toggle and exit, so a shell step does not have "+
 			"to parse the declaration itself")
@@ -350,6 +354,19 @@ func main() {
 			"that rendered the wrong name")
 	flag.Parse()
 
+	if tenantCheck != "" {
+		findings := tenantFindings(tenantCheck)
+		if len(findings) == 0 {
+			fmt.Printf("==> chartstd: %s carries no tenant-specific default (S10)\n", tenantCheck)
+			return
+		}
+		for _, f := range findings {
+			fmt.Println(f)
+		}
+		fmt.Fprintf(os.Stderr, "\nFAIL: %d tenant-specific default(s).\n", len(findings))
+		os.Exit(1)
+	}
+
 	if listToggles != "" {
 		decl, err := loadToggles(listToggles)
 		if err != nil {
@@ -366,7 +383,7 @@ func main() {
 		return
 	}
 
-	if wantStore == "" {
+	if wantStore == "" && tenantCheck == "" && listToggles == "" {
 		fmt.Fprintln(os.Stderr, "chartstd: -store is required. Naming the store is the whole "+
 			"point of S1: \"never name a store in a default\" can only be judged against the "+
 			"store the estate actually supplies. Pass the value from config/secrets.yaml.")
@@ -457,7 +474,7 @@ func main() {
 
 	if len(findings) == 0 {
 		fmt.Printf("==> chartstd: %d object(s) from %d render(s), no findings "+
-			"(S1b, S2, S3, S4, S5, S6, S8, T1, T2)\n", len(all), len(renders))
+			"(S1b, S2, S3, S4, S5, S6, S8, S10, T1, T2)\n", len(all), len(renders))
 		return
 	}
 	for _, f := range findings {

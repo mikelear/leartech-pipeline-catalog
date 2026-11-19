@@ -1,0 +1,8 @@
+leartech-console-api:
+  suppliers:
+    gsmProject: ""
+    gitopsRepo: mikelear/leartech-ai-gateway-umbrella
+  mcp:
+    host: https://leartech-mcp-servers-public-ship-proven.jx.leartech.com
+authResources:
+  clusterStore: leartech-secrets
