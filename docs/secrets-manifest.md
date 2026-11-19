@@ -50,10 +50,23 @@ manifest still says `generate`*, so the seeder invents one first and the derive 
 overwrites it. That works by **ordering**, not by design, and the ordering is not
 written down anywhere.
 
-## Where it runs
+## Where it runs, and who fixes what
 
 `valuesstd -manifest bootstrap/secrets.yaml -derive bootstrap/31-derive-secrets.sh`, on
-the GitOps repo's PR, and in the image via `test/go/valuesstd_test.sh`.
+whichever repo holds the manifest, and in the image via `test/go/valuesstd_test.sh`.
+
+**Ownership, and it is a rule rather than a preference:** a finding raised against a
+customer cluster is fixed **upstream**, never in the customer's repo. The customer
+session reports; a fix lands here or in the chart/task that produced the pattern, so the
+next release does not carry the defect to anyone else. Editing the customer repo fixes
+one cluster and teaches nobody.
+
+The consequence, stated plainly: `secrets.yaml` and `31-derive-secrets.sh` exist **only**
+in the customer repo today, so `valuesstd` has no upstream home yet. Making it one means
+the seed/derive machinery becoming a released artefact — a chart or a task in this
+catalog that a customer repo consumes — rather than a file each customer copies. Until
+then this checker runs where the file is, and any fix it prompts is applied to the
+*pattern*, not to that cluster.
 
 ## S9 — the mirror image of S6, and why it needs the live cluster
 
