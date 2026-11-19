@@ -202,6 +202,30 @@ spec:
           onError: continue
 
         - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: comment-gate
+          resources: {}
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            # commentgate lives in leartech-go.mk, which only Go SERVICE repos run.
+            # This task is where every chart repo's PR arrives, and it never called
+            # it — so no prose gate, no file-size check and no swag drift check has
+            # ever run on an umbrella. Backwards: values.yaml is where the prose is
+            # that goes stale silently.
+            #
+            # It examines CHANGED LINES ONLY against origin/main, so a chart repo's
+            # existing comments are not a blocker and the ratchet closes as files
+            # are touched.
+            git remote -v >/dev/null 2>&1 || { echo "==> no git remote; skipping"; exit 0; }
+            set +e
+            commentgate -base "origin/${PULL_BASE_REF:-main}" 2>&1 | tee /workspace/.comment-gate.log
+            rc=${PIPESTATUS[0]}
+            set -e
+            printf '%s\n' "$rc" > /workspace/.comment-gate.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
           name: report
           resources: {}
           env:
@@ -238,7 +262,7 @@ spec:
             set -uo pipefail
             rc=0
             failed=""
-            for step in chart-lint chart-standard chart-tests; do
+            for step in chart-lint chart-standard chart-tests comment-gate; do
               if [ -f "/workspace/.$step.rc" ] && [ "$(cat "/workspace/.$step.rc")" -ne 0 ]; then
                 rc=1
                 failed="$failed $step"
@@ -251,7 +275,7 @@ spec:
             {
               printf '### :x: Chart checks: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
               printf 'Failed:%s\n\n' "$failed"
-              for step in chart-lint chart-standard chart-tests; do
+              for step in chart-lint chart-standard chart-tests comment-gate; do
                 [ -f "/workspace/.$step.rc" ] || continue
                 [ "$(cat "/workspace/.$step.rc")" -eq 0 ] && continue
                 printf '**%s**\n```\n' "$step"
