@@ -54,7 +54,7 @@ spec:
             test -x /workspace/bin/prpost
             test -f /workspace/bin/leartech-go.mk
             echo "==> provided /workspace/bin/{prpost,leartech-go.mk}"
-        - image: rust:1.98-slim-bookworm
+        - image: rust:1.100-slim-bookworm
           name: rust-test
           resources:
             requests:

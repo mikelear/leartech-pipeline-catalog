@@ -48,7 +48,7 @@ spec:
             test -x /workspace/bin/prpost
             test -f /workspace/bin/leartech-go.mk
             echo "==> provided /workspace/bin/{prpost,leartech-go.mk}"
-        - image: golangci/golangci-lint:v2.14.0
+        - image: golangci/golangci-lint:v2.15.0
           name: golangci-lint
           # golangci-lint loads the whole type-checked module graph — memory-heavy
           # on real modules; the inherited 512Mi under-reserves it (Burstable pod
