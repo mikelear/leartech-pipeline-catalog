@@ -49,6 +49,19 @@ try:
 except FileNotFoundError:
     baseline = set()
 
+# Tasks that post from INSIDE their image. No catalog rule can see that, so the
+# honest report says "unverified" rather than listing them as silent failures --
+# the same distinction triggersync draws with a NOTE. Named with the file that
+# does the posting, because "we could not tell" is only useful if it says what.
+DELEGATES = {
+    'tasks/qa-gate/pullrequest.yaml': 'leartech-gate image posts the gate comment',
+    'tasks/ai-review/pullrequest.yaml': 'the ai-review worker image posts the review',
+    'tasks/security-scan/pullrequest.yaml': '/app/static-scan.sh in security-tools',
+    'tasks/security-scan/image-scan.yaml': '/app/image-scan.sh in security-tools',
+    'tasks/security-scan/dynamic/pullrequest.yaml': 'the dynamic-scan image',
+}
+
+
 # A task "can fail" if a step script exits non-zero. A task "reports" if it calls
 # one of the two posting tools AND does so on a path a failure can reach — a
 # `prpost` inside an `if [ success ]` branch does not count, so the check looks
@@ -80,10 +93,19 @@ for f in sorted(glob.glob('tasks/**/*.yaml', recursive=True)):
     if explicit:
         explicit_silent.append(f)
     elif implicit:
+        if f in DELEGATES:
+            continue
         implicit_silent.append(f)
 
 print(f'  {len(explicit_silent)} of {total} task(s) exit explicitly and post nothing '
       f'(the ratchet below)')
+if DELEGATES:
+    print(f'  {len(DELEGATES)} task(s) post from INSIDE their image, so no catalog rule can '
+          f'see it — unverified, not silent:')
+    for f, who in sorted(DELEGATES.items()):
+        print(f'       {f}  ({who})')
+    print()
+
 if implicit_silent:
     # An inventory, never a failure. 28 tasks fail from a command under `set -e`
     # with no literal `exit 1`, and pretending that is not the same problem would
