@@ -81,10 +81,19 @@ spec:
               echo "==> helm lint $dir"
               helm lint "$dir" || rc=1
               if helm template chart-standard "$dir" > "/workspace/renders/$name.yaml" 2>"/workspace/renders/$name.render-err"; then
-                test -s "/workspace/renders/$name.yaml" || {
-                  echo "NOTE: $dir rendered an empty document; the render rules cannot run on it" >&2
+                # An umbrella whose components are ALL off renders zero objects, and
+                # that is legitimate for a template chart: measured on
+                # leartech-forge-umbrella, whose every toggle defaults false. The
+                # render rules need objects to judge; the SOURCE rules do not.
+                #
+                # chartstd still refuses to pass an empty render — a check over
+                # nothing is not a check — so the task must not hand it one.
+                if [ "$(grep -c '^kind:' "/workspace/renders/$name.yaml" 2>/dev/null || echo 0)" -eq 0 ]; then
+                  echo "NOTE: $dir renders no objects with its own defaults (every component"
+                  echo "      off). The render rules cannot run on it; the source rules can,"
+                  echo "      and they are where the tenant rule lives."
                   rm -f "/workspace/renders/$name.yaml"
-                }
+                fi
               else
                 echo "NOTE: $dir does not render with its own defaults — its consumer supplies"
                 echo "      required values (auth.issuerUrl and friends). The RENDER rules"
