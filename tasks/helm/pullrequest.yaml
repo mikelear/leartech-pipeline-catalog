@@ -169,6 +169,7 @@ spec:
               echo "FAIL: ${stale[*]} will not be run — this step executes Go tests."
               echo "      Convert them to tests/*_test.go. A runner nothing invokes is"
               echo "      worse than no test: it looks like coverage in the tree."
+              printf '1\n' > /workspace/.chart-tests.rc
               exit 1
             fi
 
@@ -178,6 +179,7 @@ spec:
               echo "    a delisted image tag, or a hook that waits on a resource the"
               echo "    same release has not created yet. A chart with no executable"
               echo "    checks is unverified in exactly the ways charts fail."
+              printf '0\n' > /workspace/.chart-tests.rc
               exit 0
             fi
 
@@ -294,9 +296,12 @@ spec:
                 printf '```\n'
               done
             } > /tmp/body.md
-            if ! prpost -tool pr -check pr -outcome failure -cluster "${CLUSTER_ID:?}" \
-                 -summary "chart checks failed:$failed" -body-file /tmp/body.md 2>&1; then
-              echo "==> WARNING: comment not delivered (prpost's own error is above);"
+            prpost -tool pr -check pr -outcome failure -cluster "${CLUSTER_ID:?}" \
+              -summary "chart checks failed:$failed" -body-file /tmp/body.md \
+              2>/tmp/prpost.err || true
+            if [ -s /tmp/prpost.err ]; then
+              echo "==> comment delivery failed:"
+              sed 's/^/      /' /tmp/prpost.err
               echo "    the check result stands on the steps, not on delivery"
             fi
             exit "$rc"

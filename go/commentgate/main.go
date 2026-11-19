@@ -192,6 +192,19 @@ func main() {
 		fmt.Println("explaining, it is worth proving: add the test, or delete the narration.")
 		fmt.Println("Functional directives (go:build, nolint, generated markers, swagger annotations)")
 		fmt.Println("are exempt and not counted.")
+		if len(rep.prose) > 0 {
+			limit := len(rep.prose)
+			if limit > 20 {
+				limit = 20
+			}
+			fmt.Printf("\nThe %d line(s) counted (first %d):\n", len(rep.prose), limit)
+			for _, c := range rep.prose[:limit] {
+				fmt.Printf("  %s:%s  %s\n", c.file, c.line, c.text)
+			}
+			if len(rep.prose) > limit {
+				fmt.Printf("  ... and %d more\n", len(rep.prose)-limit)
+			}
+		}
 	}
 
 	if len(claims) > 0 {
@@ -222,6 +235,11 @@ func main() {
 type report struct {
 	comments, testLines int
 	claims, dangling    []finding
+	// prose is every line counted toward the ratio, so a failure can NAME what it
+	// counted. Without it a run says "+1 prose comment line(s)" and the reader has
+	// to find the line by eye — measured on leartech-ship-proven-umbrella#137,
+	// where nobody could reproduce the count from the diff.
+	prose []finding
 }
 
 // evaluate applies both rules to the added lines. Pure, so the rules can be
@@ -248,6 +266,7 @@ func evaluate(added []addedLine, exists func(string) bool) report {
 			continue // sits with its proof; this is the documentation we want
 		}
 		r.comments++
+		r.prose = append(r.prose, finding{a.file, a.line, strings.TrimSpace(a.text), "prose"})
 		if quotedRe.MatchString(a.text) || blockQuoteRe.MatchString(a.text) {
 			continue // reporting a claim, not making one
 		}
