@@ -204,6 +204,7 @@ func TestTenantDefaultIsReported(t *testing.T) {
 	}{
 		{dir: "tenant-gsa", want: 1},
 		{dir: "tenant-project", want: 1},
+		{dir: "tenant-gitops-repo", want: 1},
 		{dir: "tenant-clean", want: 0},
 	}
 	for _, tc := range cases {
