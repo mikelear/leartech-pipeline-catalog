@@ -24,8 +24,9 @@
 0 19 tasks/helm/pullrequest.yaml
 0 2 tasks/helm/release.yaml
 0 3 tasks/kyverno-audit/pullrequest.yaml
+0 4 tasks/ng-lint/pullrequest.yaml
 4 9 tasks/ng-test/pullrequest.yaml
-0 2 tasks/npm-audit/pullrequest.yaml
+0 5 tasks/npm-audit/pullrequest.yaml
 0 3 tasks/openapi-generation/release.yaml
 0 14 tasks/preview/clear-stuck-release.yaml
 0 2 tasks/qa-gate/pullrequest.yaml

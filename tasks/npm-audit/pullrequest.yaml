@@ -45,6 +45,8 @@ spec:
               memory: 512Mi
           script: |
             #!/bin/sh
+            set +e
+            (
             set -e
             apk add --no-cache git
             AUDIT_LEVEL="${AUDIT_LEVEL:-critical}"
@@ -59,6 +61,69 @@ spec:
             fi
             echo "==> npm audit --audit-level=$AUDIT_LEVEL"
             npm audit --audit-level="$AUDIT_LEVEL"
+            ) > /workspace/.npm-audit.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.npm-audit.log
+            printf '%s\n' "$rc" > /workspace/.npm-audit.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            [ -f /workspace/.npm-audit.rc ] && rc=$(cat /workspace/.npm-audit.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo "==> npm audit passed; nothing to report"
+              exit 0
+            fi
+            level="${AUDIT_LEVEL:-critical}"
+            {
+              printf '### :x: npm audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'At `--audit-level=%s` (exit %s). A HIGH finding does not fail this\n' \
+                "$level" "$rc"
+              printf 'check by default; only at or above the level fails.\n\n'
+              printf '```\n'
+              head -n 40 /workspace/.npm-audit.log
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool npm-audit -check npm-audit -outcome failure \
+              -cluster "${CLUSTER_ID:?}" -summary "npm audit ($level) exited $rc" \
+              -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
   podTemplate:
     tolerations:
     - key: sku

@@ -52,10 +52,81 @@ spec:
                   optional: true
           script: |
             #!/bin/sh
+            set +e
+            (
             set -e
             apk add --no-cache git
             npm ci --legacy-peer-deps || npm install --legacy-peer-deps
             npm run lint
+            ) > /workspace/.ng-lint.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.ng-lint.log
+            printf '%s\n' "$rc" > /workspace/.ng-lint.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            [ -f /workspace/.ng-lint.rc ] && rc=$(cat /workspace/.ng-lint.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo "==> lint passed; nothing to report"
+              exit 0
+            fi
+            stage="lint"
+            grep -q "npm ci\|npm install" /workspace/.ng-lint.log && \
+              grep -qE "^npm error|npm ERR!" /workspace/.ng-lint.log && stage="install"
+            {
+              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'Failed at `%s` (exit %s).\n\n' "$stage" "$rc"
+              printf '```\n'
+              if [ "$stage" = "install" ]; then
+                grep -E "^npm (error|ERR!)" /workspace/.ng-lint.log | head -n 20 || true
+              else
+                grep -E "^/workspace|error|warning" /workspace/.ng-lint.log | head -n 25 || true
+              fi
+              printf '%s\n' '---'
+              tail -n 20 /workspace/.ng-lint.log
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool ng-lint -check ng-lint -outcome failure \
+              -cluster "${CLUSTER_ID:?}" -summary "$stage exited $rc" \
+              -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
   podTemplate:
     tolerations:
     - key: sku
