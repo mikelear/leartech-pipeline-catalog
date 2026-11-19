@@ -52,14 +52,14 @@ spec:
           name: ""
           resources: {}
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.126
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
           name: jx-variables
           resources: {}
           script: |
             #!/usr/bin/env sh
             jx gitops variables
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.126
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
           name: chart-lint
           resources: {}
           script: |
@@ -154,7 +154,7 @@ spec:
             echo "==> built chart.test ($(stat -c%s /workspace/source/chart.test) bytes, static)"
           onError: continue
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.126
+        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
           name: chart-tests
           resources: {}
           script: |
@@ -293,7 +293,7 @@ spec:
           name: ""
           resources: {}
 
-        - image: ghcr.io/jenkins-x-plugins/jx-preview:0.7.28
+        - image: ghcr.io/jenkins-x-plugins/jx-preview:0.7.30
           name: promote-jx-preview
           resources: {}
           script: |
