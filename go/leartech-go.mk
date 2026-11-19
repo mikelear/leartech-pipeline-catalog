@@ -51,6 +51,7 @@
 #                          check no-ops cleanly — pass, not fail.
 
 # ── Canonical toolchain versions ─────────────────────────────────────────
+# renovate: datasource=github-releases depName=golangci/golangci-lint
 GOLANGCI_VERSION ?= 2.14.0
 
 # ── Config paths ─────────────────────────────────────────────────────────
