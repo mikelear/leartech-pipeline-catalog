@@ -48,6 +48,12 @@ spec:
             value: auto
           script: |
             #!/bin/sh
+            # The body runs in a subshell so `set -e` still stops at the FIRST
+            # failing command while this shell survives to record its exit code.
+            # Without that, a red check reports nothing on the PR and its reason
+            # is only in a log nobody was told to open.
+            set +e
+            (
             set -e
             apk add --no-cache git curl
             go mod download
@@ -68,6 +74,68 @@ spec:
             GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION:-v1.8.0}"
             go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
             govulncheck ./...
+            ) > /workspace/.govulncheck.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.govulncheck.log
+            printf '%s\n' "$rc" > /workspace/.govulncheck.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.4
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            [ -f /workspace/.govulncheck.rc ] && rc=$(cat /workspace/.govulncheck.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo "==> govulncheck passed; nothing to report"
+              exit 0
+            fi
+            {
+              printf '### :x: govulncheck: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'govulncheck exited %s. The findings, then the tail of its log:\n\n' "$rc"
+              printf '```\n'
+              grep -E '^Vulnerability|^  (More info|Found in|Fixed in)|GO-[0-9]{4}-[0-9]+' \
+                /workspace/.govulncheck.log | head -n 20 || true
+              tail -n 30 /workspace/.govulncheck.log
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool govulncheck -check govulncheck -outcome failure \
+              -cluster "${CLUSTER_ID:?}" -summary "govulncheck exited $rc" \
+              -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
   podTemplate:
     tolerations:
     - key: sku
