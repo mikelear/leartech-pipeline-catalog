@@ -88,7 +88,9 @@ spec:
                 #
                 # chartstd still refuses to pass an empty render — a check over
                 # nothing is not a check — so the task must not hand it one.
-                if [ "$(grep -c '^kind:' "/workspace/renders/$name.yaml" 2>/dev/null || echo 0)" -eq 0 ]; then
+                kinds=$(grep -c '^kind:' "/workspace/renders/$name.yaml" 2>/dev/null || true)
+                [ -n "$kinds" ] || kinds=0
+                if [ "$kinds" -eq 0 ]; then
                   echo "NOTE: $dir renders no objects with its own defaults (every component"
                   echo "      off). The render rules cannot run on it; the source rules can,"
                   echo "      and they are where the tenant rule lives."
