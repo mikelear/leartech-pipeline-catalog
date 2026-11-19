@@ -62,6 +62,8 @@ spec:
                   optional: true
           script: |
             #!/bin/bash
+            set +e
+            (
             set -e
             apt-get update -qq && apt-get install -y -qq --no-install-recommends \
               git make ca-certificates >/dev/null
@@ -87,6 +89,71 @@ spec:
             # stub auth env vars. Runs alongside the build so the spec
             # lands in the same pod before openapi-generation reads it.
             [ -f Makefile ] && grep -q "^openapi:" Makefile && make openapi || true
+            ) > /workspace/.dotnet-build.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.dotnet-build.log
+            printf '%s\n' "$rc" > /workspace/.dotnet-build.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            [ -f /workspace/.dotnet-build.rc ] && rc=$(cat /workspace/.dotnet-build.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo "==> build passed; nothing to report"
+              exit 0
+            fi
+            gate="build"
+            grep -q "==> dotnet restore" /workspace/.dotnet-build.log && \
+              ! grep -q "==> dotnet build" /workspace/.dotnet-build.log && gate="restore"
+            {
+              printf '### :x: Build: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'Failed at `dotnet %s` (exit %s).\n\n' "$gate" "$rc"
+              printf '```\n'
+              grep -E "(error|warning) [A-Z]{2,4}[0-9]{3,}|error:|NU[0-9]+" \
+                /workspace/.dotnet-build.log | head -n 25 || true
+              printf '%s\n' '---'
+              tail -n 25 /workspace/.dotnet-build.log
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool build -check build -outcome failure -cluster "${CLUSTER_ID:?}" \
+              -summary "dotnet $gate exited $rc" -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
         - image: gcr.io/kaniko-project/executor:v1.24.0-debug
           name: build-container-build
           resources:
@@ -113,6 +180,7 @@ spec:
                   optional: true
           script: |
             #!/busybox/sh
+            [ -f /workspace/.dotnet-build.rc ] && exit 0
             source .jx/variables.sh
             cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
             # Layer cache shared with release builds — PR snapshots warm the
@@ -136,6 +204,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             set -e
+            [ -f /workspace/.dotnet-build.rc ] && exit 0
             source .jx/variables.sh
             jx preview create
   podTemplate:
