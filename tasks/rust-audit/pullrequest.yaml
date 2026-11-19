@@ -47,6 +47,8 @@ spec:
               memory: 1Gi
           script: |
             #!/bin/bash
+            set +e
+            (
             set -e
             apt-get update -qq && apt-get install -y -qq --no-install-recommends \
               git pkg-config libssl-dev libpq-dev build-essential curl ca-certificates >/dev/null
@@ -79,6 +81,85 @@ spec:
             cargo audit
 
             echo "==> audit complete"
+            ) > /workspace/.rust-audit.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.rust-audit.log
+            printf '%s\n' "$rc" > /workspace/.rust-audit.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            [ -f /workspace/.rust-audit.rc ] && rc=$(cat /workspace/.rust-audit.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo "==> audit passed; nothing to report"
+              exit 0
+            fi
+            gate="unknown"
+            grep -q "==> cargo deny check" /workspace/.rust-audit.log && gate="cargo deny"
+            grep -q "==> cargo audit" /workspace/.rust-audit.log && gate="cargo audit"
+            grep -q "==> installing cargo-deny" /workspace/.rust-audit.log && \
+              ! grep -q "==> cargo audit" /workspace/.rust-audit.log && gate="cargo install"
+            {
+              printf '### :x: Audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'Failed at `%s` (exit %s).\n\n' "$gate" "$rc"
+              printf '```\n'
+              case "$gate" in
+                "cargo deny")
+                  grep -E "^(error|warning)(\[|:)|^(advisories|licenses|bans|sources) (FAILED|ok)" \
+                    /workspace/.rust-audit.log | head -n 25 || true
+                  ;;
+                "cargo audit")
+                  grep -E "^Crate:|^ID:|^#|error:|vulnerabilit" /workspace/.rust-audit.log \
+                    | head -n 25 || true
+                  ;;
+                *)
+                  grep -E "^error" /workspace/.rust-audit.log | head -n 15 || true
+                  ;;
+              esac
+              printf '%s\n' '---'
+              tail -n 20 /workspace/.rust-audit.log
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool rust-audit -check rust-audit -outcome failure \
+              -cluster "${CLUSTER_ID:?}" -summary "$gate exited $rc" \
+              -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
   podTemplate:
     tolerations:
     - key: sku
