@@ -17,7 +17,6 @@ tasks/ai-review/pullrequest.yaml
 tasks/go-platform-promote/release.yaml
 tasks/helm/platform-promote.yaml
 tasks/helm/platform-release.yaml
-tasks/helm/pullrequest.yaml
 tasks/openapi-generation/release.yaml
 tasks/preview/clear-stuck-release.yaml
 tasks/release/cosign-sign.yaml
