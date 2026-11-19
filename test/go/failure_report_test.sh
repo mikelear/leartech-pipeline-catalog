@@ -33,6 +33,12 @@ import glob
 import re
 import sys
 
+try:
+    import yaml
+except ImportError:
+    print('SKIP: no pyyaml in this image')
+    sys.exit(0)
+
 baseline_path = sys.argv[1]
 try:
     baseline = {
@@ -112,6 +118,29 @@ if new_:
 
 if fixed:
     sys.exit(1)
+
+# A report step is only reachable if the step it reports on does not stop the
+# task. Tekton abandons the remaining steps as soon as one exits non-zero, so a
+# task with a report step and no `onError: continue` posts nothing — and reads,
+# from the file, exactly like one that works.
+bad_onerror = []
+for f in sorted(glob.glob('tasks/**/*.yaml', recursive=True)):
+    doc = yaml.safe_load(open(f))
+    for t in (doc.get('spec') or {}).get('pipelineSpec', {}).get('tasks') or []:
+        steps = (t.get('taskSpec') or {}).get('steps') or []
+        if 'report' not in [s.get('name') for s in steps]:
+            continue
+        if not any(s.get('onError') == 'continue' for s in steps):
+            bad_onerror.append(f)
+
+if bad_onerror:
+    print('FAIL these tasks have a report step that can never run:')
+    for f in sorted(set(bad_onerror)):
+        print(f'       {f}')
+    print()
+    print('Add `onError: continue` to the step the report follows.')
+    sys.exit(1)
+print('  ok   every report step is reachable')
 
 print('  ok   no new task fails without reporting it')
 PY
