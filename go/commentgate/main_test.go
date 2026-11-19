@@ -23,6 +23,16 @@ func TestProseWithoutTests_ExceedsTheRatchet(t *testing.T) {
 	if r.comments != 2 || r.testLines != 0 {
 		t.Fatalf("expected 2 prose / 0 test, got %d/%d", r.comments, r.testLines)
 	}
+	// Every counted line must be nameable. A count nobody can act on is what a
+	// reader on leartech-ship-proven-umbrella#137 was given: "+1 prose comment
+	// line(s)" with no file, no line, and no reproduction from the diff.
+	// proven-by: TestProseWithoutTests_ExceedsTheRatchet
+	if len(r.prose) != 2 {
+		t.Fatalf("expected the 2 counted lines to be recorded, got %d", len(r.prose))
+	}
+	if r.prose[0].file != "internal/x.go" || r.prose[0].text == "" {
+		t.Errorf("a counted line was not named: %+v", r.prose[0])
+	}
 }
 
 // The control: the same prose alongside test lines is within budget.
