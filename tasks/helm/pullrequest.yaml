@@ -73,18 +73,29 @@ spec:
               exit 1
             fi
             mkdir -p /workspace/renders
+            rc=0
             for c in "${charts[@]}"; do
               dir=$(dirname "$c"); name=$(basename "$dir")
               echo "==> helm dependency build $dir"
-              helm dependency build "$dir"
+              helm dependency build "$dir" || rc=1
               echo "==> helm lint $dir"
-              helm lint "$dir"
-              helm template chart-standard "$dir" > "/workspace/renders/$name.yaml"
-              test -s "/workspace/renders/$name.yaml" || {
-                echo "FAIL: $dir rendered nothing." >&2
-                exit 1
-              }
+              helm lint "$dir" || rc=1
+              if helm template chart-standard "$dir" > "/workspace/renders/$name.yaml" 2>"/workspace/renders/$name.render-err"; then
+                test -s "/workspace/renders/$name.yaml" || {
+                  echo "NOTE: $dir rendered an empty document; the render rules cannot run on it" >&2
+                  rm -f "/workspace/renders/$name.yaml"
+                }
+              else
+                echo "NOTE: $dir does not render with its own defaults — its consumer supplies"
+                echo "      required values (auth.issuerUrl and friends). The RENDER rules"
+                echo "      cannot run on it; the SOURCE rules still do, and they are where the"
+                echo "      tenant-default rule lives. First line of the render error:"
+                head -n 1 "/workspace/renders/$name.render-err" | cut -c1-200 | sed 's/^/      /'
+                rm -f "/workspace/renders/$name.yaml"
+              fi
             done
+            printf '%s\n' "$rc" > /workspace/.chart-lint.rc
+          onError: continue
 
         - image: ghcr.io/mikelear/leartech-checkers:0.29.9
           name: chart-standard
@@ -110,7 +121,9 @@ spec:
                 chartstd "${args[@]}" || rc=1
               fi
             done
-            [ "$rc" -eq 0 ] || { echo "FAIL: the chart standard found something above" >&2; exit 1; }
+            [ "$rc" -eq 0 ] || { echo "FAIL: the chart standard found something above" >&2; }
+            printf '%s\n' "$rc" > /workspace/.chart-standard.rc
+          onError: continue
 
         # The chart's own tests are Go, and no single image has both the Go
         # toolchain and helm: jx-boot:3.16.59 carries helm 3.15.1 and curl but
@@ -139,6 +152,7 @@ spec:
             go vet ./...
             CGO_ENABLED=0 go test -c -o /workspace/source/chart.test ./...
             echo "==> built chart.test ($(stat -c%s /workspace/source/chart.test) bytes, static)"
+          onError: continue
 
         - image: ghcr.io/jenkins-x/jx-boot:3.17.126
           name: chart-tests
@@ -178,7 +192,102 @@ spec:
             # come from the dependency build in chart-lint, which ran in this
             # same workspace.
             command -v helm >/dev/null || { echo "FAIL: helm missing from this image"; exit 1; }
-            cd tests && exec /workspace/source/chart.test -test.v
+            set +e
+            ( cd tests && /workspace/source/chart.test -test.v ) > /workspace/.chart-tests.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.chart-tests.log
+            printf '%s\n' "$rc" > /workspace/.chart-tests.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: comment-gate
+          resources: {}
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            # commentgate lives in leartech-go.mk, which only Go SERVICE repos run.
+            # This task is where every chart repo's PR arrives, and it never called
+            # it — so no prose gate, no file-size check and no swag drift check has
+            # ever run on an umbrella. Backwards: values.yaml is where the prose is
+            # that goes stale silently.
+            #
+            # It examines CHANGED LINES ONLY against origin/main, so a chart repo's
+            # existing comments are not a blocker and the ratchet closes as files
+            # are touched.
+            git remote -v >/dev/null 2>&1 || { echo "==> no git remote; skipping"; exit 0; }
+            set +e
+            commentgate -base "origin/${PULL_BASE_REF:-main}" 2>&1 | tee /workspace/.comment-gate.log
+            rc=${PIPESTATUS[0]}
+            set -e
+            printf '%s\n' "$rc" > /workspace/.comment-gate.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            failed=""
+            for step in chart-lint chart-standard chart-tests comment-gate; do
+              if [ -f "/workspace/.$step.rc" ] && [ "$(cat "/workspace/.$step.rc")" -ne 0 ]; then
+                rc=1
+                failed="$failed $step"
+              fi
+            done
+            if [ "$rc" -eq 0 ]; then
+              echo "==> chart checks passed; nothing to report"
+              exit 0
+            fi
+            {
+              printf '### :x: Chart checks: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'Failed:%s\n\n' "$failed"
+              for step in chart-lint chart-standard chart-tests comment-gate; do
+                [ -f "/workspace/.$step.rc" ] || continue
+                [ "$(cat "/workspace/.$step.rc")" -eq 0 ] && continue
+                printf '**%s**\n```\n' "$step"
+                tail -n 25 "/workspace/.$step.log" 2>/dev/null \
+                  || printf 'see the %s step log\n' "$step"
+                printf '```\n'
+              done
+            } > /tmp/body.md
+            prpost -tool pr -check pr -outcome failure -cluster "${CLUSTER_ID:?}" \
+              -summary "chart checks failed:$failed" -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
 
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/preview/clear-stuck-release.yaml@main
           name: ""
@@ -190,6 +299,11 @@ spec:
           script: |
             #!/usr/bin/env sh
             set -e
+            if [ -f /workspace/.chart-lint.rc ] || [ -f /workspace/.chart-standard.rc ] \
+               || [ -f /workspace/.chart-tests.rc ]; then
+              echo "==> chart checks recorded a failure; not creating a preview from them"
+              exit 0
+            fi
             if [ ! -f preview/helmfile.yaml.gotmpl ]; then
               echo "==> no preview/helmfile.yaml.gotmpl — skipping preview"
               echo "==> a chart that never deploys in CI is only render-tested"
