@@ -65,7 +65,9 @@ spec:
             limits:
               memory: 1Gi
           script: |
-            #!/busybox/sh
+            #!/bin/busybox/sh
+            set +e
+            (
             set -eu
 
             if [ ! -d "$KYVERNO_POLICY_PATH" ]; then
@@ -126,6 +128,67 @@ spec:
                       "these usually need live cluster context")
             print("\nno policy violations")
             PYEOF
+            ) > /workspace/.kyverno-audit.log 2>&1
+            rc=$?
+            set -e
+            tail -n 120 /workspace/.kyverno-audit.log
+            printf '%s\n' "$rc" > /workspace/.kyverno-audit.rc
+            [ "$rc" -eq 0 ] || exit "$rc"
+          onError: continue
+        - image: ghcr.io/mikelear/leartech-checkers:0.29.9
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            [ -f /workspace/.kyverno-audit.rc ] && rc=$(cat /workspace/.kyverno-audit.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo "==> no policy violations; nothing to report"
+              exit 0
+            fi
+            {
+              printf '### :x: Kyverno audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf 'The policies this cluster runs reject the manifests in this PR.\n'
+              printf 'These would be found at apply time otherwise — after merge.\n\n'
+              printf '```\n'
+              sed -n '/policy violation(s)/,$p' /workspace/.kyverno-audit.log | head -n 45 || true
+              printf '```\n'
+            } > /tmp/body.md
+            prpost -tool kyverno-audit -check kyverno-audit -outcome failure \
+              -cluster "${CLUSTER_ID:?}" -summary "policy violations in this PR" \
+              -body-file /tmp/body.md \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
   podTemplate:
     tolerations:
     - key: sku

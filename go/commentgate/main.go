@@ -59,7 +59,12 @@ var (
 	commentRe = regexp.MustCompile(`^\s*(//|#|--|\{\{/\*|\*(\s|$|/))`)
 
 	// Instructs a tool. Cannot be a false claim about behaviour.
-	functionalRe = regexp.MustCompile(`(?i)go:build|\+build|nolint|Code generated|^#!|renovate:|SPDX|yamllint|checkov:|gosec:|eslint-|prettier-|swagger:|@Success|@Failure|@Param|@Router|@Summary|@Description|@Tags|@Accept|@Produce|@Security|\+goose|proven-by:`)
+	// `^\s*#!` rather than `^#!`: a Tekton step's script is a YAML block scalar, so
+	// every shebang in a task file reaches this check with leading whitespace and
+	// the anchored form never matched one. Measured on a task PR: two shebangs
+	// counted as two prose lines, which is the whole prose budget when a change is
+	// otherwise a step and its report.
+	functionalRe = regexp.MustCompile(`(?im)^\s*#!|go:build|\+build|nolint|Code generated|renovate:|SPDX|yamllint|checkov:|gosec:|eslint-|prettier-|swagger:|@Success|@Failure|@Param|@Router|@Summary|@Description|@Tags|@Accept|@Produce|@Security|\+goose|proven-by:`)
 
 	// Asserts behaviour. These are the words that made prose authoritative.
 	claimRe = regexp.MustCompile(`(?i)\b(must|never|always|ensures?|guarantees?|cannot|can't|prevents?|is safe|no longer|impossible)\b`)

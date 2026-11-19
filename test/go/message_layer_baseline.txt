@@ -25,7 +25,7 @@
 0 4 tasks/helm/platform-release.yaml
 0 19 tasks/helm/pullrequest.yaml
 0 2 tasks/helm/release.yaml
-0 3 tasks/kyverno-audit/pullrequest.yaml
+0 6 tasks/kyverno-audit/pullrequest.yaml
 0 4 tasks/ng-lint/pullrequest.yaml
 4 9 tasks/ng-test/pullrequest.yaml
 0 5 tasks/npm-audit/pullrequest.yaml
