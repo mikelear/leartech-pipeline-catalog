@@ -14,8 +14,6 @@
 # does comment. It is not in this list for that reason, and that is worth knowing
 # before treating the list as a complete inventory of what reports.
 tasks/ai-review/pullrequest.yaml
-tasks/dockerfile-lint/pullrequest.yaml
-tasks/dotnet-audit/pullrequest.yaml
 tasks/go-platform-promote/release.yaml
 tasks/helm/platform-promote.yaml
 tasks/helm/platform-release.yaml
