@@ -97,7 +97,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.chart-lint.rc
           onError: continue
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.36.4
+        - image: ghcr.io/mikelear/leartech-checkers:0.36.6
           name: chart-standard
           resources: {}
           script: |
@@ -201,7 +201,7 @@ spec:
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.36.4
+        - image: ghcr.io/mikelear/leartech-checkers:0.36.6
           name: comment-gate
           resources: {}
           script: |
@@ -225,7 +225,7 @@ spec:
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.36.4
+        - image: ghcr.io/mikelear/leartech-checkers:0.36.6
           name: report
           resources: {}
           env:
