@@ -1,0 +1,4 @@
+leartech-console-api:
+  suppliers:
+    gsmProject: ""
+    gitopsRepo: mikelear/leartech-ai-gateway-umbrella

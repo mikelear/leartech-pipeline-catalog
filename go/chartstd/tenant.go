@@ -45,8 +45,22 @@ import (
 
 var gsaEmail = regexp.MustCompile(`[A-Za-z0-9._%-]+@[A-Za-z0-9-]+\.iam\.gserviceaccount\.com`)
 
-// projectKey: the key names that ask "which project is this customer's".
-var projectKey = regexp.MustCompile(`(?i)^(gsmProject|gcpProject|gcpProjectId|projectId|project_id)$`)
+// writeTargetKey: the key names that answer "which of OUR systems does this deployment
+// write into". Two families; the second was found in the wild after the first.
+//
+//	a project   gsmProject, gcpProject, projectId …   where secrets are written
+//	a repo      gitopsRepo, gitopsTargetRepo …        where PRs are opened
+//
+// leartech-ship-proven-umbrella ships both:
+//
+//	suppliers.gsmProject: product-first
+//	suppliers.gitopsRepo: mikelear/leartech-ai-gateway-umbrella
+//
+// so a customer's console would write provider keys into OUR GCP project and open
+// pull requests against OUR values repo. Repo refs are estate furniture in most
+// keys -- a chart source, a clone URL -- which is why the first version excluded
+// them. A repo named as a WRITE TARGET is not furniture.
+var writeTargetKey = regexp.MustCompile(`(?i)^(gsmProject|gcpProject|gcpProjectId|projectId|project_id|gitopsRepo|gitopsTargetRepo|targetGitopsRepo)$`)
 
 // notATenant: a value that is a reference, empty, templated, or explicitly a
 // placeholder. None of these name anybody.
@@ -101,9 +115,9 @@ func tenantFindings(chartDir string) []Finding {
 						path2, m)})
 					continue
 				}
-				if projectKey.MatchString(k) {
+				if writeTargetKey.MatchString(k) {
 					out = append(out, Finding{"S10", path, fmt.Sprintf(
-						"%s = %q answers \"which GCP project\" for one tenant. Every customer "+
+						"%s = %q names one of OUR systems as where this tenant writes. Every "+
 							"has a different project, so a released default is wrong for all "+
 							"but the one it was written for — and wrong SILENTLY: the chart "+
 							"installs, and the value reaches a backend that does not exist.",

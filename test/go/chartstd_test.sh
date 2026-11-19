@@ -112,6 +112,7 @@ tenant_case() {
 
 tenant_case tenant-gsa fail
 tenant_case tenant-project fail
+tenant_case tenant-gitops-repo fail
 tenant_case tenant-clean clean
 
 echo "=== ok ==="
