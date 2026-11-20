@@ -123,6 +123,27 @@ for f in sorted(glob.glob('tasks/**/*.yaml', recursive=True)):
 
 print(f'  {posted} prpost invocation(s) checked in {len(sites_by_file)} file(s)')
 
+# The population this check can read. A task that posts from INSIDE an image contains no
+# prpost call, so it is invisible here and the count above excludes it silently. Named,
+# out loud, for the same reason #311 named the failure-report equivalents: a guard that
+# reports green over a population it quietly shrinks is the defect it exists to prevent.
+DELEGATED = []
+with open('test/go/delegated_posters.txt') as fh:
+    for line in fh:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        path, _, who = line.partition('|')
+        DELEGATED.append((path.strip(), who.strip()))
+
+if DELEGATED:
+    print(f'  {len(DELEGATED)} posting path(s) are OUTSIDE this check -- the comment is built in')
+    print('  their image, so its payload (including the leartech-report half) is unverified here:')
+    for path, who in DELEGATED:
+        print(f'       {path}  ({who})')
+    print('       Removing an entry here does not fix a payload; it moves the finding back')
+    print('       into the silent category. See catalog#345.')
+
 # P1's own anchor: the call sites are known, so a drop in the count is a change in this
 # matcher, not in the catalog. Without it, a regex regression reports "0 checked, ok".
 #

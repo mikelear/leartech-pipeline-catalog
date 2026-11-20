@@ -53,13 +53,15 @@ except FileNotFoundError:
 # honest report says "unverified" rather than listing them as silent failures --
 # the same distinction triggersync draws with a NOTE. Named with the file that
 # does the posting, because "we could not tell" is only useful if it says what.
-DELEGATES = {
-    'tasks/qa-gate/pullrequest.yaml': 'leartech-gate image posts the gate comment',
-    'tasks/ai-review/pullrequest.yaml': 'the ai-review worker image posts the review',
-    'tasks/security-scan/pullrequest.yaml': '/app/static-scan.sh in security-tools',
-    'tasks/security-scan/image-scan.yaml': '/app/image-scan.sh in security-tools',
-    'tasks/security-scan/dynamic/pullrequest.yaml': 'the dynamic-scan image',
-}
+# Read from test/go/delegated_posters.txt, which dual_payload_test.sh reads too. Two
+# copies of this list is the defect both guards exist to catch, one level up.
+DELEGATES = {}
+for _line in open('test/go/delegated_posters.txt'):
+    _line = _line.strip()
+    if not _line or _line.startswith('#'):
+        continue
+    _path, _, _who = _line.partition('|')
+    DELEGATES[_path.strip()] = _who.strip()
 
 
 # A task "can fail" if a step script exits non-zero. A task "reports" if it calls
@@ -99,6 +101,18 @@ for f in sorted(glob.glob('tasks/**/*.yaml', recursive=True)):
 
 print(f'  {len(explicit_silent)} of {total} task(s) exit explicitly and post nothing '
       f'(the ratchet below)')
+# The list can only SHRINK by a decision. Without an anchor, deleting a line moves a
+# finding back into the silent category and the count simply reads 4 instead of 5 --
+# the silent-shrink this whole check exists to catch, one level up.
+EXPECTED_DELEGATES = 5
+if len(DELEGATES) < EXPECTED_DELEGATES:
+    print(f'FAIL only {len(DELEGATES)} delegated poster(s) listed, expected {EXPECTED_DELEGATES}:')
+    print('     test/go/delegated_posters.txt')
+    print('     A removed entry does not fix a payload; it makes the task look silent.')
+    print('     If a poster genuinely moved INTO the catalog, delete its line here and add')
+    print('     the prpost rules it now needs -- in the same PR.')
+    sys.exit(1)
+
 if DELEGATES:
     print(f'  {len(DELEGATES)} task(s) post from INSIDE their image, so no catalog rule can '
           f'see it — unverified, not silent:')
