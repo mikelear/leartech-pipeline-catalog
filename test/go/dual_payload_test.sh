@@ -53,6 +53,11 @@ REQUIRED = ['-tool', '-check', '-outcome', '-summary', '-cluster', '-body-file']
 # purpose. Each line is a claim that the tool name is chosen for the marker, not the
 # task name. Shrink-only: an entry that no longer differs is a stale line.
 ALIASES = {
+    # go/pullrequest posts under -tool build (the marker, kept stable so an existing
+    # comment is updated rather than orphaned) while -check names the CONTEXT a reader
+    # is looking at: "pr". triggersync found the mismatch -- nothing carried a marker
+    # for the "pr" context, so a red pr check had no explanation filed under its name.
+    'go': 'build',
     'dotnet-mutants': 'mutants',
     'dotnet-test': 'coverage',
     'go-test': 'coverage',

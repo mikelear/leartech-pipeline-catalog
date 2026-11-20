@@ -1,0 +1,121 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: triggersync
+spec:
+  pipelineSpec:
+    tasks:
+    - name: triggersync
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+        # One step, deliberately: the tool can fail, and a comment that explains it is
+        # only useful if it is posted by the step that knows the exit code. A separate
+        # report step needs the code on disk and `onError: continue`, which is three
+        # more ways to post nothing (the shape of every defect in this catalog).
+        #
+        # TWO SOURCES, and they are different kinds of thing. The TOOL comes from the
+        # pinned checkers image, so what runs is the artefact this repo built rather
+        # than whatever a CDN serves (see test/go/no_runtime_fetch_test.sh). The TASK
+        # FILES come from a checkout, because the question is "does the task my
+        # triggers.yaml names post a comment?" and only the catalog can answer it.
+        - image: ghcr.io/mikelear/leartech-checkers:0.37.14
+          name: triggersync
+          resources: {}
+          env:
+          # The ref the consumer's `uses:` names. `main` matches every pin in the
+          # estate today, so the answer describes the tasks that would actually run.
+          - name: CATALOG_REF
+            value: main
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            rc=0
+            command -v triggersync >/dev/null || {
+              echo FAIL: triggersync is not in the checkers image, so this check would silently pass >&2
+              exit 1
+            }
+            rm -rf /workspace/catalog
+            git clone --depth=1 --branch "$CATALOG_REF" -q \
+              https://github.com/mikelear/leartech-pipeline-catalog /workspace/catalog \
+              || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo ==> catalog clone failed; check network and CATALOG_REF
+              exit "$rc"
+            fi
+            triggersync -repo /workspace/source -catalog /workspace/catalog \
+              > /workspace/.triggersync.log 2>&1 || rc=$?
+            SUMMARY=$(tail -n 1 /workspace/.triggersync.log)
+            cat /workspace/.triggersync.log
+            if [ "$rc" -eq 0 ]; then
+              exit 0
+            fi
+            # The comment's text IS the tool's output, copied — not prose written here.
+            # A sentence composed in shell has no test (test/go/message_layer_test.sh),
+            # and a re-worded finding is a place for the tool and the comment to
+            # disagree about what broke.
+            head -n 60 /workspace/.triggersync.log > /tmp/body.md
+            grep -E '^FAIL' /workspace/.triggersync.log > /tmp/failures.txt || true
+            prpost -tool triggersync -check triggersync -outcome failure \
+              -cluster "${CLUSTER_ID:-unknown}" \
+              -summary "${SUMMARY}" \
+              -body-file /tmp/body.md \
+              -failures-file /tmp/failures.txt \
+              || echo "==> WARNING: comment not delivered; the check still fails"
+            exit "$rc"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 20m0s
+status: {}

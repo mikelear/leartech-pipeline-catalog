@@ -134,7 +134,7 @@ spec:
               tail -n 25 /workspace/.go-build.log
               printf '```\n'
             } > /tmp/body.md
-            prpost -tool build -check build -outcome failure -cluster "${CLUSTER_ID:?}" \
+            prpost -tool build -check pr -outcome failure -cluster "${CLUSTER_ID:?}" \
               -summary "$gate exited $rc" -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"
