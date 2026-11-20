@@ -677,3 +677,152 @@ func TestCheckerCompilesStandalone(t *testing.T) {
 			"broken in every repo that curls it:\n\n%s", out)
 	}
 }
+
+// ── rule 7: cluster neutrality ───────────────────────────────────────────────
+
+// A chart that bakes a Hydra issuer host must fail. This is the customer2 bug:
+// iss=<build cluster> minted while every service verifies its own domain.
+func TestChartWithLiteralIssuerHostFails(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/oauth.yaml": "apiVersion: hydra.ory.sh/v1alpha1\nkind: OAuth2Client\nspec:\n  audience:\n  - https://hydra-sp-infra.jx.leartech.com\n  secretName: svc-oauth\n",
+	}}.build(t)
+	if !has(run(t, root), "no-cluster-literal-in-chart") {
+		t.Fatal("a chart with a literal hydra issuer host was accepted")
+	}
+}
+
+// The derived form (no host literal) passes.
+func TestChartWithDerivedIssuerPasses(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/oauth.yaml": "apiVersion: hydra.ory.sh/v1alpha1\nkind: OAuth2Client\nspec:\n  audience:\n  - {{ include \"leartech.hydraIssuer\" . }}\n  secretName: svc-oauth\nstringData:\n  CLIENT_ID: svc\n",
+	}}.build(t)
+	if has(run(t, root), "no-cluster-literal-in-chart") {
+		t.Fatal("a chart deriving its issuer was wrongly flagged")
+	}
+}
+
+// A literal cluster domain anywhere in a chart is a finding.
+func TestChartWithClusterDomainLiteralFails(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/route.yaml": "kind: HTTPRoute\nspec:\n  hostnames:\n  - svc.customer2.shipproven.com\n",
+	}}.build(t)
+	if !has(run(t, root), "no-cluster-literal-in-chart") {
+		t.Fatal("a literal cluster domain was accepted")
+	}
+}
+
+// The auth service IS the issuer: with an issuer-env exemption it may hold its
+// own host.
+func TestIssuerServiceMayHoldItsOwnHost(t *testing.T) {
+	root := fixture{
+		authConfFile: "issuer-env: HYDRA_PUBLIC_URL\nreason: this service IS the issuer; the same URL is its Hydra public endpoint.\n",
+		chartEnv:     "        - name: LEARTECH_AUTH_AUDIENCE\n          value: \"y\"\n        - name: HYDRA_PUBLIC_URL\n          value: \"https://hydra-sp-infra.jx.leartech.com\"\n",
+	}.build(t)
+	if has(run(t, root), "no-cluster-literal-in-chart") {
+		t.Fatal("the issuer service was flagged for holding its own host")
+	}
+}
+
+// ── rule 7: foreign identity ─────────────────────────────────────────────────
+
+func TestChartWithGSAEmailFails(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/sa.yaml": "kind: ServiceAccount\nmetadata:\n  annotations:\n    iam.gke.io/gcp-service-account: console-api-gsm-writer@product-first.iam.gserviceaccount.com\n",
+	}}.build(t)
+	if !has(run(t, root), "no-foreign-identity") {
+		t.Fatal("a GSA email belonging to one cluster was accepted")
+	}
+}
+
+func TestChartWithBareClientUUIDFails(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/ui-cm.yaml": "kind: ConfigMap\ndata:\n  clientId: 5f0ae1ca-cb7f-49f9-b02c-1d8e444400a2\n",
+	}}.build(t)
+	if !has(run(t, root), "no-foreign-identity") {
+		t.Fatal("a bare client UUID was accepted")
+	}
+}
+
+func TestChartWithoutForeignIdentityPasses(t *testing.T) {
+	root := fixture{}.build(t)
+	if has(run(t, root), "no-foreign-identity") {
+		t.Fatal("a clean chart was flagged for foreign identity")
+	}
+}
+
+// ── rule 9: maester scope ────────────────────────────────────────────────────
+
+func TestMaesterUnscopedFails(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/maester.yaml": "# hydra-maester\nsingleNamespaceMode: false\n",
+	}}.build(t)
+	if !has(run(t, root), "maester-namespace-scoped") {
+		t.Fatal("an unscoped per-world maester was accepted")
+	}
+}
+
+func TestMaesterScopedPasses(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/maester.yaml": "# hydra-maester\nsingleNamespaceMode: true\n",
+	}}.build(t)
+	if has(run(t, root), "maester-namespace-scoped") {
+		t.Fatal("a correctly-scoped maester was flagged")
+	}
+}
+
+// ── rule 8: client identity ──────────────────────────────────────────────────
+
+// An OAuth2Client whose secret gets no CLIENT_ID seed -> maester mints a UUID.
+func TestClientWithoutClientIdSeedFails(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/oauth.yaml": "kind: OAuth2Client\nspec:\n  secretName: svc-oauth\n  audience:\n  - {{ include \"leartech.hydraIssuer\" . }}\n",
+	}}.build(t)
+	if !has(run(t, root), "client-id-reproducible") {
+		t.Fatal("an OAuth2Client with no CLIENT_ID seed was accepted")
+	}
+}
+
+// The pr-events shape: the secret carries CLIENT_ID from the declared name.
+func TestClientWithClientIdSeedPasses(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/oauth.yaml": "kind: OAuth2Client\nspec:\n  secretName: svc-oauth\n  audience:\n  - {{ include \"leartech.hydraIssuer\" . }}\n---\nkind: ExternalSecret\nspec:\n  target:\n    name: svc-oauth\n  data:\n  - secretKey: CLIENT_ID\n",
+	}}.build(t)
+	if has(run(t, root), "client-id-reproducible") {
+		t.Fatal("a client seeding CLIENT_ID was wrongly flagged")
+	}
+}
+
+// A non-shared client with an ExternalSecret -> drift risk, must fail.
+func TestNonSharedClientExternalSecretFails(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/oauth.yaml": "kind: OAuth2Client\nspec:\n  secretName: svc-oauth\n  audience:\n  - {{ include \"leartech.hydraIssuer\" . }}\n",
+		"charts/svc/templates/es.yaml":    "kind: ExternalSecret\nspec:\n  target:\n    name: svc-oauth\n  data:\n  - secretKey: CLIENT_ID\n",
+	}}.build(t)
+	rules := run(t, root)
+	if !has(rules, "secret-origin") {
+		t.Fatal("a non-shared client ExternalSecret was accepted")
+	}
+}
+
+// A Pattern-B shared client (maestro-internal-services) may have an ExternalSecret.
+func TestPatternBSharedClientExternalSecretPasses(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/oauth.yaml": "kind: OAuth2Client\nspec:\n  secretName: maestro-internal-services\n  audience:\n  - {{ include \"leartech.hydraIssuer\" . }}\n",
+		"charts/svc/templates/es.yaml":    "kind: ExternalSecret\nspec:\n  target:\n    name: maestro-internal-services\n  data:\n  - secretKey: CLIENT_ID\n",
+	}}.build(t)
+	if has(run(t, root), "secret-origin") {
+		t.Fatal("a Pattern-B shared client ExternalSecret was flagged")
+	}
+}
+
+// A commented example host is documentation, not a rendered value — it cannot
+// mint a token, so it must NOT be a finding. The live-value case still fails
+// (TestChartWithLiteralIssuerHostFails above).
+func TestCommentedIssuerHostDoesNotTrip(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/oauth.yaml": "kind: OAuth2Client\nspec:\n  # e.g. hydra-sp-infra.jx.leartech.com — filled by GitOps\n  audience:\n  - {{ include \"leartech.hydraIssuer\" . }}\n  secretName: svc-oauth\nstringData:\n  CLIENT_ID: svc\n",
+	}}.build(t)
+	if has(run(t, root), "no-cluster-literal-in-chart") {
+		t.Fatal("a commented example host was wrongly flagged as a literal")
+	}
+}

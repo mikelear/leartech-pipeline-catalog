@@ -245,6 +245,25 @@ THE LEARTECH AUTH STANDARD — for any service deployed into these clusters.
 Prove it in tests, not prose: pair every accept with a refuse that differs by
 one variable. A lone refusal proves nothing — everything refuses when the rig
 is misconfigured.
+
+  7. The issuer is DERIVED, never literal. A chart may not contain a Hydra host
+     or a cluster domain; it comes from global.clusterDomain via the
+     leartech.hydraIssuer helper. A baked issuer mints iss=<this cluster> and
+     every other cluster rejects the token — green on every other check. The
+     auth service itself is exempt (it IS the issuer) via .authconformance.
+     No GSA email, cluster-specific GSM prefix, or bare client UUID either.
+
+  8. A client's id is its DECLARED NAME, reproducible from git. Seed CLIENT_ID
+     from the name (as the pr-events subchart does); never let maester mint a
+     UUID. An ExternalSecret for a client secret is for Pattern-B shared
+     clients ONLY (two deployments share the identical client); every other
+     client secret is maester-generated.
+
+  9. One maester per world, namespace-scoped. A per-world umbrella with
+     hydra-maester.singleNamespaceMode: false watches every namespace and
+     reconciles every world's clients into its own Hydra — the ship-proven
+     mcp-internal-services client was written by the wrong world's maester and
+     the MCP token mint began to 401 after a re-seed.
 `
 
 func main() {
@@ -592,6 +611,55 @@ func walkGoFset(root string, fset *token.FileSet, fn func(string, *ast.File)) {
 
 var envNameRE = regexp.MustCompile(`(?m)^\s*-\s*name:\s*([A-Z][A-Z0-9_]*)\s*$`)
 
+// ── cluster-neutrality + client-identity patterns ───────────────────────────
+//
+// These back rules 7-9 of the standard. Each exists because the new-cluster
+// (customer2) build was GREEN on every rule above while the whole auth path was
+// broken: Hydra minted iss=<build cluster> and every service verified its own
+// domain, so every token was rejected with all Applications Healthy.
+
+// issuerHostRE matches a concrete Hydra issuer host baked into a chart. The
+// issuer must be DERIVED (leartech.hydraIssuer, from global.clusterDomain),
+// never a literal — a literal is the customer2 "iss mismatch, all Healthy" bug.
+var issuerHostRE = regexp.MustCompile(`https?://hydra-[a-z0-9-]+\.[a-z0-9.-]+`)
+
+// clusterDomainRE matches a known cluster domain appearing as a literal in a
+// chart. A chart may not know which cluster it runs on; the domain comes from
+// config, not the chart. Extend knownClusterDomains, not this regex.
+var clusterDomainRE = regexp.MustCompile(`\b(?:jx\.leartech\.com|[a-z0-9-]+\.shipproven\.com)\b`)
+
+// foreignIdentityRE set — facts that belong to ONE cluster. Mirror of the gitops
+// repo's gate group E, applied to the SOURCE chart so the gitops repo never has
+// to compensate (LAYERS.md: push the fix up).
+var (
+	gsaEmailRE  = regexp.MustCompile(`[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com`)
+	bareUUIDRE  = regexp.MustCompile(`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+	gsmPrefixRE = regexp.MustCompile(`tf-jx-[a-z]+-[a-z]+-`)
+)
+
+// oauth2ClientKind / secretNameRE / clientIdSeedRE / targetName detect the
+// OAuth2Client ⇄ Secret ⇄ CLIENT_ID triangle the client-identity rules reason
+// over, without a YAML parser (stdlib-only, like the rest of this file).
+var (
+	oauth2ClientKindRE = regexp.MustCompile(`(?m)^\s*kind:\s*OAuth2Client\s*$`)
+	externalSecretKind = regexp.MustCompile(`(?m)^\s*kind:\s*ExternalSecret\s*$`)
+	secretNameRE       = regexp.MustCompile(`(?m)^\s*secretName:\s*([A-Za-z0-9._-]+)\s*$`)
+	targetNameRE       = regexp.MustCompile(`(?m)^\s*name:\s*([A-Za-z0-9._-]+)\s*$`)
+	clientIdSeedRE     = regexp.MustCompile(`CLIENT_ID`)
+	maesterRefRE       = regexp.MustCompile(`hydra-maester`)
+	singleNsFalseRE    = regexp.MustCompile(`singleNamespaceMode:\s*false`)
+)
+
+// patternBShared lists the ONLY client secrets allowed an ExternalSecret: a
+// credential two deployments must share, so neither maester can be "the one
+// that wrote it". Everything else is maester-generated. Keep this list short
+// and argued — an entry here is a stated exception to the secret-origin rule.
+var patternBShared = map[string]bool{
+	"maestro-internal-services":      true,
+	"maestro-internal-client-secret": true,
+	"envoy-gateway-oidc":             true,
+}
+
 // credentialEnv are the env vars whose secret MUST exist for the service to
 // function. A missing one is a deploy-time fault, not a runtime one.
 var credentialEnv = []string{
@@ -667,6 +735,7 @@ func containsStr(xs []string, v string) bool {
 func checkChart(root string, ex exemption, hasOutboundLeg bool, r *report) {
 	declared := map[string]string{} // env name -> file it appeared in
 	var valuesFiles []string
+	cev := newClientEvidence()
 
 	for _, dir := range chartDirs(root) {
 		_ = filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
@@ -688,6 +757,10 @@ func checkChart(root string, ex exemption, hasOutboundLeg bool, r *report) {
 				}
 			}
 			checkOptionalCredentials(src, path, r)
+			checkClusterLiterals(src, path, ex, r)
+			checkForeignIdentity(src, path, r)
+			checkMaesterScope(src, path, r)
+			collectClientEvidence(src, path, cev)
 			if strings.HasSuffix(d.Name(), "values.yaml") {
 				valuesFiles = append(valuesFiles, path)
 			}
@@ -761,6 +834,174 @@ func checkChart(root string, ex exemption, hasOutboundLeg bool, r *report) {
 					"declares auth.%s, but no Go source in this repo spends an outbound token. A pure resource server holds no client identity; these were only ever load-bearing as input to the dual-role ServiceClient's validateConfig.", key)
 			}
 		}
+	}
+
+	// Client-identity rules run after the walk: they need every OAuth2Client,
+	// every ExternalSecret and every CLIENT_ID seed seen together.
+	cev.check(r)
+}
+
+// ── cluster-neutrality rules (7) ─────────────────────────────────────────────
+
+// checkClusterLiterals fails a chart that bakes a Hydra issuer host or a cluster
+// domain. The issuer must be derived from global.clusterDomain via the
+// leartech.hydraIssuer helper. The auth service itself IS the issuer, so a repo
+// that declares an issuer-env exemption (.authconformance) is allowed its own
+// host — nobody else is.
+//
+// proven-by: TestChartWithLiteralIssuerHostFails
+// proven-by: TestChartWithDerivedIssuerPasses
+// proven-by: TestIssuerServiceMayHoldItsOwnHost
+func checkClusterLiterals(src, path string, ex exemption, r *report) {
+	if ex.issuerEnv != "" {
+		return // the issuer service: it IS the host, declared with a reason
+	}
+	// A commented example host is documentation, not a rendered value — scan only live lines, so a
+	// `# e.g. hydra-x.jx.leartech.com` in documentation is not a finding while a
+	// rendered value is.
+	for _, line := range strings.Split(src, "\n") {
+		if t := strings.TrimSpace(line); t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		code := line
+		if i := strings.Index(line, " #"); i >= 0 {
+			code = line[:i] // strip a trailing inline comment
+		}
+		if m := issuerHostRE.FindString(code); m != "" {
+			r.fail("no-cluster-literal-in-chart", path,
+				"contains a literal issuer host %q. Derive it from global.clusterDomain via the "+
+					"leartech.hydraIssuer helper. A baked host mints iss=<this cluster> while every other "+
+					"cluster's services verify their own domain — which rejected every token on customer2 "+
+					"with all Applications Healthy.", m)
+			return
+		}
+		if m := clusterDomainRE.FindString(code); m != "" {
+			r.fail("no-cluster-literal-in-chart", path,
+				"contains a literal cluster domain %q. A chart may not know which cluster it runs on; the "+
+					"domain comes from config (cluster.ingress.domain / config/domains.yaml), never a chart.", m)
+			return
+		}
+	}
+}
+
+// checkForeignIdentity fails a chart that embeds an identity belonging to one
+// cluster: a GSA email, the build-cluster GSM prefix, or a bare client UUID in
+// an OAuth2Client context. Mirror of the gitops repo's gate group E.
+//
+// proven-by: TestChartWithGSAEmailFails
+// proven-by: TestChartWithBareClientUUIDFails
+// proven-by: TestChartWithoutForeignIdentityPasses
+func checkForeignIdentity(src, path string, r *report) {
+	if m := gsaEmailRE.FindString(src); m != "" {
+		r.fail("no-foreign-identity", path,
+			"embeds a GSA email %q belonging to one cluster. It comes from Terraform output via the "+
+				"Workload-Identity annotation, not a chart.", m)
+	}
+	if m := gsmPrefixRE.FindString(src); m != "" {
+		r.fail("no-foreign-identity", path,
+			"embeds a cluster-specific GSM prefix %q. The prefix is config (gsm.keyPrefix), not a chart "+
+				"literal — 21 of these from the build cluster failed every ExternalSecret on customer2.", m)
+	}
+	// A bare UUID is only a finding where a client id should be a NAME.
+	if oauth2ClientKindRE.MatchString(src) || strings.Contains(src, "clientId") {
+		if m := bareUUIDRE.FindString(src); m != "" {
+			r.fail("no-foreign-identity", path,
+				"names a bare client UUID %q. A client id must be the declared NAME (reproducible from "+
+					"git), not a maester-minted UUID that exists on no other cluster.", m)
+		}
+	}
+}
+
+// checkMaesterScope fails a per-world umbrella that runs an UNSCOPED hydra-maester.
+// Installed once per world, an unscoped maester watches every namespace and
+// reconciles every world's OAuth2Client into its own Hydra — which is why the
+// ship-proven mcp-internal-services client ended up written by the wrong world's
+// maester and the MCP token mint began to 401 after a Hydra re-seed.
+//
+// proven-by: TestMaesterUnscopedFails
+// proven-by: TestMaesterScopedPasses
+func checkMaesterScope(src, path string, r *report) {
+	if maesterRefRE.MatchString(src) && singleNsFalseRE.MatchString(src) {
+		r.fail("maester-namespace-scoped", path,
+			"sets hydra-maester.singleNamespaceMode: false. This umbrella installs once per world, so an "+
+				"unscoped maester reconciles every world's OAuth2Client into its own Hydra — each issuer "+
+				"then carries the other world's clients. Set singleNamespaceMode: true (or pass --namespace).")
+	}
+}
+
+// ── client-identity rules (8): reproducible id + correct secret origin ───────
+
+// clientEvidence accumulates the OAuth2Client ⇄ Secret ⇄ CLIENT_ID triangle
+// across the whole chart walk, because the three facts live in three files.
+type clientEvidence struct {
+	clients      map[string]string // secretName -> file declaring the OAuth2Client
+	externalSecs map[string]string // target secret name -> file declaring the ExternalSecret
+	idSeeds      map[string]bool   // secret name a CLIENT_ID is written into
+}
+
+func newClientEvidence() *clientEvidence {
+	return &clientEvidence{
+		clients:      map[string]string{},
+		externalSecs: map[string]string{},
+		idSeeds:      map[string]bool{},
+	}
+}
+
+// collectClientEvidence records, per file: an OAuth2Client's secretName, an
+// ExternalSecret's target name, and whether a CLIENT_ID is seeded into a named
+// secret. It is deliberately line-oriented and stdlib-only.
+func collectClientEvidence(src, path string, cev *clientEvidence) {
+	switch {
+	case oauth2ClientKindRE.MatchString(src):
+		if m := secretNameRE.FindStringSubmatch(src); m != nil {
+			cev.clients[m[1]] = path
+			if clientIdSeedRE.MatchString(src) {
+				cev.idSeeds[m[1]] = true
+			}
+		}
+	case externalSecretKind.MatchString(src):
+		// target secret name: the `name:` under target:. secretNameRE won't
+		// match (that is `secretName:`), so use the first bare `name:` after a
+		// target: line. Cheap heuristic: if the file seeds CLIENT_ID, mark it.
+		if m := targetNameRE.FindStringSubmatch(src); m != nil {
+			cev.externalSecs[m[1]] = path
+			if clientIdSeedRE.MatchString(src) {
+				cev.idSeeds[m[1]] = true
+			}
+		}
+	}
+}
+
+// check emits the two client-identity findings once all evidence is in.
+//
+// proven-by: TestClientWithoutClientIdSeedFails
+// proven-by: TestClientWithClientIdSeedPasses
+// proven-by: TestNonSharedClientExternalSecretFails
+// proven-by: TestPatternBSharedClientExternalSecretPasses
+func (cev *clientEvidence) check(r *report) {
+	for secret, file := range cev.clients {
+		if !cev.idSeeds[secret] {
+			r.fail("client-id-reproducible", file,
+				"declares an OAuth2Client with secretName %q but nothing seeds CLIENT_ID from the "+
+					"declared name. hydra-maester then mints a UUID: not rebuildable, orphans accumulate, "+
+					"and Ready=True hides a client whose token mint 401s after a Hydra re-seed. Seed "+
+					"CLIENT_ID from the name, as the pr-events subchart does.", secret)
+		}
+	}
+	for secret, file := range cev.externalSecs {
+		// Only client-credential secrets are in scope: those an OAuth2Client
+		// also names. A non-client ExternalSecret (a DSN, an API key) is fine.
+		if _, isClient := cev.clients[secret]; !isClient {
+			continue
+		}
+		if patternBShared[secret] {
+			continue
+		}
+		r.fail("secret-origin", file,
+			"has an ExternalSecret for client secret %q, but it is not a Pattern-B shared client. A "+
+				"hand-kept client secret drifts from Hydra's DB and 401s; let hydra-maester generate it. "+
+				"ExternalSecrets are for clients two deployments must share (maestro-internal, "+
+				"envoy-gateway-oidc) — add it to patternBShared with a reason if so.", secret)
 	}
 }
 
