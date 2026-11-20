@@ -782,13 +782,26 @@ func TestClientWithoutClientIdSeedFails(t *testing.T) {
 	}
 }
 
-// The pr-events shape: the secret carries CLIENT_ID from the declared name.
+// The correct seed: a plain Secret carrying BOTH CLIENT_ID and CLIENT_SECRET.
 func TestClientWithClientIdSeedPasses(t *testing.T) {
 	root := fixture{files: map[string]string{
-		"charts/svc/templates/oauth.yaml": "kind: OAuth2Client\nspec:\n  secretName: svc-oauth\n  audience:\n  - {{ include \"leartech.hydraIssuer\" . }}\n---\nkind: ExternalSecret\nspec:\n  target:\n    name: svc-oauth\n  data:\n  - secretKey: CLIENT_ID\n",
+		"charts/svc/templates/oauth.yaml": "kind: OAuth2Client\nspec:\n  secretName: svc-oauth\n  audience:\n  - {{ include \"leartech.hydraIssuer\" . }}\n",
+		"charts/svc/templates/seed.yaml":  "kind: Secret\nmetadata:\n  name: svc-oauth\ndata:\n  CLIENT_ID: eA==\n  CLIENT_SECRET: eA==\n",
 	}}.build(t)
 	if has(run(t, root), "client-id-reproducible") {
-		t.Fatal("a client seeding CLIENT_ID was wrongly flagged")
+		t.Fatal("a client seeding both CLIENT_ID and CLIENT_SECRET was wrongly flagged")
+	}
+}
+
+// L1-18: a seed carrying CLIENT_ID but NOT CLIENT_SECRET must FAIL — it blocks a
+// cold cluster (maester's parseSecret rejects it before registration).
+func TestClientIdOnlySeedFailsColdCluster(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/oauth.yaml": "kind: OAuth2Client\nspec:\n  secretName: svc-oauth\n  audience:\n  - {{ include \"leartech.hydraIssuer\" . }}\n",
+		"charts/svc/templates/seed.yaml":  "kind: Secret\nmetadata:\n  name: svc-oauth\ndata:\n  CLIENT_ID: eA==\n",
+	}}.build(t)
+	if !has(run(t, root), "client-id-reproducible") {
+		t.Fatal("a CLIENT_ID-only seed (no CLIENT_SECRET) was accepted — it breaks a cold cluster")
 	}
 }
 
@@ -808,7 +821,7 @@ func TestNonSharedClientExternalSecretFails(t *testing.T) {
 func TestPatternBSharedClientExternalSecretPasses(t *testing.T) {
 	root := fixture{files: map[string]string{
 		"charts/svc/templates/oauth.yaml": "kind: OAuth2Client\nspec:\n  secretName: maestro-internal-services\n  audience:\n  - {{ include \"leartech.hydraIssuer\" . }}\n",
-		"charts/svc/templates/es.yaml":    "kind: ExternalSecret\nspec:\n  target:\n    name: maestro-internal-services\n  data:\n  - secretKey: CLIENT_ID\n",
+		"charts/svc/templates/es.yaml":    "kind: ExternalSecret\nspec:\n  target:\n    name: maestro-internal-services\n  data:\n  - secretKey: CLIENT_ID\n  - secretKey: CLIENT_SECRET\n",
 	}}.build(t)
 	if has(run(t, root), "secret-origin") {
 		t.Fatal("a Pattern-B shared client ExternalSecret was flagged")
@@ -837,4 +850,3 @@ func TestSharedTenantUUIDDoesNotTrip(t *testing.T) {
 		t.Fatal("the shared all-zero default-tenant constant was wrongly flagged")
 	}
 }
-

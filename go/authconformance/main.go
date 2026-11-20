@@ -653,6 +653,9 @@ var (
 	secretNameRE       = regexp.MustCompile(`(?m)^\s*secretName:\s*([A-Za-z0-9._-]+)\s*$`)
 	targetNameRE       = regexp.MustCompile(`(?m)^\s*name:\s*([A-Za-z0-9._-]+)\s*$`)
 	clientIdSeedRE     = regexp.MustCompile(`CLIENT_ID`)
+	clientSecretSeedRE = regexp.MustCompile(`CLIENT_SECRET`)
+	secretKindRE       = regexp.MustCompile(`(?m)^\s*kind:\s*Secret\s*$`)
+	seedSecretNameRE   = regexp.MustCompile(`(?m)^\s*name:\s*([A-Za-z0-9._{}.\- ]+?)\s*$`)
 	maesterRefRE       = regexp.MustCompile(`hydra-maester`)
 	singleNsFalseRE    = regexp.MustCompile(`singleNamespaceMode:\s*false`)
 )
@@ -947,6 +950,7 @@ type clientEvidence struct {
 	clients      map[string]string // secretName -> file declaring the OAuth2Client
 	externalSecs map[string]string // target secret name -> file declaring the ExternalSecret
 	idSeeds      map[string]bool   // secret name a CLIENT_ID is written into
+	secretSeeds  map[string]bool   // secret name a CLIENT_SECRET is written into
 }
 
 func newClientEvidence() *clientEvidence {
@@ -954,6 +958,7 @@ func newClientEvidence() *clientEvidence {
 		clients:      map[string]string{},
 		externalSecs: map[string]string{},
 		idSeeds:      map[string]bool{},
+		secretSeeds:  map[string]bool{},
 	}
 }
 
@@ -968,6 +973,18 @@ func collectClientEvidence(src, path string, cev *clientEvidence) {
 			if clientIdSeedRE.MatchString(src) {
 				cev.idSeeds[m[1]] = true
 			}
+			if clientSecretSeedRE.MatchString(src) {
+				cev.secretSeeds[m[1]] = true
+			}
+		}
+	case secretKindRE.MatchString(src) && clientIdSeedRE.MatchString(src):
+		// A plain Secret that seeds CLIENT_ID (the L1-13 seed templates). Record
+		// both which secret it seeds and whether it ALSO carries CLIENT_SECRET.
+		if m := seedSecretNameRE.FindStringSubmatch(src); m != nil {
+			cev.idSeeds[m[1]] = true
+			if clientSecretSeedRE.MatchString(src) {
+				cev.secretSeeds[m[1]] = true
+			}
 		}
 	case externalSecretKind.MatchString(src):
 		// target secret name: the `name:` under target:. secretNameRE won't
@@ -977,6 +994,9 @@ func collectClientEvidence(src, path string, cev *clientEvidence) {
 			cev.externalSecs[m[1]] = path
 			if clientIdSeedRE.MatchString(src) {
 				cev.idSeeds[m[1]] = true
+			}
+			if clientSecretSeedRE.MatchString(src) {
+				cev.secretSeeds[m[1]] = true
 			}
 		}
 	}
@@ -995,7 +1015,16 @@ func (cev *clientEvidence) check(r *report) {
 				"declares an OAuth2Client with secretName %q but nothing seeds CLIENT_ID from the "+
 					"declared name. hydra-maester then mints a UUID: not rebuildable, orphans accumulate, "+
 					"and Ready=True hides a client whose token mint 401s after a Hydra re-seed. Seed "+
-					"CLIENT_ID from the name, as the pr-events subchart does.", secret)
+					"CLIENT_ID and CLIENT_SECRET into the secret, as oauth-client-id-seeds does.", secret)
+			continue
+		}
+		if !cev.secretSeeds[secret] {
+			r.fail("client-id-reproducible", file,
+				"seeds CLIENT_ID for secretName %q but not CLIENT_SECRET. hydra-maester runs parseSecret "+
+					"before it registers, and a client_secret_post client whose secret has CLIENT_ID but no "+
+					"CLIENT_SECRET is StatusInvalidSecret and is NEVER registered — so this seed blocks a "+
+					"COLD cluster (no prior client) rather than seeding it. Seed BOTH keys (stable via "+
+					"lookup-preserve), as oauth-client-id-seeds does.", secret)
 		}
 	}
 	for secret, file := range cev.externalSecs {
