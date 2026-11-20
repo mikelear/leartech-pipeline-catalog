@@ -1,0 +1,150 @@
+// tasklint — the checks over this catalog's own task YAML, as one program.
+//
+// WHY THIS REPLACES FIVE PYTHON HEREDOCS. Each of those checks walked tasks/**/*.yaml for
+// a different fact, and each needed PyYAML. The `test` presubmit runs in golang:1.27.4,
+// which has neither python3 nor pyyaml, so every one of them printed
+// "SKIP: no pyyaml in this image" and exited 0 (measured on catalog#359's own run: four
+// SKIPs). A guard that cannot run where the pipeline runs is not a guard.
+//
+// One program, one `go test`, and the same binary can ship in the checkers image for a
+// task step. The subcommands are named after the question each answers:
+//
+//	syntax    does every step script parse?            (task_syntax_test.sh)
+//	message   does a task compose prose in shell?      (message_layer_test.sh)
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// step is one `steps:` entry of one task, with the file and name it came from. Only the
+// fields these checks read; a task YAML has far more and none of it changes the answer.
+type step struct {
+	File   string
+	Task   string
+	Name   string
+	Script string
+}
+
+func (s step) where() string {
+	if s.Name == "" {
+		return s.File
+	}
+	return s.File + " :: " + s.Name
+}
+
+// loadSteps reads every tasks/**/*.yaml under dir and returns each step. A file that does
+// not parse is returned as an error rather than skipped: a task whose YAML is broken is
+// exactly what these checks exist to catch, and skipping it would make every check pass
+// over a smaller population.
+func loadSteps(dir string) ([]step, []error) {
+	var out []step
+	var errs []error
+	matches, err := filepath.Glob(filepath.Join(dir, "tasks", "*", "*.yaml"))
+	if err != nil {
+		return nil, []error{err}
+	}
+	// One level deeper covers tasks/security-scan/dynamic/pullrequest.yaml and the like.
+	deeper, err := filepath.Glob(filepath.Join(dir, "tasks", "*", "*", "*.yaml"))
+	if err == nil {
+		matches = append(matches, deeper...)
+	}
+	sort.Strings(matches)
+
+	for _, path := range matches {
+		b, err := os.ReadFile(path) // #nosec G304 -- the operator names the tree
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", path, err))
+			continue
+		}
+		var doc struct {
+			Spec struct {
+				PipelineSpec struct {
+					Tasks []struct {
+						Name     string `yaml:"name"`
+						TaskSpec struct {
+							Steps []struct {
+								Name   string `yaml:"name"`
+								Script string `yaml:"script"`
+							} `yaml:"steps"`
+						} `yaml:"taskSpec"`
+					} `yaml:"tasks"`
+				} `yaml:"pipelineSpec"`
+			} `yaml:"spec"`
+		}
+		if err := yaml.Unmarshal(b, &doc); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", path, err))
+			continue
+		}
+		rel, rerr := filepath.Rel(dir, path)
+		if rerr != nil {
+			rel = path
+		}
+		// Normalise to forward slashes so a baseline written on one machine matches the
+		// same file on another.
+		rel = filepath.ToSlash(rel)
+		for _, t := range doc.Spec.PipelineSpec.Tasks {
+			for _, s := range t.TaskSpec.Steps {
+				if s.Script == "" {
+					continue
+				}
+				out = append(out, step{File: rel, Task: t.Name, Name: s.Name, Script: s.Script})
+			}
+		}
+	}
+	return out, errs
+}
+
+func main() {
+	dir := flag.String("dir", ".", "catalog checkout root (has tasks/)")
+	flag.Parse()
+
+	if flag.NArg() == 0 {
+		fmt.Fprintf(os.Stderr, "tasklint: a subcommand is required (syntax, message)\n")
+		os.Exit(2)
+	}
+
+	steps, loadErrs := loadSteps(*dir)
+	var code int
+	switch sub := flag.Arg(0); sub {
+	case "syntax":
+		code = runSyntax(steps, loadErrs)
+	case "message":
+		fs := flag.NewFlagSet("message", flag.ExitOnError)
+		baseline := fs.String("baseline", "test/go/message_layer_baseline.txt",
+			"the ratchet baseline: <markdown> <echo> <path> per line")
+		_ = fs.Parse(flag.Args()[1:])
+		code = runMessage(steps, loadErrs, *baseline)
+	default:
+		fmt.Fprintf(os.Stderr, "tasklint: unknown subcommand %q\n", sub)
+		code = 2
+	}
+	os.Exit(code)
+}
+
+// note prints one finding in the shape the shell tests print, so a caller reading CI logs
+// sees the same indentation it did before the checks moved into Go.
+func note(format string, args ...any) {
+	fmt.Printf("  FAIL %s\n", fmt.Sprintf(format, args...))
+}
+
+func reportLoadErrors(errs []error) {
+	for _, err := range errs {
+		note("%v", err)
+	}
+}
+
+// countSteps exists so a caller can print the population it judged. A check that reports
+// "ok" over zero files reads as coverage and is not.
+func countSteps(steps []step) int { return len(steps) }
+
+func hasPrefixWord(line, word string) bool {
+	return strings.HasPrefix(strings.TrimSpace(line), word)
+}
