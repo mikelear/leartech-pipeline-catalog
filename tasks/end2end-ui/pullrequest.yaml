@@ -95,7 +95,7 @@ spec:
         # The catalog's tools, from the pinned image: fetching prpost from
         # raw.githubusercontent made the poster a different artefact from the merged one
         # for up to five minutes (that CDN serves cache-control: max-age=300).
-        - image: ghcr.io/mikelear/leartech-checkers:0.39.6
+        - image: ghcr.io/mikelear/leartech-checkers:0.39.7
           name: provide-catalog-tools
           resources: {}
           script: |
