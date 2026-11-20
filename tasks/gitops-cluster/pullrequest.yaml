@@ -88,7 +88,7 @@ spec:
         #
         # The toolchain is pinned so a PR cannot change its own verdict by moving an upstream tag;
         # Renovate bumps these three lines, in a PR, visibly.
-        - image: alpine:3.20
+        - image: alpine:3.24
           name: pr-gate
           resources:
             requests:
