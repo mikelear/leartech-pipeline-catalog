@@ -52,7 +52,7 @@
 
 # ── Canonical toolchain versions ─────────────────────────────────────────
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-GOLANGCI_VERSION ?= 2.14.0
+GOLANGCI_VERSION ?= 2.15.0
 
 # ── Config paths ─────────────────────────────────────────────────────────
 GOLANGCI_BASE_URL ?= https://raw.githubusercontent.com/mikelear/leartech-pipeline-catalog/main/go/.golangci.base.yml
