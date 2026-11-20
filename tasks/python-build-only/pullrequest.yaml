@@ -133,7 +133,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.python-test.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.41.6
+        - image: ghcr.io/mikelear/leartech-checkers:0.41.7
           name: report
           resources: {}
           env:
