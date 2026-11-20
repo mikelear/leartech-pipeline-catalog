@@ -30,7 +30,7 @@ fi
 
 # Check the build step still records the code the guards read.
 if ! grep -q '> /workspace/.go-build.rc' "$TASK"; then
-  note "$TASK no longer records the go build exit code in .go-build.rc"
+  note "$TASK stopped recording the go build exit code in .go-build.rc"
 fi
 
 # No step may skip on the file merely existing.
