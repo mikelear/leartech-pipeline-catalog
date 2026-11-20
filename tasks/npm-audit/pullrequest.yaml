@@ -68,7 +68,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.npm-audit.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.39.7
+        - image: ghcr.io/mikelear/leartech-checkers:0.39.11
           name: report
           resources: {}
           env:
