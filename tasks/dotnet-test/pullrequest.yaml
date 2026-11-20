@@ -38,7 +38,7 @@ spec:
         # raw.githubusercontent inside the step that used them, which made what ran a
         # different artefact from what merged for up to five minutes (that CDN serves
         # cache-control: max-age=300) and needed a Go toolchain in every image.
-        - image: ghcr.io/mikelear/leartech-checkers:0.39.12
+        - image: ghcr.io/mikelear/leartech-checkers:0.39.13
           name: provide-catalog-tools
           resources: {}
           script: |
