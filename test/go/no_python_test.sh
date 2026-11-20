@@ -50,6 +50,12 @@ carries_python() {
     # inside the embedded authtoken program, whose whole subject is the python it
     # replaced — flagging that would be the "counts mentions" defect.
     /^[[:space:]]*(#|\/\/|\*)/ { next }
+    # PROVISIONING IS NOT CODE. `apk add … python3 py3-yaml` installs a dependency for a
+    # script that lives in another repo; the catalog wrote no python. Flagging it was
+    # over-reach of exactly the kind this file warns about, and it fired on a legitimate
+    # change that installs and uses the tool in ONE step — which is the correct Tekton
+    # shape, since a tool installed in one step is not in the next.
+    /^[[:space:]]*(apk add|apk -U add|apt-get install|apt install|yum install|dnf install|pacman -S|pip3? install|npm i(nstall)?)[[:space:]]/ { next }
     # `python3 -c ...` and a heredoc fed to python: code written inline in a step.
     /python3?[[:space:]]+-c/ { found = 1 }
     /python3?[[:space:]].*<</ { found = 1 }
