@@ -146,7 +146,13 @@ spec:
               memory: 2Gi
           script: |
             #!/busybox/sh
-            [ -f /workspace/.go-build.rc ] && exit 0
+            # The go build leaves its exit code in .go-build.rc: a non-zero one
+            # means report already posted why and there is no binary to package.
+            go_build_rc=$(cat /workspace/.go-build.rc 2>/dev/null || echo 0)
+            if [ "$go_build_rc" != "0" ]; then
+              echo ==> go build failed - not building an image
+              exit 0
+            fi
             source .jx/variables.sh
             cp /tekton/creds/.docker/config.json /kaniko/.docker/config.json
             # Layer cache — see release.yaml for rationale. Same cache repo
@@ -193,7 +199,13 @@ spec:
           script: |
             #!/usr/bin/env sh
             set -e
-            [ -f /workspace/.go-build.rc ] && exit 0
+            # Same predicate as the image build: promote only what the go build
+            # actually produced.
+            go_build_rc=$(cat /workspace/.go-build.rc 2>/dev/null || echo 0)
+            if [ "$go_build_rc" != "0" ]; then
+              echo ==> go build failed - not promoting a preview
+              exit 0
+            fi
             source .jx/variables.sh
             # DOCKER_REGISTRY_ORG is read from .jx/variables.sh directly.
             # jx-preview v0.7.3+ dropped the --docker-register-org flag.
