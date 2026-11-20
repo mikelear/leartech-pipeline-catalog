@@ -30,6 +30,7 @@ type step struct {
 	Task    string
 	Name    string
 	Script  string
+	Image   string
 	OnError string
 }
 
@@ -45,8 +46,6 @@ func (s step) where() string {
 // exactly what these checks exist to catch, and skipping it would make every check pass
 // over a smaller population.
 func loadSteps(dir string) ([]step, []error) {
-	var out []step
-	var errs []error
 	matches, err := filepath.Glob(filepath.Join(dir, "tasks", "*", "*.yaml"))
 	if err != nil {
 		return nil, []error{err}
@@ -58,10 +57,35 @@ func loadSteps(dir string) ([]step, []error) {
 	}
 	sort.Strings(matches)
 
+	rel := make([]string, 0, len(matches))
 	for _, path := range matches {
+		r, rerr := filepath.Rel(dir, path)
+		if rerr != nil {
+			r = path
+		}
+		// Normalise to forward slashes so a baseline written on one machine matches the
+		// same file on another.
+		rel = append(rel, filepath.ToSlash(r))
+	}
+	return loadStepsFromFiles(matches, dir)
+}
+
+// loadStepsFromFiles parses an explicit list of task files. paths are the absolute paths
+// read; names are what a finding prints (usually the same paths relative to the catalog
+// root). Splitting it out lets a check read ONE task file without inventing a tree.
+func loadStepsFromFiles(paths []string, baseDir ...string) ([]step, []error) {
+	var out []step
+	var errs []error
+	for _, path := range paths {
+		name := path
+		if len(baseDir) > 0 && baseDir[0] != "" {
+			if r, rerr := filepath.Rel(baseDir[0], path); rerr == nil {
+				name = filepath.ToSlash(r)
+			}
+		}
 		b, err := os.ReadFile(path) // #nosec G304 -- the operator names the tree
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", path, err))
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
 		var doc struct {
@@ -73,6 +97,7 @@ func loadSteps(dir string) ([]step, []error) {
 							Steps []struct {
 								Name    string `yaml:"name"`
 								Script  string `yaml:"script"`
+								Image   string `yaml:"image"`
 								OnError string `yaml:"onError"`
 							} `yaml:"steps"`
 						} `yaml:"taskSpec"`
@@ -81,23 +106,14 @@ func loadSteps(dir string) ([]step, []error) {
 			} `yaml:"spec"`
 		}
 		if err := yaml.Unmarshal(b, &doc); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", path, err))
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
-		rel, rerr := filepath.Rel(dir, path)
-		if rerr != nil {
-			rel = path
-		}
-		// Normalise to forward slashes so a baseline written on one machine matches the
-		// same file on another.
-		rel = filepath.ToSlash(rel)
 		for _, t := range doc.Spec.PipelineSpec.Tasks {
 			for _, s := range t.TaskSpec.Steps {
-				if s.Script == "" {
-					continue
-				}
 				out = append(out, step{
-					File: rel, Task: t.Name, Name: s.Name, Script: s.Script, OnError: s.OnError,
+					File: name, Task: t.Name, Name: s.Name,
+					Script: s.Script, Image: s.Image, OnError: s.OnError,
 				})
 			}
 		}
@@ -137,6 +153,14 @@ func main() {
 			"the fewest delegated posters a real catalog has; the list only shrinks by a decision")
 		_ = fs.Parse(flag.Args()[1:])
 		code = runFailures(*dir, resolve(*dir, *baseline), resolve(*dir, *delegates), *floor)
+	case "phases":
+		code = runPhases(*dir)
+	case "renders":
+		fs := flag.NewFlagSet("renders", flag.ExitOnError)
+		baseline := fs.String("baseline", "test/go/chartstd_runs_baseline.txt",
+			"the ratchet baseline: one task path per line")
+		_ = fs.Parse(flag.Args()[1:])
+		code = runRenders(*dir, resolve(*dir, *baseline))
 	case "message":
 		fs := flag.NewFlagSet("message", flag.ExitOnError)
 		baseline := fs.String("baseline", "test/go/message_layer_baseline.txt",

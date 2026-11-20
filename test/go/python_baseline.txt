@@ -8,14 +8,11 @@
 #
 # Every entry below is a measured defect, not a style preference.
 
-# ── test/go/*.sh: a python heredoc parsing YAML ────────────────────────────────────
 # Each needs pyyaml, and the `test` presubmit runs in golang:1.27.4 — no python3, no
 # pyyaml — so each prints "SKIP: no pyyaml in this image" and exits 0. Measured on
 # catalog#356's own pipeline run: four of them skipped. A guard that cannot run is not a
 # guard. Replacement: the Go tool the file already tests (chartstd, prpost, e2e) invoked
 # with a -check flag, or one small Go program covering all of them.
-test/go/phase_tools_test.sh|reads the end2end phase list out of task YAML; replace with `e2e explain`
-test/go/chartstd_runs_test.sh|reads which charts invoke chartstd; replace with a chartstd flag
 
 
 # ── end2end-runner/*.sh: the runner's own tests ───────────────────────────────────
