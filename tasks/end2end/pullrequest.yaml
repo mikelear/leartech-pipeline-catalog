@@ -1206,6 +1206,10 @@ spec:
             # GATE_DETECT_TIMEOUT (in seconds) per consumer if needed.
             GATE_DETECT_TIMEOUT="${GATE_DETECT_TIMEOUT:-180}"
             GATE_URL="http://preview-gate.${PREVIEW_NAMESPACE}.svc.cluster.local:8090/cgi-bin/gate"
+
+            # The gate is deployed as `preview-gate`; named here so the timeout
+            # branch can report the workload's own state rather than only the URL.
+            GATE_NAME="preview-gate"
             USE_GATE=false
             GATE_DETECT_DEADLINE=$(( $(date +%s) + GATE_DETECT_TIMEOUT ))
             echo "==> looking for preview-gate at $GATE_URL (up to ${GATE_DETECT_TIMEOUT}s)"
@@ -1234,8 +1238,11 @@ spec:
                 if [ "$(date +%s)" -ge "$DEADLINE" ]; then
                   echo "==> gate detail at timeout:"
                   curl -sS -m 5 "$GATE_URL" 2>/dev/null || true
+                  GATE_STATE=$(kubectl -n "$PREVIEW_NAMESPACE" get deploy "$GATE_NAME" \
+                    -o jsonpath='{.status.readyReplicas}/{.spec.replicas}' 2>/dev/null || true)
                   printf '%s\n' \
                     "preview-gate never reported ready within $((MAX_WAIT / 60)) min." \
+                      "At failure: deployment \`$GATE_NAME\` is \`${GATE_STATE:-absent}\` (ready/desired)." \
                     "Gate detail: $(curl -sS -m 5 "$GATE_URL" 2>/dev/null || echo 'unreachable')" \
                     > /tmp/e2end-why
                   post_report "preview gate timeout" /tmp/e2end-why failure
@@ -1341,8 +1348,13 @@ spec:
                 fi
                 if [ "$STREAK" -lt "$REQUIRED" ]; then
                   if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+                    LAST_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -m 5 "$PROBE_BASE$HEALTH_PATH" 2>/dev/null || echo unreachable)
+                    LAST_HOST=${PROBE_BASE#*://}
+                    LAST_IP=$(getent hosts "${LAST_HOST%%/*}" 2>/dev/null | awk '{print $1; exit}' || true)
+                    DEPLOY_STATE=$(kubectl -n "$PREVIEW_NAMESPACE" get deploy -o jsonpath='{range .items[*]}{.metadata.name}={.status.readyReplicas}/{.spec.replicas} {end}' 2>/dev/null || true)
                     printf '%s\n' \
                       "\`$PROBE_BASE$HEALTH_PATH\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." \
+                      "At failure: HTTP \`$LAST_STATUS\`; \`$LAST_HOST\` resolved to \`${LAST_IP:-nothing}\`; deployments in \`$PREVIEW_NAMESPACE\`: \`${DEPLOY_STATE:-unreadable}\`. An HTTP code means the preview exists and this path is wrong; \`unreachable\` or no IP means it never came up; a \`0/N\` deployment names the workload that is not starting." \
                       "Candidates tried: \`$HEALTH_CANDIDATES\`. If this service serves a different path, set \`END2END_HEALTH_PATH\` in its \`.lighthouse/jenkins-x/end2end.yaml\`." \
                       > /tmp/e2end-why
                     post_report "preview never reached stable ready state" /tmp/e2end-why failure
