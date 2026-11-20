@@ -76,7 +76,7 @@ spec:
         # clusters use has them but no python3, and adding python3 to the image the RENDERER runs is
         # a change to the thing under test. The versions are pinned so a PR cannot change its own
         # verdict by moving an upstream tag; Renovate bumps these two lines, in a PR, visibly.
-        - image: python:3.12-alpine
+        - image: python:3.15-alpine
           name: tools
           resources: {}
           script: |
@@ -110,7 +110,7 @@ spec:
         # static token expires in ~1h, and in CI the docker config is a GAR credential the pipeline
         # already has. Without it every OCI pull 401s and the failure reads as a broken repo rather
         # than a missing credential.
-        - image: python:3.12-alpine
+        - image: python:3.15-alpine
           name: pr-gate
           resources: {}
           env:
