@@ -12,6 +12,9 @@ spec:
         metadata: {}
         stepTemplate:
           name: ""
+          env:
+          - name: HOME
+            value: /tekton/home
           resources:
             # gosec/trivy source scan walks the whole tree; 512Mi under-reserves the
             # pod under node pressure. Bump for reliability (fleet-wide flake fix).

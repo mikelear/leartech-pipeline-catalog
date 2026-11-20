@@ -12,6 +12,9 @@ spec:
         metadata: {}
         stepTemplate:
           name: ""
+          env:
+          - name: HOME
+            value: /tekton/home
           resources:
             requests:
               cpu: 200m
