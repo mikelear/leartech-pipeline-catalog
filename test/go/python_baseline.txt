@@ -1,0 +1,35 @@
+# Python in the catalog — the debt, named, shrinking only.
+#
+# Format: <file>|<why it is still python, and what replaces it>
+#
+# This file may only SHRINK. A line whose file no longer carries python3 must be DELETED
+# in the same PR (the test fails on a stale line), and a file that is not listed must not
+# gain python3 at all. That is what makes this a ratchet rather than a note.
+#
+# Every entry below is a measured defect, not a style preference.
+
+# ── test/go/*.sh: a python heredoc parsing YAML ────────────────────────────────────
+# Each needs pyyaml, and the `test` presubmit runs in golang:1.27.4 — no python3, no
+# pyyaml — so each prints "SKIP: no pyyaml in this image" and exits 0. Measured on
+# catalog#356's own pipeline run: four of them skipped. A guard that cannot run is not a
+# guard. Replacement: the Go tool the file already tests (chartstd, prpost, e2e) invoked
+# with a -check flag, or one small Go program covering all of them.
+test/go/task_syntax_test.sh|parses every task step script with yaml.safe_load; replace with a Go YAML parse check
+test/go/phase_tools_test.sh|reads the end2end phase list out of task YAML; replace with `e2e explain`
+test/go/message_layer_test.sh|counts interpolated echoes per task; replace with a Go counter over the same YAML
+test/go/dual_payload_test.sh|reads prpost call sites out of task YAML; replace with a Go walker beside prpost
+test/go/chartstd_runs_test.sh|reads which charts invoke chartstd; replace with a chartstd flag
+
+# Not wired into the presubmit at all (no .lighthouse step runs it), so it neither passes
+# nor skips in CI — it simply does not run. Converting it and wiring it are one job.
+test/go/failure_report_test.sh|classifies tasks that fail silently; needs a Go walker AND a caller
+
+# ── end2end-runner/*.sh: the runner's own tests ───────────────────────────────────
+end2end-runner/inlined_test.sh|asserts the inlined phase list with a python heredoc
+end2end-runner/phases_test.sh|same shape as above
+
+# ── tasks/*: python written INTO a step script ────────────────────────────────────
+# The pattern docs/end2end-preview.md bans in consumer packs, and the one SP_STATE
+# records breaking rendering for three days in May: a python heredoc inside `script: |`.
+tasks/kyverno-audit/pullrequest.yaml|`python3 - <<'PYEOF'` classifies the policy report; its step image is DISTROLESS (/bin/sh does not exist), so the step cannot start. Replace with a Go classifier and say so loudly
+tasks/ai-review/pullrequest.yaml|`python3 -c` reads the aggregate score at line 223; replace with the ai-review worker's own exit code
