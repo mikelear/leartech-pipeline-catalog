@@ -361,14 +361,15 @@ func main() {
 		// second invocation is a second thing to forget to add to a task.
 		findings := tenantFindings(tenantCheck)
 		findings = append(findings, originFindings(tenantCheck)...)
+		findings = append(findings, credentialFindings(tenantCheck)...)
 		if len(findings) == 0 {
-			fmt.Printf("==> chartstd: %s carries no tenant-specific or cluster-specific default (S10-S12)\n", tenantCheck)
+			fmt.Printf("==> chartstd: %s carries no tenant-specific or cluster-specific default (S10-S13)\n", tenantCheck)
 			return
 		}
 		for _, f := range findings {
 			fmt.Println(f)
 		}
-		fmt.Fprintf(os.Stderr, "\nFAIL: %d inherited-default finding(s) (S10-S12).\n", len(findings))
+		fmt.Fprintf(os.Stderr, "\nFAIL: %d inherited-default finding(s) (S10-S13).\n", len(findings))
 		os.Exit(1)
 	}
 

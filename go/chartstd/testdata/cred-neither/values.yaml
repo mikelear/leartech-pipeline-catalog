@@ -1,0 +1,8 @@
+# S13: a bucket and no way to sign it. Every deployment of this chart crash-loops at boot
+# — the store refuses to serve a URL it cannot sign, and that refusal is correct. A chart
+# may not ship a configuration that can only fail.
+gcs:
+  bucket: artifacts-product-first
+  project: product-first
+  secretName: ""
+  signerEmail: ""

@@ -265,6 +265,61 @@ func TestTenantEntryPointRunsTheOriginRules(t *testing.T) {
 	}
 }
 
+// S13: a chart proves it may write to the bucket ONE way, and the deploy chooses which.
+//
+// artifact-api#46 added keyless signing next to the key-file path. A chart accepting both
+// at once is the shape that hides: the mounted key wins, so `signerEmail` is dead code in
+// every deployment that inherits the default, and removing the mount is when it first
+// runs. The other half — a bucket with no posture at all — is a chart every deployment of
+// which crash-loops.
+//
+// cred-both also trips S10 (a GSA email is tenant identity), so this asserts on the S13
+// finding specifically rather than on the count.
+//
+// proven-by: TestCredentialPostureIsSingular
+func TestCredentialPostureIsSingular(t *testing.T) {
+	cases := []struct {
+		dir      string
+		wantRule string // empty means "no S13 finding"
+	}{
+		{dir: "cred-both", wantRule: "S13"},
+		{dir: "cred-neither", wantRule: "S13"},
+		{dir: "cred-clean"},
+		// A chart whose values cannot be read is S10's finding; this rule stays quiet on it.
+		{dir: "clean"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.dir, func(t *testing.T) {
+			got := credentialFindings(filepath.Join("testdata", tc.dir))
+			if tc.wantRule == "" {
+				if len(got) != 0 {
+					t.Fatalf("want no S13 finding, got %v", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("want exactly one S13 finding, got %d: %v", len(got), got)
+			}
+			if got[0].Rule != tc.wantRule {
+				t.Errorf("rule = %q, want %q", got[0].Rule, tc.wantRule)
+			}
+		})
+	}
+}
+
+// The entry point the helm task calls must run S13 too, or the rule ships unwired — the
+// defect #351 fixed for triggersync, and #361 for eight test scripts.
+//
+// proven-by: TestTenantEntryPointRunsTheCredentialRule
+func TestTenantEntryPointRunsTheCredentialRule(t *testing.T) {
+	dir := filepath.Join("testdata", "cred-neither")
+	got := append(tenantFindings(dir), originFindings(dir)...)
+	got = append(got, credentialFindings(dir)...)
+	if len(got) != 1 || got[0].Rule != "S13" {
+		t.Fatalf("want exactly one S13 finding for cred-neither, got %v", got)
+	}
+}
+
 func contains(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {

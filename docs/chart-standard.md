@@ -161,6 +161,49 @@ S10 could not see — `leartech-ship-proven-umbrella` shipping
 `leartech-console-api.wsOriginPatterns: [https://leartech-sp-web-ship-proven.jx.leartech.com]`
 to every customer.
 
+### S13 — one signing posture, and the deploy chooses it
+
+```yaml
+# fires: BOTH, so the key silently wins and `signerEmail` is dead code
+gcs: { bucket: artifacts, secretName: gcs-key, signerEmail: writer@proj.iam.gserviceaccount.com }
+
+# fires: a bucket this chart can never sign, so every deployment crash-loops
+gcs: { bucket: artifacts, secretName: "", signerEmail: "" }
+```
+
+**Where it came from.** `artifact-api#46` made keyless V4 signing possible (`iam.signBlob`
+as a GSA) next to the historical key-file path. Both are legitimate; **a chart that
+accepts both at once is not.** The SDK signs off the mounted key whenever there is one, so
+`signerEmail` is inert in every deployment that inherits the default — and removing the
+mount is the moment the keyless path first runs, in production. That is precisely the
+failure the artifact-api work removed, and a released default is how it comes back.
+
+The other half fails the opposite way: a bucket with no signing posture cannot serve a URL,
+so the store's fail-fast turns every pod into a crash-loop. The fail-fast is correct; a
+chart shipping a configuration that can *only* crash is not.
+
+**The correct default for a released chart is empty** — bucket, posture, and project — and
+the deploy supplies them, exactly as S10 treats a project. Our own overlay supplies one
+posture:
+
+```yaml
+# jx-build-cluster-gsm/helmfiles/ship-proven/configs/umbrella.yaml.gotmpl
+leartech-artifact-api:
+  gcs: { bucket: artifacts-product-first, project: product-first }
+  #   signerEmail: …   OR   secretName: …      one, never both
+```
+
+**Scope, and it was narrowed by measurement.** The rule only judges a stanza that
+*declares* a signing mechanism (`secretName` or `signerEmail` present, even if empty). An
+estate sweep found S13 firing on three SOAR charts whose credential is spelled
+`credentialSecretRef` — a different thing on a different path — and the fix was to require
+the declaration rather than to teach the rule every spelling it might meet. After that:
+**0 of 74 estate charts**.
+
+**Runs in** the same entry point as S10–S12 (`chartstd -tenant <chartDir>` in
+`tasks/helm`), so the rule exists *before* step 4 of `artifact-api#46` flips the chart's
+default — the order that issue asked for.
+
 ## Tier 3 — the target
 
 Everything above is true of a chart sitting on a laptop. None of it answers "would **this** cluster

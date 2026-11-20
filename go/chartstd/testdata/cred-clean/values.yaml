@@ -1,0 +1,31 @@
+# The correct shapes, and the precision anchor: every stanza below stays quiet.
+#
+# An empty bucket is the right default for a released chart — the deploy supplies the
+# bucket and one posture, exactly as S10 treats an empty project. Either posture ALONE is
+# legitimate: a key file or a signBlob identity, never both, never neither.
+gcs:
+  bucket: ""
+  project: ""
+  secretName: ""
+  secretKey: key.json
+  signerEmail: ""
+
+keyfileChart:
+  gcs:
+    bucket: ""
+    secretName: ""
+    signerEmail: ""
+
+keylessChart:
+  gcs:
+    bucket: ""
+    secretName: ""
+    signerEmail: ""
+
+# A `secretName` under an unrelated stanza is not this rule's business — every chart in the
+# estate has several (a bot token, a git credential, a registry pull secret).
+github:
+  secretName: artifact-api-github
+  secretKey: token
+auth:
+  clientSecretName: ""

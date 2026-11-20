@@ -129,4 +129,11 @@ tenant_case origin-wildcard fail
 tenant_case origin-literal fail
 tenant_case origin-clean clean
 
+# S13: one signing posture, chosen by the deploy. cred-both is artifact-api's chart with an
+# overlay's values pasted in (the key silently wins, so signerEmail is dead code);
+# cred-neither is a bucket no deployment could ever sign, so every pod crash-loops.
+tenant_case cred-both fail
+tenant_case cred-neither fail
+tenant_case cred-clean clean
+
 echo "=== ok ==="
