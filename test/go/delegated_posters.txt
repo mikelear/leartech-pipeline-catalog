@@ -1,0 +1,22 @@
+# Posting paths that are NOT visible in tasks/**/*.yaml.
+#
+# One line per path: <file the catalog can see> | <who actually posts>
+#
+# Some checks post their comment from INSIDE an image, so no catalog rule can read the
+# payload: the YAML shows a call to /app/<script>.sh and nothing more. Two guards need
+# this fact and they have to agree about it --
+#
+#   test/go/failure_report_test.sh  "silent failure" should say unverified, not silent
+#   test/go/dual_payload_test.sh    a payload check that silently excludes a poster
+#                                   reports green over a smaller population
+#
+# Two definitions of one list is how this estate keeps paying for the same defect, so
+# this file is the single source: both guards read it, and a poster is added or removed
+# by editing one line here.
+#
+# An entry does not make the payload correct; it makes the blindness explicit.
+tasks/qa-gate/pullrequest.yaml|leartech-gate image posts the gate comment
+tasks/ai-review/pullrequest.yaml|the ai-review worker image posts the review
+tasks/security-scan/pullrequest.yaml|/app/static-scan.sh in security-tools
+tasks/security-scan/image-scan.yaml|/app/image-scan.sh in security-tools
+tasks/security-scan/dynamic/pullrequest.yaml|the dynamic-scan image (its external and internal phases)
