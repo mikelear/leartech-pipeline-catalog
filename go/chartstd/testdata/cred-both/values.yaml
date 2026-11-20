@@ -1,0 +1,8 @@
+# S13: two signing postures at once. The key wins silently, so `signerEmail` is inert and
+# the keyless path is dead code in every deployment that inherits this default. This is
+# artifact-api's chart with an overlay's values pasted in.
+gcs:
+  bucket: artifacts-product-first
+  project: product-first
+  secretName: test-artifacts-gcs-key
+  signerEmail: test-artifacts-writer@product-first.iam.gserviceaccount.com
