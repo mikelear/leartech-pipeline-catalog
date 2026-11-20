@@ -210,7 +210,7 @@ drift, this catalog is wrong.
 | Tool | Canonical version | Set in |
 |------|-------------------|--------|
 <!-- renovate: datasource=github-releases depName=golangci/golangci-lint -->
-| `golangci-lint` | `2.15.0` | `go/leartech-go.mk` → `GOLANGCI_VERSION`; mirrored in `tasks/go-lint/pullrequest.yaml` and `.lighthouse/jenkins-x/lint.yaml` step images `golangci/golangci-lint:v2.14.0`. Agreement is asserted by `test/go/version_pin_test.sh`. |
+| `golangci-lint` | `2.15.0` | `go/leartech-go.mk` → `GOLANGCI_VERSION`; mirrored in the `tasks/go-lint/pullrequest.yaml` and `.lighthouse/jenkins-x/lint.yaml` step images. Agreement is asserted by `test/go/version_pin_test.sh`. |
 
 To bump the linter version:
 
