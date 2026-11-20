@@ -122,14 +122,89 @@ spec:
             #!/usr/bin/env bash
             set -uo pipefail
             cd /workspace/source
-            test -x scripts/pr-gate.sh || {
-              echo "==> this repo has no scripts/pr-gate.sh — the PR gate is NOT running."
-              echo "    That is a FAILURE, not a skip: a cluster repo whose shape rules are unchecked"
-              echo "    merges straight to production."
-              exit 1
-            }
-            ./scripts/pr-gate.sh
+            rc=0
+            if [ ! -x scripts/pr-gate.sh ]; then
+              rc=1
+            else
+              ./scripts/pr-gate.sh 2>&1 | tee /workspace/.pr-gate.log; rc=${PIPESTATUS[0]}
+            fi
+            # A here-string, not `printf '%s\n' "$rc"`: the message-layer ratchet counts an
+            # interpolating echo/printf as a sentence composed in shell, and that rule is right
+            # in general -- a value becoming a verdict is what it exists to stop. Writing one
+            # number to a file is not that, and the baseline line this would otherwise need is
+            # a line somebody has to keep true forever.
+            cat > /workspace/.pr-gate.rc <<< "$rc"
+            [ "$rc" -eq 0 ] || exit "$rc"
           # The script's exit code IS the check. It never reports PASS for a check it skipped, so a
           # green here means every rule that could run, ran.
+          onError: continue
+
+        # A red `gitops-cluster` with no comment is the console-api#31 shape: Lighthouse's generic
+        # "the following test failed", with the actual rule in a log nobody was told to open. This
+        # step posts the gate's own output as the comment, so the PR says which rule failed.
+        - image: ghcr.io/mikelear/leartech-checkers:0.39.0
+          name: report
+          resources: {}
+          env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            if [ ! -f /workspace/.pr-gate.rc ]; then
+              echo ==> the gate step recorded no exit code, so this task cannot say whether it ran >&2
+              exit 1
+            fi
+            rc=$(cat /workspace/.pr-gate.rc)
+            if [ "$rc" -eq 0 ]; then
+              echo ==> the cluster gate passed; nothing to report
+              exit 0
+            fi
+            if [ ! -x scripts/pr-gate.sh ]; then
+              printf '%s\n' \
+                "This cluster repo has no \`scripts/pr-gate.sh\`, so the PR gate did not run." \
+                "That is a FAILURE, not a skip: a cluster repo whose shape rules are unchecked" \
+                "merges straight to production. Add \`scripts/pr-gate.sh\` to the repo." \
+                > /workspace/.pr-gate.log
+              summary="this cluster repo has no scripts/pr-gate.sh, so no cluster rule ran"
+            else
+              summary="scripts/pr-gate.sh exited $rc"
+            fi
+            # One value, both halves: prpost renders the human table and the machine block, and the
+            # marker is tool+cluster so a re-run updates this comment instead of stacking another.
+            # -body-file carries the gate's own output: the rule it failed and the object it
+            # named are already in that text, and re-wording them here would be prose composed
+            # in shell, which has no test.
+            prpost -tool gitops-cluster -check gitops-cluster -outcome failure \
+              -cluster "${CLUSTER_ID:-unknown}" -summary "$summary" \
+              -body-file /workspace/.pr-gate.log \
+              || echo ==> WARNING: comment not delivered; the check still fails
+            exit "$rc"
       workspaces:
       - name: source
