@@ -14,9 +14,7 @@
 # catalog#356's own pipeline run: four of them skipped. A guard that cannot run is not a
 # guard. Replacement: the Go tool the file already tests (chartstd, prpost, e2e) invoked
 # with a -check flag, or one small Go program covering all of them.
-test/go/task_syntax_test.sh|parses every task step script with yaml.safe_load; replace with a Go YAML parse check
 test/go/phase_tools_test.sh|reads the end2end phase list out of task YAML; replace with `e2e explain`
-test/go/message_layer_test.sh|counts interpolated echoes per task; replace with a Go counter over the same YAML
 test/go/dual_payload_test.sh|reads prpost call sites out of task YAML; replace with a Go walker beside prpost
 test/go/chartstd_runs_test.sh|reads which charts invoke chartstd; replace with a chartstd flag
 
