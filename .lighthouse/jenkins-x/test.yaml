@@ -76,12 +76,25 @@ spec:
                 fail=1
               fi
             done
-            # The shell tests in test/go assert things about the mk file and the
-            # task YAMLs, which no Go module covers, so they run here. Only the
-            # ones needing nothing beyond sh/make/git are listed: the rest want
-            # yq, docker or a cluster, and failing the gate for a missing tool is
-            # not a finding. coverage_scope_test needs `go`, which this step runs.
-            for t in test/go/base_clone_url_test.sh test/go/version_pin_test.sh test/go/coverage_scope_test.sh test/go/no_runtime_fetch_test.sh test/go/task_syntax_test.sh test/go/phase_tools_test.sh test/go/message_layer_test.sh test/go/dual_payload_test.sh test/go/build_rc_guard_test.sh test/go/preview_failure_diag_test.sh test/go/no_python_test.sh test/go/failure_report_test.sh; do
+            # The shell tests in test/go assert things about the mk file, the task YAMLs
+            # and the checkers themselves, which no Go module covers, so they run here.
+            #
+            # THE POPULATION IS THE GLOB, NOT A HAND-KEPT LIST. Eight of these were
+            # written, passed locally, and never ran in CI because nobody added them to
+            # the list: chartstd, chartstd_runs, valuesstd, identitystd, triggersync,
+            # version_stamp, preflight_tools, parity. Every one is the test for a tool this
+            # catalog ships — a test with no caller is a note, not a check, and that is the
+            # same "declared, never run" gap as the python guards that skipped on a missing
+            # import. A glob makes a new script run by default, so SKIPPING one is the
+            # visible act rather than the silent one.
+            #
+            # SKIP_LIST is the only exemption and names the reason. parity is pure yq +
+            # diff and the golang image has no yq; nothing else is exempt.
+            SKIP_LIST="test/go/parity_test.sh"   # needs mikefarah yq on PATH, which the golang image has not
+            for t in test/go/*_test.sh; do
+              case " $SKIP_LIST " in
+                *" $t "*) echo "=== skip $t (see SKIP_LIST) ==="; continue ;;
+              esac
               echo "=== sh $t ==="
               if ! sh "$t"; then
                 echo "FAIL: $t"
