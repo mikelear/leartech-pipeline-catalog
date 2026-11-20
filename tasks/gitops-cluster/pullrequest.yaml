@@ -76,67 +76,84 @@ spec:
         # clusters use has them but no python3, and adding python3 to the image the RENDERER runs is
         # a change to the thing under test. The versions are pinned so a PR cannot change its own
         # verdict by moving an upstream tag; Renovate bumps these two lines, in a PR, visibly.
-        - image: python:3.15-alpine
-          name: tools
-          resources: {}
+        # ONE STEP, AND WHY. Tekton steps are separate containers that share only /workspace, so a
+        # tool installed in one is NOT in the next — helm and helmfile installed in a "tools" step
+        # were simply absent where the gate ran. (The catalog's checkers Dockerfile records the same
+        # lesson: "a tool installed in one step is not in the next.") Installing and running in the
+        # same step is the only shape that cannot drift.
+        #
+        # `/bin/sh`, not bash: this is alpine, and bash is what the apk line below installs. A
+        # `#!/usr/bin/env bash` script fails BEFORE it can install bash:
+        #   env: can't execute 'bash': No such file or directory        (measured, first real PR)
+        #
+        # The toolchain is pinned so a PR cannot change its own verdict by moving an upstream tag;
+        # Renovate bumps these three lines, in a PR, visibly.
+        - image: alpine:3.20
+          name: pr-gate
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          env:
+          - name: GATE_REPO_URL
+            value: $(params.GATE_REPO_URL)
+          - name: GATE_REPO_REF
+            value: $(params.GATE_REPO_REF)
+          # The CMP's own trick, reused: helmfile pulls charts over OCI, a static token expires in
+          # ~1h, and in CI the docker config IS a GAR credential the pipeline already has. Without
+          # it every OCI pull 401s and the failure reads as a broken repo rather than a credential.
+          - name: HELM_REGISTRY_CONFIG
+            value: /tekton/home/.docker/config.json
           script: |
-            #!/usr/bin/env bash
-            set -euo pipefail
-            apk add --no-cache bash curl git tar py3-yaml >/dev/null
+            #!/bin/sh
+            set -eu
+
+            apk add --no-cache bash curl git tar python3 py3-yaml >/dev/null
 
             HELM_VERSION=v3.16.4
             HELMFILE_VERSION=v0.171.0
-            echo "==> helm $HELM_VERSION"
             curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
-              | tar -xz -C /tmp && mv /tmp/linux-amd64/helm /usr/local/bin/helm && chmod +x /usr/local/bin/helm
+              | tar -xz -C /tmp
+            mv /tmp/linux-amd64/helm /usr/local/bin/helm
             helm version --short
-            echo "==> helmfile $HELMFILE_VERSION"
             curl -fsSL -o /tmp/hf.tgz \
-              "https://github.com/helmfile/helmfile/releases/download/${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION#v}_linux_amd64.tar.gz" \
-              && tar -xzf /tmp/hf.tgz -C /tmp helmfile && mv /tmp/helmfile /usr/local/bin/helmfile && chmod +x /usr/local/bin/helmfile
+              "https://github.com/helmfile/helmfile/releases/download/${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION#v}_linux_amd64.tar.gz"
+            tar -xzf /tmp/hf.tgz -C /tmp helmfile
+            mv /tmp/helmfile /usr/local/bin/helmfile
             helmfile --version
 
-            echo "==> gate repo $(params.GATE_REPO_URL) @ $(params.GATE_REPO_REF)"
-            git clone --depth 1 --branch "$(params.GATE_REPO_REF)" \
-              "$(params.GATE_REPO_URL)" /workspace/sp-cluster
+            # The gate, from the repo that OWNS it. The gate takes the GitOps repo as --gitops-dir,
+            # so a repo can be checked by a gate it does not contain — and this clone is why the
+            # parameters are REQUIRED rather than defaulted.
+            git clone --depth 1 --branch "$GATE_REPO_REF" "$GATE_REPO_URL" /workspace/sp-cluster
             test -x /workspace/sp-cluster/03-verify/40-argo-gate.sh || {
               echo "FAIL: no 03-verify/40-argo-gate.sh in the gate repo — the cluster rules would not run" >&2
               exit 1
             }
 
-        # ── the gate ───────────────────────────────────────────────────────────
-        #
-        # HELM_REGISTRY_CONFIG is the CMP's own trick, reused: helmfile pulls charts over OCI, a
-        # static token expires in ~1h, and in CI the docker config is a GAR credential the pipeline
-        # already has. Without it every OCI pull 401s and the failure reads as a broken repo rather
-        # than a missing credential.
-        - image: python:3.15-alpine
-          name: pr-gate
-          resources: {}
-          env:
-          - name: GATE
-            value: /workspace/sp-cluster/03-verify/40-argo-gate.sh
-          - name: HELM_REGISTRY_CONFIG
-            value: /tekton/home/.docker/config.json
-          script: |
-            #!/usr/bin/env bash
-            set -uo pipefail
             cd /workspace/source
-            rc=0
             if [ ! -x scripts/pr-gate.sh ]; then
-              rc=1
-            else
-              ./scripts/pr-gate.sh 2>&1 | tee /workspace/.pr-gate.log; rc=${PIPESTATUS[0]}
+              echo "FAIL: this repo has no scripts/pr-gate.sh — the PR gate is NOT running."
+              cat >&2 <<'NOPGATE'
+            That is a FAILURE, not a skip: a cluster repo whose shape rules are unchecked merges
+            straight to production. Add scripts/pr-gate.sh, or point this task's GATE_REPO_URL at
+            the repo whose rules should apply.
+            NOPGATE
+              exit 1
             fi
-            # A here-string, not `printf '%s\n' "$rc"`: the message-layer ratchet counts an
-            # interpolating echo/printf as a sentence composed in shell, and that rule is right
-            # in general -- a value becoming a verdict is what it exists to stop. Writing one
-            # number to a file is not that, and the baseline line this would otherwise need is
-            # a line somebody has to keep true forever.
-            cat > /workspace/.pr-gate.rc <<< "$rc"
-            [ "$rc" -eq 0 ] || exit "$rc"
-          # The script's exit code IS the check. It never reports PASS for a check it skipped, so a
-          # green here means every rule that could run, ran.
+            export GATE=/workspace/sp-cluster/03-verify/40-argo-gate.sh
+            # The reason a failing gate run exists is in THIS log and nowhere else: Lighthouse posts a
+            # generic "the following test failed" table that names no cause. So the exit code is
+            # recorded rather than propagated, and the report step below turns the log into a comment.
+            # (Worked example: tasks/go-lint/pullrequest.yaml.)
+            set +e
+            bash ./scripts/pr-gate.sh > /workspace/.pr-gate.log 2>&1
+            rc=$?
+            set -e
+            tail -n 80 /workspace/.pr-gate.log
+            if [ "$rc" -ne 0 ]; then
+              printf '%s\n' "$rc" > /workspace/.pr-gate.rc
+            fi
           onError: continue
 
         # A red `gitops-cluster` with no comment is the console-api#31 shape: Lighthouse's generic
@@ -146,20 +163,12 @@ spec:
           name: report
           resources: {}
           env:
-          - name: CLUSTER_ID
-            valueFrom:
-              configMapKeyRef:
-                name: jx-cluster-config
-                key: CLUSTER_ID
-                optional: true
           - name: GIT_TOKEN
             valueFrom:
               secretKeyRef:
                 name: tekton-git
                 key: password
                 optional: true
-          - name: FORGE_API_URL
-            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
           - name: LEARTECH_AUTH_SERVER_URL
             value: https://hydra-sp-infra.jx.leartech.com
           - name: LEARTECH_AUTH_CLIENT_ID
@@ -177,34 +186,23 @@ spec:
           script: |
             #!/bin/bash
             set -uo pipefail
-            if [ ! -f /workspace/.pr-gate.rc ]; then
-              echo ==> the gate step recorded no exit code, so this task cannot say whether it ran >&2
-              exit 1
-            fi
+            [ -f /workspace/.pr-gate.rc ] || { echo "==> pr-gate passed; nothing to report"; exit 0; }
             rc=$(cat /workspace/.pr-gate.rc)
-            if [ "$rc" -eq 0 ]; then
-              echo ==> the cluster gate passed; nothing to report
-              exit 0
-            fi
-            if [ ! -x scripts/pr-gate.sh ]; then
-              printf '%s\n' \
-                "This cluster repo has no \`scripts/pr-gate.sh\`, so the PR gate did not run." \
-                "That is a FAILURE, not a skip: a cluster repo whose shape rules are unchecked" \
-                "merges straight to production. Add \`scripts/pr-gate.sh\` to the repo." \
-                > /workspace/.pr-gate.log
-              summary="this cluster repo has no scripts/pr-gate.sh, so no cluster rule ran"
-            else
-              summary="scripts/pr-gate.sh exited $rc"
-            fi
-            # One value, both halves: prpost renders the human table and the machine block, and the
-            # marker is tool+cluster so a re-run updates this comment instead of stacking another.
-            # -body-file carries the gate's own output: the rule it failed and the object it
-            # named are already in that text, and re-wording them here would be prose composed
-            # in shell, which has no test.
-            prpost -tool gitops-cluster -check gitops-cluster -outcome failure \
-              -cluster "${CLUSTER_ID:-unknown}" -summary "$summary" \
-              -body-file /workspace/.pr-gate.log \
-              || echo ==> WARNING: comment not delivered; the check still fails
+            # The FIRST failing assertion, because that is what decides whether a person can act:
+            # the gate names its group and its assertion. Written to a FILE, never composed into a
+            # sentence — the message-layer ratchet is right that a verdict in shell has no test.
+            grep -m1 -E '^  FAIL ' /workspace/.pr-gate.log > /workspace/.pr-gate.first || true
+            tail -n 40 /workspace/.pr-gate.log > /workspace/.pr-gate.tail
+            grep -E '^PASS [0-9]+' /workspace/.pr-gate.log > /workspace/.pr-gate.summary || true
+            # The body is assembled by cat from FILES, so prpost owns the markdown and this step
+            # owns no prose. `-failures-file` is prpost's preferred form for free text.
+            cat /workspace/.pr-gate.first /workspace/.pr-gate.tail > /workspace/.pr-gate.body
+            prpost -tool pr-gate -check pr-gate -outcome failure \
+                   -cluster "${CLUSTER_ID:?}" \
+                   -summary "pr-gate exited $rc" \
+                   -failures-file /workspace/.pr-gate.first \
+                   -body-file /workspace/.pr-gate.body \
+              || echo "==> WARNING: could not deliver the pr-gate comment; the check still fails"
             exit "$rc"
       workspaces:
       - name: source
