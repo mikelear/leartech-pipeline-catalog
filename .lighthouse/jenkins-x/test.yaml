@@ -81,7 +81,7 @@ spec:
             # ones needing nothing beyond sh/make/git are listed: the rest want
             # yq, docker or a cluster, and failing the gate for a missing tool is
             # not a finding. coverage_scope_test needs `go`, which this step runs.
-            for t in test/go/base_clone_url_test.sh test/go/version_pin_test.sh test/go/coverage_scope_test.sh test/go/no_runtime_fetch_test.sh test/go/task_syntax_test.sh test/go/phase_tools_test.sh test/go/message_layer_test.sh test/go/dual_payload_test.sh test/go/build_rc_guard_test.sh test/go/preview_failure_diag_test.sh test/go/no_python_test.sh; do
+            for t in test/go/base_clone_url_test.sh test/go/version_pin_test.sh test/go/coverage_scope_test.sh test/go/no_runtime_fetch_test.sh test/go/task_syntax_test.sh test/go/phase_tools_test.sh test/go/message_layer_test.sh test/go/dual_payload_test.sh test/go/build_rc_guard_test.sh test/go/preview_failure_diag_test.sh test/go/no_python_test.sh test/go/failure_report_test.sh; do
               echo "=== sh $t ==="
               if ! sh "$t"; then
                 echo "FAIL: $t"

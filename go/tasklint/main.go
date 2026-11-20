@@ -19,7 +19,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -27,10 +26,11 @@ import (
 // step is one `steps:` entry of one task, with the file and name it came from. Only the
 // fields these checks read; a task YAML has far more and none of it changes the answer.
 type step struct {
-	File   string
-	Task   string
-	Name   string
-	Script string
+	File    string
+	Task    string
+	Name    string
+	Script  string
+	OnError string
 }
 
 func (s step) where() string {
@@ -71,8 +71,9 @@ func loadSteps(dir string) ([]step, []error) {
 						Name     string `yaml:"name"`
 						TaskSpec struct {
 							Steps []struct {
-								Name   string `yaml:"name"`
-								Script string `yaml:"script"`
+								Name    string `yaml:"name"`
+								Script  string `yaml:"script"`
+								OnError string `yaml:"onError"`
 							} `yaml:"steps"`
 						} `yaml:"taskSpec"`
 					} `yaml:"tasks"`
@@ -95,7 +96,9 @@ func loadSteps(dir string) ([]step, []error) {
 				if s.Script == "" {
 					continue
 				}
-				out = append(out, step{File: rel, Task: t.Name, Name: s.Name, Script: s.Script})
+				out = append(out, step{
+					File: rel, Task: t.Name, Name: s.Name, Script: s.Script, OnError: s.OnError,
+				})
 			}
 		}
 	}
@@ -116,12 +119,30 @@ func main() {
 	switch sub := flag.Arg(0); sub {
 	case "syntax":
 		code = runSyntax(steps, loadErrs)
+	case "payload":
+		fs := flag.NewFlagSet("payload", flag.ExitOnError)
+		delegates := fs.String("delegates", "test/go/delegated_posters.txt",
+			"posting paths this check cannot see, `<file>|<who posts>` per line")
+		anchor := fs.Int("anchor", defaultPayloadAnchor,
+			"the fewest prpost call sites a real catalog has; a drop means the matcher regressed")
+		_ = fs.Parse(flag.Args()[1:])
+		code = runPayload(steps, loadErrs, resolve(*dir, *delegates), *anchor)
+	case "failures":
+		fs := flag.NewFlagSet("failures", flag.ExitOnError)
+		baseline := fs.String("baseline", "test/go/failure_report_baseline.txt",
+			"the ratchet baseline: one task path per line")
+		delegates := fs.String("delegates", "test/go/delegated_posters.txt",
+			"posting paths this check cannot see, `<file>|<who posts>` per line")
+		floor := fs.Int("delegate-floor", defaultDelegateAnchor,
+			"the fewest delegated posters a real catalog has; the list only shrinks by a decision")
+		_ = fs.Parse(flag.Args()[1:])
+		code = runFailures(*dir, resolve(*dir, *baseline), resolve(*dir, *delegates), *floor)
 	case "message":
 		fs := flag.NewFlagSet("message", flag.ExitOnError)
 		baseline := fs.String("baseline", "test/go/message_layer_baseline.txt",
 			"the ratchet baseline: <markdown> <echo> <path> per line")
 		_ = fs.Parse(flag.Args()[1:])
-		code = runMessage(steps, loadErrs, *baseline)
+		code = runMessage(steps, loadErrs, resolve(*dir, *baseline))
 	default:
 		fmt.Fprintf(os.Stderr, "tasklint: unknown subcommand %q\n", sub)
 		code = 2
@@ -145,6 +166,12 @@ func reportLoadErrors(errs []error) {
 // "ok" over zero files reads as coverage and is not.
 func countSteps(steps []step) int { return len(steps) }
 
-func hasPrefixWord(line, word string) bool {
-	return strings.HasPrefix(strings.TrimSpace(line), word)
+// resolve makes a flag path relative to the catalog root rather than to the caller's
+// working directory, so `-dir /repo -baseline test/go/x.txt` means /repo/test/go/x.txt
+// wherever the command is run from.
+func resolve(dir, path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(dir, path)
 }

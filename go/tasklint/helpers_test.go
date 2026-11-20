@@ -24,7 +24,16 @@ func writeTree(t *testing.T, files map[string]string) string {
 }
 
 // taskYAML wraps one script in the smallest shape loadSteps reads.
+//
+// A step named `report` gets `onError: continue`, because that is what a CORRECT task
+// looks like: Tekton abandons the remaining steps the moment one exits non-zero, so a
+// report step without it can never run. A fixture that omitted it would make every test
+// using a report step fail for a reason it is not testing.
 func taskYAML(name, script string) string {
+	onError := ""
+	if name == "report" {
+		onError = "          onError: continue\n"
+	}
 	return `apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 spec:
@@ -35,7 +44,7 @@ spec:
         steps:
         - name: ` + name + `
           script: |
-` + indentBlock(script, "            ") + `
+` + indentBlock(script, "            ") + "\n" + onError + `
 `
 }
 
