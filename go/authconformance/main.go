@@ -635,6 +635,13 @@ var (
 	gsaEmailRE  = regexp.MustCompile(`[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com`)
 	bareUUIDRE  = regexp.MustCompile(`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
 	gsmPrefixRE = regexp.MustCompile(`tf-jx-[a-z]+-[a-z]+-`)
+	// clientIdUUIDRE matches a client-id key whose VALUE is a bare UUID, across
+	// yaml (clientId: <uuid>) and the helm default form (clientId ... default
+	// "<uuid>"). Only this shape is a per-cluster client identity.
+	clientIdUUIDRE = regexp.MustCompile(`(?i)client_?id[^0-9a-f]{0,40}([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
+	// nilUUIDRE is the all-zero UUID — the seeded default-tenant constant, the
+	// same on every cluster, never a per-cluster id.
+	nilUUIDRE = regexp.MustCompile(`^0{8}-0{4}-0{4}-0{4}-0{12}$`)
 )
 
 // oauth2ClientKind / secretNameRE / clientIdSeedRE / targetName detect the
@@ -902,13 +909,16 @@ func checkForeignIdentity(src, path string, r *report) {
 			"embeds a cluster-specific GSM prefix %q. The prefix is config (gsm.keyPrefix), not a chart "+
 				"literal — 21 of these from the build cluster failed every ExternalSecret on customer2.", m)
 	}
-	// A bare UUID is only a finding where a client id should be a NAME.
-	if oauth2ClientKindRE.MatchString(src) || strings.Contains(src, "clientId") {
-		if m := bareUUIDRE.FindString(src); m != "" {
-			r.fail("no-foreign-identity", path,
-				"names a bare client UUID %q. A client id must be the declared NAME (reproducible from "+
-					"git), not a maester-minted UUID that exists on no other cluster.", m)
-		}
+	// A bare UUID is a finding only as the VALUE of a client-id key — a
+	// clientId/client_id/clientID set to a UUID is a maester-minted id that
+	// exists on no other cluster. A UUID elsewhere (a tenantId, a seeded
+	// constant) is not a client identity; flagging it on the mere presence of
+	// the word "clientId" in the same file was too broad (it tripped the
+	// shared default-tenant constant in auth-service).
+	if m := clientIdUUIDRE.FindStringSubmatch(src); m != nil && !nilUUIDRE.MatchString(m[1]) {
+		r.fail("no-foreign-identity", path,
+			"sets a client id to a bare UUID %q. A client id must be the declared NAME (reproducible from "+
+				"git), not a maester-minted UUID that exists on no other cluster.", m[1])
 	}
 }
 
