@@ -1,0 +1,6 @@
+# S11: a wildcard in an origin allow-list admits every origin and is invalid with
+# credentials. The shape is leartech-blockchain's ingress annotation, and the
+# WebSocket variant that cross-site-hijacks an authenticated socket.
+cors:
+  allowedOrigins:
+    - "*"

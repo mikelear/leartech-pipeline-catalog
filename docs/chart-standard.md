@@ -116,6 +116,51 @@ gate is the model.
 deployment mounts the secret with `optional: false`, or a live check that the pod is not Ready with
 the secret removed. Design rules like this one are why tier 1 requires *executable* checks.
 
+### S11/S12 — an origin allow-list is an admission policy, not a pointer
+
+```yaml
+# S11: fails OPEN — every origin admitted, and invalid with credentials
+cors: { allowedOrigins: ["*"] }
+
+# S12: fails CLOSED — matches neither a preview nor a customer's host
+leartech-console-api:
+  wsOriginPatterns: ["https://leartech-sp-web-ship-proven.jx.leartech.com"]
+```
+
+**Why this is not S10, which deliberately ignores hostnames.** Our own FQDNs under
+`mcp.host`, `previewBaseUrl` and in ingress defaults are estate furniture: they name a
+backend, and a customer's override replaces them without changing behaviour. An origin
+allow-list decides **which browser pages may talk to an authenticated API**, so a wrong
+entry does not quietly point elsewhere — it admits someone or blocks the real UI.
+
+| | failure | what a person sees |
+|---|---|---|
+| **S11** wildcard (`*`, `https://*`, `*.x.y`) | fails OPEN | nothing, until someone notices `Access-Control-Allow-Origin: *` is invalid with credentials, or that another site can open an authenticated WebSocket |
+| **S12** literal origin | fails CLOSED | the pod is healthy, `/health/ready` is 200, and every browser request is blocked |
+
+**The correct shape, and both reactive services already use it:** default the list
+empty, and `required` it in the template so a deploy that forgets it fails at render
+rather than at runtime.
+
+```yaml
+wsOriginPatterns: []                       # values.yaml
+---
+value: {{ required "wsOriginPatterns is required" (join "," .Values.wsOriginPatterns) | quote }}
+```
+
+An empty list is a deploy's job, exactly as S10 treats an empty project. A templated
+value (`{{ .Values.jxRequirements.ingress.domain }}`) is also silent, because a chart
+that DERIVES its own origin is doing the right thing.
+
+**Where it runs:** the same entry point as S10 — `chartstd -tenant <chartDir>` in
+`tasks/helm`, which every umbrella's PR pipeline uses. A rule with no caller is how four
+tools in this repo sat unrun for weeks (`#351`).
+
+**Measured when it landed** (74 charts swept): 3 hits, one of them the exact defect
+S10 could not see — `leartech-ship-proven-umbrella` shipping
+`leartech-console-api.wsOriginPatterns: [https://leartech-sp-web-ship-proven.jx.leartech.com]`
+to every customer.
+
 ## Tier 3 — the target
 
 Everything above is true of a chart sitting on a laptop. None of it answers "would **this** cluster

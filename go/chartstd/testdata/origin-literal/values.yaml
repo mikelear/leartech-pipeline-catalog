@@ -1,0 +1,6 @@
+# S12: a literal browser origin defaulted in a released chart. This is
+# leartech-ship-proven-umbrella 0.0.132 verbatim — the console's WS allow-list with
+# OUR console SPA's host in it, inherited by every customer install.
+leartech-console-api:
+  wsOriginPatterns:
+    - https://leartech-sp-web-ship-proven.jx.leartech.com
