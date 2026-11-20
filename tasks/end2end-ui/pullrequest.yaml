@@ -237,6 +237,8 @@ spec:
             # Retry detection for up to 60s — gate pod may still be starting
             # (end2end-ui often starts before the pr build deploys the preview).
             GATE_URL="http://preview-gate.${PREVIEW_NAMESPACE}.svc.cluster.local:8090/cgi-bin/gate"
+
+            GATE_NAME="preview-gate"
             USE_GATE=false
             GATE_DETECT_DEADLINE=$(( $(date +%s) + 60 ))
             echo "==> looking for preview-gate at $GATE_URL (up to 60s)"
@@ -264,8 +266,11 @@ spec:
                 if [ "$(date +%s)" -ge "$DEADLINE" ]; then
                   echo "==> gate detail at timeout:"
                   curl -sS -m 5 "$GATE_URL" 2>/dev/null || true
+                  GATE_STATE=$(kubectl -n "$PREVIEW_NAMESPACE" get deploy "$GATE_NAME" \
+                    -o jsonpath='{.status.readyReplicas}/{.spec.replicas}' 2>/dev/null || true)
                   printf '%s\n' \
                     "preview-gate never reported ready within $((MAX_WAIT / 60)) min." \
+                      "At failure: deployment \`$GATE_NAME\` is \`${GATE_STATE:-absent}\` (ready/desired)." \
                     > /tmp/ui-why
                   UI_RENDER "preview gate timeout" /tmp/ui-why failure
                   echo "FAIL: preview gate timeout"
@@ -288,6 +293,7 @@ spec:
                   if [ "$(date +%s)" -ge "$DEADLINE" ]; then
                     printf '%s\n' \
                       "\`${PREVIEW_URL}${HEALTH_PATH}\` never returned 3 consecutive 200s within $((MAX_WAIT / 60)) min." \
+                      "At failure: HTTP \`$(curl -sS -o /dev/null -w '%{http_code}' -m 5 "${PREVIEW_URL}${HEALTH_PATH}" 2>/dev/null || echo unreachable)\`; \`${PREVIEW_URL}\` resolved to \`$(getent hosts "${PREVIEW_URL#*://}" 2>/dev/null | awk '{print $1; exit}' || echo nothing)\`." \
                       > /tmp/ui-why
                     UI_RENDER "preview not ready" /tmp/ui-why failure
                     echo "FAIL: preview never reached stable ready state"
