@@ -95,7 +95,10 @@ tenant_case() {
   case "$out" in
     *FAIL*)
       if [ "$want" = "fail" ]; then
-        echo "  ok   $dir -> S10"
+        # Name the rule that actually fired. A fixed "-> S10" label read as S10 even
+        # for the S11/S12 fixtures, which is a guard reporting the wrong rule.
+        rule=$(printf '%s\n' "$out" | grep -oE '^S1[0-9]' | head -1)
+        echo "  ok   $dir -> ${rule:-S10}"
       else
         echo "FAIL: $dir should be clean"; echo "$out" | sed 's/^/    /'; exit 1
       fi
@@ -114,5 +117,16 @@ tenant_case tenant-gsa fail
 tenant_case tenant-project fail
 tenant_case tenant-gitops-repo fail
 tenant_case tenant-clean clean
+
+# S11/S12: an origin allow-list is an admission policy, so a released chart must not
+# default one. origin-literal is leartech-ship-proven-umbrella 0.0.132's console block
+# verbatim; origin-wildcard is leartech-blockchain's `cors-allow-origin: "*"`;
+# origin-clean is what console-api and artifact-api already do.
+#
+# Same entry point as S10 (-tenant), because the helm task calls exactly that and a rule
+# shipped without a caller is the defect behind catalog#351.
+tenant_case origin-wildcard fail
+tenant_case origin-literal fail
+tenant_case origin-clean clean
 
 echo "=== ok ==="

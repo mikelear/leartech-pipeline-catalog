@@ -1,0 +1,15 @@
+# The correct form, and the precision anchor: every shape below stays quiet.
+#
+# An empty origin list is what the deploy fills, exactly as S10 treats an empty
+# project. A templated value cannot be judged from source. And a URL under a key that
+# does not name an origin is estate furniture (S10 already decided that): `mcp.host`
+# names OUR backend on purpose, and a customer overrides it.
+cors:
+  allowedOrigins: []
+leartech-console-api:
+  wsOriginPatterns: []
+  previewBaseUrl: https://leartech-console-api-ship-proven.jx.leartech.com
+  mcp:
+    host: https://leartech-mcp-servers-public-ship-proven.jx.leartech.com
+ingress:
+  originOverride: "{{ .Values.jxRequirements.ingress.domain }}"

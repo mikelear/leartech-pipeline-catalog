@@ -355,15 +355,20 @@ func main() {
 	flag.Parse()
 
 	if tenantCheck != "" {
+		// One entry point for the "a released chart must not carry this" rules: S10
+		// (tenant identity) and S11/S12 (an origin allow-list). They run together
+		// because they answer one question -- what would a customer inherit? -- and a
+		// second invocation is a second thing to forget to add to a task.
 		findings := tenantFindings(tenantCheck)
+		findings = append(findings, originFindings(tenantCheck)...)
 		if len(findings) == 0 {
-			fmt.Printf("==> chartstd: %s carries no tenant-specific default (S10)\n", tenantCheck)
+			fmt.Printf("==> chartstd: %s carries no tenant-specific or cluster-specific default (S10-S12)\n", tenantCheck)
 			return
 		}
 		for _, f := range findings {
 			fmt.Println(f)
 		}
-		fmt.Fprintf(os.Stderr, "\nFAIL: %d tenant-specific default(s).\n", len(findings))
+		fmt.Fprintf(os.Stderr, "\nFAIL: %d inherited-default finding(s) (S10-S12).\n", len(findings))
 		os.Exit(1)
 	}
 

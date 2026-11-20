@@ -217,6 +217,54 @@ func TestTenantDefaultIsReported(t *testing.T) {
 	}
 }
 
+// S11/S12: an origin allow-list is an ADMISSION POLICY, not a pointer, so it is the one
+// class of hostname a released chart must not default. S10 stays as it is -- our own
+// FQDNs under `mcp.host` and in ingress defaults are estate furniture -- and the two
+// rules do not overlap because this one is gated on the KEY naming an origin.
+//
+// The three fixtures are estate shapes, not inventions: origin-literal is
+// leartech-ship-proven-umbrella 0.0.132's console block, origin-wildcard is
+// leartech-blockchain's `cors-allow-origin: "*"` annotation, and origin-clean is what
+// console-api and artifact-api already do (empty lists, `required` in the template).
+//
+// proven-by: TestOriginAllowListIsNotDefaulted
+func TestOriginAllowListIsNotDefaulted(t *testing.T) {
+	cases := []struct {
+		dir  string
+		want int
+		rule string
+	}{
+		{dir: "origin-wildcard", want: 1, rule: "S11"},
+		{dir: "origin-literal", want: 1, rule: "S12"},
+		{dir: "origin-clean", want: 0},
+		// A chart with no values.yaml is S10's finding, not a second one from here.
+		{dir: "clean", want: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.dir, func(t *testing.T) {
+			got := originFindings(filepath.Join("testdata", tc.dir))
+			if len(got) != tc.want {
+				t.Fatalf("want %d finding(s), got %d: %v", tc.want, len(got), got)
+			}
+			if tc.rule != "" && got[0].Rule != tc.rule {
+				t.Errorf("rule = %q, want %q", got[0].Rule, tc.rule)
+			}
+		})
+	}
+}
+
+// The entry point the helm task actually calls must run all three rules, or the new
+// ones ship unwired -- which is the defect #351 fixed for triggersync.
+//
+// proven-by: TestTenantEntryPointRunsTheOriginRules
+func TestTenantEntryPointRunsTheOriginRules(t *testing.T) {
+	got := append(tenantFindings(filepath.Join("testdata", "origin-literal")),
+		originFindings(filepath.Join("testdata", "origin-literal"))...)
+	if len(got) != 1 || got[0].Rule != "S12" {
+		t.Fatalf("want exactly one S12 finding for origin-literal, got %v", got)
+	}
+}
+
 func contains(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {
