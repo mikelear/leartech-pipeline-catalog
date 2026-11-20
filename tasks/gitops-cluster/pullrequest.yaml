@@ -155,16 +155,11 @@ spec:
               printf '%s\n' "$rc" > /workspace/.pr-gate.rc
             fi
           onError: continue
-        # THE FAILURE BRANCH, and it composes NO text in shell.
-        #
-        # Two catalog rules apply here and both are right:
-        #   * a step that fails without telling the PR is the shape that made console-api#31
-        #     unreadable (test/go/failure_report_test.sh)
-        #   * a verdict or a sentence composed in shell has no test, because shell has nowhere to
-        #     put one (test/go/message_layer_test.sh) — so the body is assembled by prpost, from
-        #     FILES. `-failures-file` is its preferred form for free text, and `-doc-file` appends
-        #     the log below the table.
-        - image: ghcr.io/mikelear/leartech-checkers:0.41.0
+
+        # A red `gitops-cluster` with no comment is the console-api#31 shape: Lighthouse's generic
+        # "the following test failed", with the actual rule in a log nobody was told to open. This
+        # step posts the gate's own output as the comment, so the PR says which rule failed.
+        - image: ghcr.io/mikelear/leartech-checkers:0.41.4
           name: report
           resources: {}
           env:
