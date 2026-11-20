@@ -1,0 +1,135 @@
+# GitOps-cluster repo PR pipeline — "would this PR break a cluster?", with no cluster to ask.
+#
+# WHY THIS TASK EXISTS. A cluster's GitOps repo is the one repo whose mistakes reach production
+# without a build: merging a config change IS the deploy. And its failures are all silent —
+#   * two of config/'s top-level keys collided with a chart's own list, and the `ci` world could not
+#     sync for 45 hours (`ExternalSecret Name: ""`)
+#   * an upstream chart fix that was CORRECT broke this repo, because the repo had relied on the bug
+#   * a Certificate sat at sync-wave 3 waiting for a Gateway that waited for its Secret
+#   * a chart's default named the reference cluster's static IP, so a LoadBalancer got no address
+#     for twenty hours
+# None of those is a compile error, a lint error or a unit-test failure. Every one is a repo-shaped
+# assertion, and they are all in ONE command: the repo's own `scripts/pr-gate.sh`.
+#
+# THE REPO OWNS ITS GATE. This task runs that script rather than re-implementing the rules here — a
+# rule in two places drifts, and the copy in CI becomes the one nobody can run locally. `make pr-gate`
+# is the same script. What the task adds is the toolchain (helm, helmfile) and the second clone the
+# cluster-gate step needs.
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: pullrequest
+spec:
+  pipelineSpec:
+    params:
+    - name: GATE_REPO_URL
+      type: string
+      description: >-
+        The cluster-build repo that OWNS 03-verify/40-argo-gate.sh. The gate takes the GitOps repo as
+        a PARAMETER (`--gitops-dir`), so a repo can be checked by a gate it does not contain — which
+        is how this task runs the cluster rules against a PR without copying the gate into every repo.
+      default: https://github.com/mikelear/leartech-sp-cluster.git
+    - name: GATE_REPO_REF
+      type: string
+      description: A tag or SHA of GATE_REPO_URL. Pinned, not a branch.
+      default: main
+    tasks:
+    - name: from-build-pack
+      params:
+      - name: GATE_REPO_URL
+        value: $(params.GATE_REPO_URL)
+      - name: GATE_REPO_REF
+        value: $(params.GATE_REPO_REF)
+      resources: {}
+      taskSpec:
+        metadata: {}
+        params:
+        - name: GATE_REPO_URL
+          type: string
+        - name: GATE_REPO_REF
+          type: string
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 300m
+              memory: 1Gi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
+          name: ""
+          resources: {}
+
+        # ── the toolchain, and the repo that owns the gate ─────────────────────
+        #
+        # python:3.12-alpine because the gate's checks are Python (`validate-config.py`,
+        # `check-neutral-render.py`, `chart-addresses.py`) and its shell is bash. helm and helmfile
+        # are STATIC downloads at pinned versions rather than baked into an image: the CMP image the
+        # clusters use has them but no python3, and adding python3 to the image the RENDERER runs is
+        # a change to the thing under test. The versions are pinned so a PR cannot change its own
+        # verdict by moving an upstream tag; Renovate bumps these two lines, in a PR, visibly.
+        - image: python:3.12-alpine
+          name: tools
+          resources: {}
+          script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+            apk add --no-cache bash curl git tar py3-yaml >/dev/null
+
+            HELM_VERSION=v3.16.4
+            HELMFILE_VERSION=v0.171.0
+            echo "==> helm $HELM_VERSION"
+            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
+              | tar -xz -C /tmp && mv /tmp/linux-amd64/helm /usr/local/bin/helm && chmod +x /usr/local/bin/helm
+            helm version --short
+            echo "==> helmfile $HELMFILE_VERSION"
+            curl -fsSL -o /tmp/hf.tgz \
+              "https://github.com/helmfile/helmfile/releases/download/${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION#v}_linux_amd64.tar.gz" \
+              && tar -xzf /tmp/hf.tgz -C /tmp helmfile && mv /tmp/helmfile /usr/local/bin/helmfile && chmod +x /usr/local/bin/helmfile
+            helmfile --version
+
+            echo "==> gate repo $(params.GATE_REPO_URL) @ $(params.GATE_REPO_REF)"
+            git clone --depth 1 --branch "$(params.GATE_REPO_REF)" \
+              "$(params.GATE_REPO_URL)" /workspace/sp-cluster
+            test -x /workspace/sp-cluster/03-verify/40-argo-gate.sh || {
+              echo "FAIL: no 03-verify/40-argo-gate.sh in the gate repo — the cluster rules would not run" >&2
+              exit 1
+            }
+
+        # ── the gate ───────────────────────────────────────────────────────────
+        #
+        # HELM_REGISTRY_CONFIG is the CMP's own trick, reused: helmfile pulls charts over OCI, a
+        # static token expires in ~1h, and in CI the docker config is a GAR credential the pipeline
+        # already has. Without it every OCI pull 401s and the failure reads as a broken repo rather
+        # than a missing credential.
+        - image: python:3.12-alpine
+          name: pr-gate
+          resources: {}
+          env:
+          - name: GATE
+            value: /workspace/sp-cluster/03-verify/40-argo-gate.sh
+          - name: HELM_REGISTRY_CONFIG
+            value: /tekton/home/.docker/config.json
+          script: |
+            #!/usr/bin/env bash
+            set -uo pipefail
+            cd /workspace/source
+            test -x scripts/pr-gate.sh || {
+              echo "==> this repo has no scripts/pr-gate.sh — the PR gate is NOT running."
+              echo "    That is a FAILURE, not a skip: a cluster repo whose shape rules are unchecked"
+              echo "    merges straight to production."
+              exit 1
+            }
+            ./scripts/pr-gate.sh
+          # The script's exit code IS the check. It never reports PASS for a check it skipped, so a
+          # green here means every rule that could run, ran.
+      workspaces:
+      - name: source
