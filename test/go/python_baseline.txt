@@ -15,12 +15,8 @@
 # guard. Replacement: the Go tool the file already tests (chartstd, prpost, e2e) invoked
 # with a -check flag, or one small Go program covering all of them.
 test/go/phase_tools_test.sh|reads the end2end phase list out of task YAML; replace with `e2e explain`
-test/go/dual_payload_test.sh|reads prpost call sites out of task YAML; replace with a Go walker beside prpost
 test/go/chartstd_runs_test.sh|reads which charts invoke chartstd; replace with a chartstd flag
 
-# Not wired into the presubmit at all (no .lighthouse step runs it), so it neither passes
-# nor skips in CI — it simply does not run. Converting it and wiring it are one job.
-test/go/failure_report_test.sh|classifies tasks that fail silently; needs a Go walker AND a caller
 
 # ── end2end-runner/*.sh: the runner's own tests ───────────────────────────────────
 end2end-runner/inlined_test.sh|asserts the inlined phase list with a python heredoc
