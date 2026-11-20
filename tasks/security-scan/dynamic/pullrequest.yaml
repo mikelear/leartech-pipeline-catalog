@@ -78,7 +78,11 @@ spec:
             APP_NAME="${REPO_NAME}"
             PREVIEW_NS="jx-${REPO_OWNER}-${APP_NAME}-pr-${PULL_NUMBER}"
             CLUSTER_ID="${CLUSTER_ID:-unknown}"
-            SCAN_IMAGE="ghcr.io/mikelear/security-tools:latest"
+            # Pinned, not `:latest`. The two scans that run in this task's pods are the
+            # same image the static and dependency scans use, and a floating tag means the
+            # attacker-view scan can change version between two PRs with no diff anywhere.
+            # (Same rule as the task pins: the pin is part of the fix.)
+            SCAN_IMAGE="ghcr.io/mikelear/security-tools:0.55.0"
 
             case "$CLUSTER_ID" in
               az)  DOMAIN="az.leartech.com" ;;
