@@ -86,49 +86,51 @@
     {
       "description": "Catch image: refs in .lighthouse triggers.",
       "customType": "regex",
-      "fileMatch": [
-        "\\.lighthouse/.+\\.yaml$"
-      ],
       "matchStrings": [
         "image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"
       ],
-      "datasourceTemplate": "docker"
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": [
+        "/\\.lighthouse/.+\\.yaml$/"
+      ]
     },
     {
       "description": "Catch image: refs in tasks/*/pullrequest.yaml + release.yaml (catalog tasks consumed via uses:). Includes the leartech-gate image pin in tasks/qa-gate/.",
       "customType": "regex",
-      "fileMatch": [
-        "^tasks/.+\\.yaml$"
-      ],
       "matchStrings": [
         "image:\\s*(?<depName>[^:]+):(?<currentValue>[^\\s]+)"
       ],
-      "datasourceTemplate": "docker"
+      "datasourceTemplate": "docker",
+      "managerFilePatterns": [
+        "/^tasks/.+\\.yaml$/"
+      ]
     },
     {
       "description": "Tool versions pinned as plain strings \u2014 a shell variable in a task's script, and a make variable in the shared mk. Renovate's built-in managers read go.mod, Dockerfile FROM lines and helm versions; they cannot see either of these. That blind spot is why govulncheck sat on v1.1.4 for months after the fleet moved to Go 1.26, with nothing reporting it stale.",
       "customType": "regex",
-      "fileMatch": [
-        "^tasks/.+\\.yaml$",
-        "^go/leartech-go\\.mk$"
-      ],
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>[^\\s]+)[\\s\\S]*?[:=]\\s*\"?\\$?\\{?[A-Z_]*:?-?(?<currentValue>v[0-9][^\"\\s}]*)"
-      ]
+      ],
+      "managerFilePatterns": [
+        "/^tasks/.+\\.yaml$/",
+        "/^go/leartech-go\\.mk$/"
+      ],
+      "datasourceTemplate": "{{{datasource}}}"
     },
     {
       "description": "The golangci-lint version is asserted in FOUR places by test/go/version_pin_test.sh: two image refs (already covered by the docker managers above) and two plain strings \u2014 GOLANGCI_VERSION in the shared mk, and the README's version table. Without this, renovate bumps the images only and its own PR fails the guard (measured on #323). datasource=github-releases with extractVersion strips the `v` the image tag carries and the mk does not.",
       "customType": "regex",
-      "fileMatch": [
-        "^go/leartech-go\\.mk$",
-        "^README\\.md$"
-      ],
       "matchStrings": [
         "renovate: datasource=github-releases depName=golangci/golangci-lint\\s*\\nGOLANGCI_VERSION \\?= (?<currentValue>[0-9][0-9.]*)",
         "renovate: datasource=github-releases depName=golangci/golangci-lint --\\>\\s*\\n\\| `golangci-lint` \\| `(?<currentValue>[0-9][0-9.]*)`"
       ],
       "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^v?(?<version>.*)$"
+      "extractVersionTemplate": "^v?(?<version>.*)$",
+      "managerFilePatterns": [
+        "/^go/leartech-go\\.mk$/",
+        "/^README\\.md$/"
+      ],
+      "depNameTemplate": "golangci/golangci-lint"
     }
   ]
 }
