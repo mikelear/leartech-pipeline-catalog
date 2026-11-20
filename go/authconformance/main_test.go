@@ -826,3 +826,15 @@ func TestCommentedIssuerHostDoesNotTrip(t *testing.T) {
 		t.Fatal("a commented example host was wrongly flagged as a literal")
 	}
 }
+
+// A non-client UUID (the shared all-zero default-tenant constant) is the same
+// on every cluster — it must NOT be flagged as a per-cluster client id.
+func TestSharedTenantUUIDDoesNotTrip(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/cm.yaml": "kind: ConfigMap\ndata:\n  defaultTenantID: 00000000-0000-0000-0000-000000000001\n  clientId: svc\n",
+	}}.build(t)
+	if has(run(t, root), "no-foreign-identity") {
+		t.Fatal("the shared all-zero default-tenant constant was wrongly flagged")
+	}
+}
+
