@@ -24,3 +24,4 @@ end2end-runner/phases_test.sh|same shape as above
 # records breaking rendering for three days in May: a python heredoc inside `script: |`.
 tasks/kyverno-audit/pullrequest.yaml|`python3 - <<'PYEOF'` classifies the policy report; its step image is DISTROLESS (/bin/sh does not exist), so the step cannot start. Replace with a Go classifier and say so loudly
 tasks/ai-review/pullrequest.yaml|`python3 -c` reads the aggregate score at line 223; replace with the ai-review worker's own exit code
+tasks/gitops-cluster/pullrequest.yaml|the step INSTALLS python3 (apk) because the gate it runs is Python (`scripts/pr-gate.sh` -> validate-config.py / check-neutral-render.py / chart-addresses.py). No python is written INTO a step script here — the May rendering breakage was a python heredoc inside `script: |`, which this is not. The alternative is porting three repo-side checks to Go, which belongs to that repo, not this one
