@@ -71,6 +71,14 @@ SHELL_AFTER_PIPE = re.compile(
 def is_markdown(line):
     if SHELL_AFTER_PIPE.match(line):
         return False
+    # A table ROW has at least two pipes: a leading one and the one that ends its first
+    # cell. A shell pipeline continuation has exactly one, at the start --
+    # tasks/gitops-cluster/pullrequest.yaml wraps its helm download as
+    # `| tar -xz -C /tmp && mv ...`, and `tar` was not on the binary list above, so it
+    # counted as a markdown row. A list of binaries can only ever be incomplete; the pipe
+    # count is the property that actually distinguishes the two.
+    if line.startswith('|') and line.count('|') < 2:
+        return False
     return bool(markdown.match(line)) or '"_Posted by' in line
 
 # NOT every interpolated printf is prose. `printf 'coverage=%s\n' "$TOTAL"` pipes a VALUE; it

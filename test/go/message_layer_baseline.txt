@@ -10,11 +10,11 @@
 0 13 tasks/dockerfile-lint/pullrequest.yaml
 0 12 tasks/dotnet-audit/pullrequest.yaml
 0 8 tasks/dotnet-lint/pullrequest.yaml
-8 7 tasks/dotnet-mutants/pullrequest.yaml
+6 7 tasks/dotnet-mutants/pullrequest.yaml
 4 7 tasks/dotnet-test/pullrequest.yaml
 0 6 tasks/dotnet/pullrequest.yaml
 0 2 tasks/dotnet/release.yaml
-4 38 tasks/end2end-ui/pullrequest.yaml
+0 38 tasks/end2end-ui/pullrequest.yaml
 0 111 tasks/end2end/pullrequest.yaml
 0 6 tasks/go-lint/pullrequest.yaml
 0 3 tasks/go-no-promote/release.yaml
@@ -39,8 +39,9 @@
 0 5 tasks/release/promote-cluster-suffixed.yaml
 0 11 tasks/rust-audit/pullrequest.yaml
 0 7 tasks/rust-lint/pullrequest.yaml
-10 6 tasks/rust-test/pullrequest.yaml
+5 6 tasks/rust-test/pullrequest.yaml
 0 4 tasks/rust/pullrequest.yaml
 0 36 tasks/security-scan/dynamic/pullrequest.yaml
 0 4 tasks/values-standard/pullrequest.yaml
 0 4 tasks/govulncheck/pullrequest.yaml
+0 4 tasks/gitops-cluster/pullrequest.yaml
