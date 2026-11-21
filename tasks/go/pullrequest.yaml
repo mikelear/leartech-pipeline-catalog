@@ -79,7 +79,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.go-build.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.42.0
+        - image: ghcr.io/mikelear/leartech-checkers:0.42.2
           name: report
           resources: {}
           env:
