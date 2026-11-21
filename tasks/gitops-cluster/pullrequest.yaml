@@ -108,7 +108,11 @@ spec:
             #!/bin/sh
             set -eu
 
-            apk add --no-cache bash curl git tar python3 py3-yaml >/dev/null
+            # `make` IS REQUIRED, and its absence was the last thing to fail: the cluster gate
+            # DELEGATES to the repo's own `make check` (group G — "values agree with requirements;
+            # every helmfile renders") rather than re-implementing it. Alpine has no make, so the
+            # gate reported a bare "repo make check FAIL" and the repo looked broken.
+            apk add --no-cache bash curl git make tar python3 py3-yaml >/dev/null
 
             HELM_VERSION=v3.16.4
             HELMFILE_VERSION=v0.171.0
