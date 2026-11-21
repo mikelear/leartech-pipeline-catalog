@@ -153,6 +153,8 @@ func main() {
 			"the fewest delegated posters a real catalog has; the list only shrinks by a decision")
 		_ = fs.Parse(flag.Args()[1:])
 		code = runFailures(*dir, resolve(*dir, *baseline), resolve(*dir, *delegates), *floor)
+	case "inlined":
+		code = runInlined(*dir)
 	case "phases":
 		code = runPhases(*dir)
 	case "renders":

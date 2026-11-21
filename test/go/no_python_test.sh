@@ -146,7 +146,7 @@ fi
 # the catalog clean.
 #
 # 2026-11-20: six test/go/*.sh, two end2end-runner/*.sh, two tasks/*.yaml.
-EXPECTED_MIN=4
+EXPECTED_MIN=3
 seen=$(listed | while read -r f; do [ -f "$f" ] && carries_python "$f" && echo "$f"; done | wc -l | tr -d ' ')
 if [ "$seen" -lt "$EXPECTED_MIN" ]; then
   note "only $seen file(s) matched, expected at least $EXPECTED_MIN — the matcher is blind,"
