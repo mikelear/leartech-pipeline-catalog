@@ -2,7 +2,7 @@ package taskharness
 
 // ASSERTIONS ABOUT A TASK'S STEPS AS A SET, which no single-script test can make.
 //
-// WHY THIS FILE EXISTS. The gitops-cluster task shipped four defects that its own shell script could
+// WHY THIS FILE EXISTS. The gitops-cluster task shipped five defects that its own shell script could
 // not have caught, because every one of them is a fact about the STEPS TAKEN TOGETHER:
 //
 //	1. helm/helmfile were installed in ONE step and used in ANOTHER. A Tekton task's steps are separate
@@ -13,6 +13,8 @@ package taskharness
 //	   ("make: command not found", measured: it fails 40-argo-gate group G and therefore the check).
 //	4. the task failed a PR with Lighthouse's generic "the following test failed" and no cause, because
 //	   nothing posted the gate's own log as the comment.
+//	5. and the step written to end (4) was itself dead on arrival: `-cluster "${CLUSTER_ID:?}"` with no
+//	   env supplying CLUSTER_ID, so the shell exited 1 before prpost ever ran.
 //
 // Each is a property of the task YAML, so each is testable here — in the catalogue's own pipeline, on
 // every PR, with no cluster. That is the point of the tasks' logic having moved into Go: a rule that
@@ -20,6 +22,7 @@ package taskharness
 
 import (
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -31,10 +34,42 @@ const gitopsTask = "../../tasks/gitops-cluster/pullrequest.yaml"
 
 // stepDoc is the shape of one step in a Tekton task, as far as these assertions need.
 type stepDoc struct {
-	Name    string `yaml:"name"`
-	Image   string `yaml:"image"`
-	Script  string `yaml:"script"`
-	OnError string `yaml:"onError"`
+	Name    string    `yaml:"name"`
+	Image   string    `yaml:"image"`
+	Script  string    `yaml:"script"`
+	OnError string    `yaml:"onError"`
+	Env     []stepEnv `yaml:"env"`
+}
+
+// stepEnv is one `env:` entry, reduced to the only question these tests ask: can this reference ever
+// be EMPTY?
+type stepEnv struct {
+	Name      string  `yaml:"name"`
+	Value     *string `yaml:"value"`
+	ValueFrom struct {
+		ConfigMapKeyRef *struct {
+			Optional bool `yaml:"optional"`
+		} `yaml:"configMapKeyRef"`
+		SecretKeyRef *struct {
+			Optional bool `yaml:"optional"`
+		} `yaml:"secretKeyRef"`
+	} `yaml:"valueFrom"`
+}
+
+// satisfiable reports whether the step is GUARANTEED to give this variable a non-empty value. A
+// literal `value:` is. An `optional: true` reference is NOT: it resolves to nothing when the
+// ConfigMap/Secret or the key is absent, which is exactly the state that makes `${VAR:?}` exit.
+func (e stepEnv) satisfiable() bool {
+	if e.Value != nil {
+		return true
+	}
+	if r := e.ValueFrom.ConfigMapKeyRef; r != nil && !r.Optional {
+		return true
+	}
+	if r := e.ValueFrom.SecretKeyRef; r != nil && !r.Optional {
+		return true
+	}
+	return false
 }
 
 func loadSteps(t *testing.T) []stepDoc {
@@ -46,10 +81,6 @@ func loadSteps(t *testing.T) []stepDoc {
 	var doc struct {
 		Spec struct {
 			PipelineSpec struct {
-				Params []struct {
-					Name    string `yaml:"name"`
-					Default string `yaml:"default"`
-				} `yaml:"params"`
 				Tasks []struct {
 					TaskSpec struct {
 						Steps []stepDoc `yaml:"steps"`
@@ -279,3 +310,78 @@ func TestAFailedGateStillReportsItsOwnReason(t *testing.T) {
 			`whose check is green`)
 	}
 }
+
+var requiredVar = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*):\?`)
+
+// unsatisfiedRequiredVars returns "step: variable" for every `${VAR:?}` in a step that the step does not
+// itself guarantee. Extracted from the test below so the RULE can be controlled against fixtures: a
+// check that quietly finds nothing to check is a check that reports success for work it never did.
+func unsatisfiedRequiredVars(steps []stepDoc) []string {
+	var out []string
+	for _, st := range steps {
+		given := map[string]bool{}
+		for _, e := range st.Env {
+			given[e.Name] = given[e.Name] || e.satisfiable()
+		}
+		for _, m := range requiredVar.FindAllStringSubmatch(st.Script, -1) {
+			if !given[m[1]] {
+				out = append(out, st.Name+": "+m[1])
+			}
+		}
+	}
+	return out
+}
+
+// TestRequiredEnvIsActuallyProvided is defect 4's SECOND half, and it was STILL LIVE after the PR that
+// was supposed to fix 4 merged.
+//
+// The report step ran `prpost … -cluster "${CLUSTER_ID:?}"` and the step had NO env supplying
+// CLUSTER_ID. Under `set -u`, `${VAR:?}` is not a default — it is an immediate exit 1. So the step died
+// on its own line 14, BEFORE prpost, on every failing PR:
+//
+//	/tekton/scripts/script-3-6dgnh: line 14: CLUSTER_ID: parameter null or not set
+//
+// which is why a red `pr-gate` arrived with Lighthouse's generic "the following test failed" and no
+// comment: the one step written to end that arrived dead. It survived review because from GitHub both
+// outcomes look identical — only the pod's log separates "prpost could not post" from "prpost was never
+// reached", and nobody opens the pod log of the step that exists to save them opening one.
+func TestRequiredEnvIsActuallyProvided(t *testing.T) {
+	if got := unsatisfiedRequiredVars(loadSteps(t)); len(got) > 0 {
+		t.Errorf("%d step(s) use ${VAR:?} with no value that cannot be empty:\n  %s\n\n"+
+			"  ${VAR:?} exits the shell under `set -u`, so the step dies before it can report\n"+
+			"  anything. Supply the env var, or write ${VAR:-} if the tool accepts empty — prpost\n"+
+			"  does: an empty cluster is deliberately 'no cluster tag'.",
+			len(got), strings.Join(got, "\n  "))
+	}
+}
+
+// The control for the rule above, on the two shapes that matter. Without it, deleting the check and
+// having a repo with no violations look exactly alike.
+func TestRequiredEnvRuleFiresOnTheShapeThatShipped(t *testing.T) {
+	optionalOnly := strptr("") // a reference present but optional: cannot be trusted to be non-empty
+	_ = optionalOnly
+
+	live := []stepDoc{
+		// the report step as merged: `-cluster "${CLUSTER_ID:?}"`, no env for it at all
+		{Name: "report", Script: `prpost -cluster "${CLUSTER_ID:?}" -tool pr-gate`},
+		// …and with an OPTIONAL reference, which is NOT a fix: the key may simply be absent
+		{Name: "report", Script: `prpost -cluster "${CLUSTER_ID:?}"`, Env: []stepEnv{{Name: "CLUSTER_ID"}}},
+	}
+	if got := unsatisfiedRequiredVars(live); len(got) != 2 {
+		t.Fatalf("the rule missed the shape that shipped: got %v, want 2 findings", got)
+	}
+
+	fixed := []stepDoc{
+		// the fix that shipped: no `:?` at all
+		{Name: "report", Script: `prpost -cluster "${CLUSTER_ID:-}"`},
+		// …or a value the step is guaranteed to have
+		{Name: "report", Script: `prpost -cluster "${CLUSTER_ID:?}"`,
+			Env: []stepEnv{{Name: "CLUSTER_ID", Value: strptr("customer2")}}},
+	}
+	if got := unsatisfiedRequiredVars(fixed); len(got) != 0 {
+		t.Errorf("the rule fires on a satisfied reference: %v — a check that cannot pass is as "+
+			"useless as one that cannot fail", got)
+	}
+}
+
+func strptr(s string) *string { return &s }
