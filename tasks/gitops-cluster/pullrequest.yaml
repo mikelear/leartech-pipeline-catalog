@@ -108,7 +108,13 @@ spec:
             #!/bin/sh
             set -eu
 
-            apk add --no-cache bash curl git tar python3 py3-yaml >/dev/null
+            # MAKE IS NOT OPTIONAL. `scripts/pr-gate.sh` ends in `40-argo-gate.sh` group G, which
+            # runs the GitOps repo's OWN `make -s check` — the two-implementations rule means the
+            # cluster gate delegates rather than re-implements. Without make here that group fails
+            # with "make: command not found" and the whole check goes red for a reason that names
+            # nothing in this repo. Measured, not assumed: monkey-patching a failing `make` into PATH
+            # reproduces exactly that, and go/taskharness/steps_test.go now asserts this list.
+            apk add --no-cache bash curl git tar make python3 py3-yaml >/dev/null
 
             HELM_VERSION=v3.16.4
             HELMFILE_VERSION=v0.171.0
