@@ -189,6 +189,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          # THE STICKY COMMENT'S CLUSTER TAG. Every cluster's jx-boot writes this ConfigMap, and
+          # `optional: true` because a cluster without it should lose a scoped marker, not the comment.
+          # MEASURED: the step used `-cluster "${CLUSTER_ID:?}"` with NO env supplying CLUSTER_ID, so
+          # `${VAR:?}` made the shell exit 1 on line 14 — BEFORE prpost — under `set -u`. That is why
+          # every failing consumer PR got a red check with no comment, which is the exact defect this
+          # step exists to remove. prpost already treats an empty cluster as "no cluster tag".
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -204,7 +216,7 @@ spec:
             # owns no prose. `-failures-file` is prpost's preferred form for free text.
             cat /workspace/.pr-gate.first /workspace/.pr-gate.tail > /workspace/.pr-gate.body
             prpost -tool pr-gate -check pr-gate -outcome failure \
-                   -cluster "${CLUSTER_ID:?}" \
+                   -cluster "${CLUSTER_ID:-}" \
                    -summary "pr-gate exited $rc" \
                    -failures-file /workspace/.pr-gate.first \
                    -body-file /workspace/.pr-gate.body \
