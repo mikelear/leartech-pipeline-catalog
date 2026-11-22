@@ -344,7 +344,16 @@ func waitForStreak(ctx context.Context, url string, opts WaitOptions, step func(
 		}
 		if streak < required {
 			if time.Now().After(deadline) {
-				last := lastErr.Error()
+				// LAST IS WHATEVER THIS LOOP ACTUALLY OBSERVED, AND IT MAY HAVE OBSERVED NOTHING.
+				// `lastErr.Error()` on a nil error is a nil dereference, and it panics INSIDE the code
+				// whose whole job is to explain a timeout — so a preview that never answered becomes a
+				// stack trace instead of a reason. Found by CI on catalog#403:
+				// TestWaitStreakTimeoutNamesTheLastStatus panicked here with a 20ms timeout and passed
+				// locally, because whether the first probe lands before the deadline is a race.
+				last := "no status recorded before the deadline"
+				if lastErr != nil {
+					last = lastErr.Error()
+				}
 				if lastCode != 0 {
 					// A status is the more useful fact when we have one: it separates
 					// "not up" from "up and answering something else".
