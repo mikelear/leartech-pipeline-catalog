@@ -850,3 +850,38 @@ func TestSharedTenantUUIDDoesNotTrip(t *testing.T) {
 		t.Fatal("the shared all-zero default-tenant constant was wrongly flagged")
 	}
 }
+
+// ── single-client-owner (unified mechanism) ──────────────────────────────────
+
+// An s2s client in BOTH the provisioning-Job table and a maester CR has two
+// owners — the collision that split-brained mcp-internal-services.
+func TestClientInBothJobAndCRFails(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/files/scripts/setup-internal-clients.sh": "INTERNAL_CLIENTS_DEFAULT=(\n  \"mcp-internal-services|leartechapi.internal_services|leartech-plan-api\"\n)\n",
+		"charts/svc/templates/oauth-mcp.yaml":                "apiVersion: hydra.ory.sh/v1alpha1\nkind: OAuth2Client\nmetadata:\n  name: mcp-internal-services\nspec:\n  grantTypes: [client_credentials]\n  secretName: mcp-internal-services-oauth\n",
+	}}.build(t)
+	if !has(run(t, root), "single-client-owner") {
+		t.Fatal("a client owned by both the Job and a maester CR was accepted")
+	}
+}
+
+// An s2s client in the Job table only (no maester CR) is correctly single-owner.
+func TestS2SClientInJobOnlyPasses(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/files/scripts/setup-internal-clients.sh": "INTERNAL_CLIENTS_DEFAULT=(\n  \"mcp-internal-services|leartechapi.internal_services|leartech-plan-api\"\n)\n",
+	}}.build(t)
+	if has(run(t, root), "single-client-owner") {
+		t.Fatal("a Job-only s2s client was wrongly flagged")
+	}
+}
+
+// A plain-Secret seed for a client the Job owns is a competing writer.
+func TestSeedForJobOwnedClientFails(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/files/scripts/setup-internal-clients.sh": "INTERNAL_CLIENTS_DEFAULT=(\n  \"mcp-internal-services|leartechapi.internal_services|leartech-plan-api\"\n)\n",
+		"charts/svc/templates/seed.yaml":                     "kind: Secret\nmetadata:\n  name: mcp-internal-services-oauth\ndata:\n  CLIENT_ID: eA==\n  CLIENT_SECRET: eA==\n",
+	}}.build(t)
+	if !has(run(t, root), "single-client-owner") {
+		t.Fatal("a seed competing with a Job-owned client was accepted")
+	}
+}

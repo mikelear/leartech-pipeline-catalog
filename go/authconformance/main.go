@@ -259,7 +259,15 @@ is misconfigured.
      clients ONLY (two deployments share the identical client); every other
      client secret is maester-generated.
 
-  9. One maester per world, namespace-scoped. A per-world umbrella with
+  9. s2s clients have ONE owner: the provisioning Job. A client_credentials
+     client is named + secret-from-GSM by setup-internal-clients.sh (cold-safe on
+     jx-boot and Argo). A maester OAuth2Client CR for the same name is a second
+     owner — ory then refuses to update it and the client mints invalid_client.
+     A plain-Secret CLIENT_ID seed is not a provisioning mechanism (helm lookup is
+     empty at template time, so it rotates). Public clients (auth-method none)
+     stay maester-owned with a CLIENT_ID-only seed.
+
+  10. One maester per world, namespace-scoped. A per-world umbrella with
      hydra-maester.singleNamespaceMode: false watches every namespace and
      reconciles every world's clients into its own Hydra — the ship-proven
      mcp-internal-services client was written by the wrong world's maester and
@@ -658,6 +666,13 @@ var (
 	seedSecretNameRE   = regexp.MustCompile(`(?m)^\s*name:\s*([A-Za-z0-9._{}.\- ]+?)\s*$`)
 	maesterRefRE       = regexp.MustCompile(`hydra-maester`)
 	singleNsFalseRE    = regexp.MustCompile(`singleNamespaceMode:\s*false`)
+	// jobClientRE matches a provisioning-Job client table entry:
+	//   "cid|scope|auds[|grants]"  (setup-internal-clients.sh INTERNAL_CLIENTS_DEFAULT)
+	// capturing the client id. These clients are owned by the Job.
+	jobClientRE = regexp.MustCompile(`(?m)^\s*"([a-z][a-z0-9-]+)\|[a-z]`)
+	// clientCredRE marks an OAuth2Client as a client_credentials (s2s) client —
+	// the kind the Job must own, not a maester CR.
+	clientCredRE = regexp.MustCompile(`client_credentials`)
 )
 
 // patternBShared lists the ONLY client secrets allowed an ExternalSecret: a
@@ -777,6 +792,25 @@ func checkChart(root string, ex exemption, hasOutboundLeg bool, r *report) {
 			return nil
 		})
 	}
+
+	// The provisioning-Job client table lives in a shell script, not a chart yaml,
+	// so scan it separately: it declares which clients the Job OWNS.
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil || d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, "setup-internal-clients.sh") {
+			return nil
+		}
+		b, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil
+		}
+		for _, m := range jobClientRE.FindAllStringSubmatch(string(b), -1) {
+			cev.jobClients[m[1]] = path
+		}
+		return nil
+	})
 
 	for _, want := range requiredChartEnv {
 		if _, ok := declared[want]; ok {
@@ -951,6 +985,9 @@ type clientEvidence struct {
 	externalSecs map[string]string // target secret name -> file declaring the ExternalSecret
 	idSeeds      map[string]bool   // secret name a CLIENT_ID is written into
 	secretSeeds  map[string]bool   // secret name a CLIENT_SECRET is written into
+	jobClients   map[string]string // client id in the provisioning-Job table -> file
+	s2sCRClients map[string]string // client_credentials OAuth2Client name -> file
+	seedFiles    map[string]string // a plain-Secret CLIENT_ID seed: secret -> file
 }
 
 func newClientEvidence() *clientEvidence {
@@ -959,7 +996,33 @@ func newClientEvidence() *clientEvidence {
 		externalSecs: map[string]string{},
 		idSeeds:      map[string]bool{},
 		secretSeeds:  map[string]bool{},
+		jobClients:   map[string]string{},
+		s2sCRClients: map[string]string{},
+		seedFiles:    map[string]string{},
 	}
+}
+
+// oauth2ClientName extracts metadata.name from an OAuth2Client manifest. Line
+// oriented: the first `name:` under a `metadata:` line. Returns "" if unclear.
+func oauth2ClientName(src string) string {
+	inMeta := false
+	for _, line := range strings.Split(src, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "metadata:" {
+			inMeta = true
+			continue
+		}
+		if inMeta {
+			if m := regexp.MustCompile(`^name:\s*([A-Za-z0-9._-]+)`).FindStringSubmatch(t); m != nil {
+				return m[1]
+			}
+			// left the metadata block (a non-indented key) without a name
+			if line != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+				inMeta = false
+			}
+		}
+	}
+	return ""
 }
 
 // collectClientEvidence records, per file: an OAuth2Client's secretName, an
@@ -977,10 +1040,17 @@ func collectClientEvidence(src, path string, cev *clientEvidence) {
 				cev.secretSeeds[m[1]] = true
 			}
 		}
+		// A client_credentials OAuth2Client is an s2s client; record its NAME so
+		// single-client-owner can check it against the provisioning-Job table.
+		if clientCredRE.MatchString(src) {
+			if nm := oauth2ClientName(src); nm != "" {
+				cev.s2sCRClients[nm] = path
+			}
+		}
 	case secretKindRE.MatchString(src) && clientIdSeedRE.MatchString(src):
-		// A plain Secret that seeds CLIENT_ID (the L1-13 seed templates). Record
-		// both which secret it seeds and whether it ALSO carries CLIENT_SECRET.
+		// A plain Secret that seeds CLIENT_ID (the retired L1-13 seed templates).
 		if m := seedSecretNameRE.FindStringSubmatch(src); m != nil {
+			cev.seedFiles[m[1]] = path
 			cev.idSeeds[m[1]] = true
 			if clientSecretSeedRE.MatchString(src) {
 				cev.secretSeeds[m[1]] = true
@@ -1041,6 +1111,44 @@ func (cev *clientEvidence) check(r *report) {
 				"hand-kept client secret drifts from Hydra's DB and 401s; let hydra-maester generate it. "+
 				"ExternalSecrets are for clients two deployments must share (maestro-internal, "+
 				"envoy-gateway-oidc) — add it to patternBShared with a reason if so.", secret)
+	}
+
+	// single-client-owner: an s2s (client_credentials) client has exactly ONE
+	// owner. The provisioning Job (named client, secret from GSM, cold-safe on
+	// jx-boot and Argo) owns s2s clients; a maester OAuth2Client CR for the same
+	// name is a second owner, and ory's anti-hijack guard then refuses to update
+	// it (observed: mcp-internal-services split-brained, invalid_client). Also a
+	// plain-Secret CLIENT_ID seed is not a provisioning mechanism (helm lookup is
+	// empty at template time, so it rotates), and for a Job-owned client it is a
+	// third writer.
+	//
+	// proven-by: TestClientInBothJobAndCRFails
+	// proven-by: TestS2SClientInJobOnlyPasses
+	// proven-by: TestSeedForJobOwnedClientFails
+	for name, crFile := range cev.s2sCRClients {
+		if jobFile, inJob := cev.jobClients[name]; inJob {
+			r.fail("single-client-owner", crFile,
+				"s2s client %q has TWO owners: the provisioning-Job table (%s) AND this maester "+
+					"OAuth2Client CR. ory refuses to update a client it does not own (ID assigned to "+
+					"another resource), so the client split-brains and mints invalid_client. An s2s client "+
+					"is owned by the Job alone — remove this CR.", name, jobFile)
+		}
+	}
+	for secret, seedFile := range cev.seedFiles {
+		// A seed for a client the Job owns is a third writer that diverges from the
+		// Job's GSM secret. (The Job keys its secret env off the client id, not the
+		// k8s secret name, so match loosely: any Job client whose name is embedded
+		// in the seed's secret name.)
+		for jobName := range cev.jobClients {
+			if strings.Contains(secret, jobName) {
+				r.fail("single-client-owner", seedFile,
+					"plain-Secret seed for %q, but client %q is owned by the provisioning Job. A seed is "+
+						"not a provisioning mechanism (helm lookup is empty at template time, so it rotates) "+
+						"and competes with the Job's GSM secret. Remove the seed; the Job owns the credential.",
+					secret, jobName)
+				break
+			}
+		}
 	}
 }
 
