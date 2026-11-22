@@ -106,8 +106,9 @@ var outboundCalls = []string{"GetAuthToken", "SetAuthHeader", "AuthenticatedClie
 // deleted the first time it is wrong; one with a silent bypass stops meaning
 // anything.
 type exemption struct {
-	issuerEnv string
-	reason    string
+	issuerEnv          string
+	reason             string
+	s2sClientsExternal bool // the Job that owns this repo's s2s clients lives elsewhere
 }
 
 func loadExemption(root string, r *report) exemption {
@@ -136,6 +137,9 @@ func loadExemption(root string, r *report) exemption {
 		case hasColon && k == "reason":
 			e.reason = v
 			last = "reason"
+		case hasColon && k == "s2s-clients-external":
+			e.s2sClientsExternal = strings.EqualFold(v, "true")
+			last = "s2s-clients-external"
 		case last == "reason":
 			e.reason += " " + line
 		}
@@ -265,7 +269,10 @@ is misconfigured.
      owner — ory then refuses to update it and the client mints invalid_client.
      A plain-Secret CLIENT_ID seed is not a provisioning mechanism (helm lookup is
      empty at template time, so it rotates). Public clients (auth-method none)
-     stay maester-owned with a CLIENT_ID-only seed.
+     stay maester-owned with a CLIENT_ID-only seed. ANY NEW s2s client goes in
+     the Job table + a GSM ExternalSecret — never a new OAuth2Client CR and never
+     a seed. A repo whose owning Job lives elsewhere declares s2s-clients-external
+     in .authconformance.
 
   10. One maester per world, namespace-scoped. A per-world umbrella with
      hydra-maester.singleNamespaceMode: false watches every namespace and
@@ -806,6 +813,7 @@ func checkChart(root string, ex exemption, hasOutboundLeg bool, r *report) {
 		if rerr != nil {
 			return nil
 		}
+		cev.hasJobTable = true
 		for _, m := range jobClientRE.FindAllStringSubmatch(string(b), -1) {
 			cev.jobClients[m[1]] = path
 		}
@@ -882,7 +890,7 @@ func checkChart(root string, ex exemption, hasOutboundLeg bool, r *report) {
 
 	// Client-identity rules run after the walk: they need every OAuth2Client,
 	// every ExternalSecret and every CLIENT_ID seed seen together.
-	cev.check(r)
+	cev.check(ex, r)
 }
 
 // ── cluster-neutrality rules (7) ─────────────────────────────────────────────
@@ -986,6 +994,7 @@ type clientEvidence struct {
 	idSeeds      map[string]bool   // secret name a CLIENT_ID is written into
 	secretSeeds  map[string]bool   // secret name a CLIENT_SECRET is written into
 	jobClients   map[string]string // client id in the provisioning-Job table -> file
+	hasJobTable  bool              // this repo contains a setup-internal-clients.sh
 	s2sCRClients map[string]string // client_credentials OAuth2Client name -> file
 	seedFiles    map[string]string // a plain-Secret CLIENT_ID seed: secret -> file
 }
@@ -1078,7 +1087,7 @@ func collectClientEvidence(src, path string, cev *clientEvidence) {
 // proven-by: TestClientWithClientIdSeedPasses
 // proven-by: TestNonSharedClientExternalSecretFails
 // proven-by: TestPatternBSharedClientExternalSecretPasses
-func (cev *clientEvidence) check(r *report) {
+func (cev *clientEvidence) check(ex exemption, r *report) {
 	for secret, file := range cev.clients {
 		if !cev.idSeeds[secret] {
 			r.fail("client-id-reproducible", file,
@@ -1132,6 +1141,24 @@ func (cev *clientEvidence) check(r *report) {
 					"OAuth2Client CR. ory refuses to update a client it does not own (ID assigned to "+
 					"another resource), so the client split-brains and mints invalid_client. An s2s client "+
 					"is owned by the Job alone — remove this CR.", name, jobFile)
+			continue
+		}
+		// An s2s (client_credentials) OAuth2Client CR that is NOT in the Job
+		// table declares a NEW maester-owned s2s client. s2s clients are owned by
+		// the provisioning Job (named client, secret from GSM, cold-safe on
+		// jx-boot and Argo). A maester CR instead gets a maester-minted UUID id
+		// and a maester-written secret that no GSM ExternalSecret can reproduce,
+		// so a rebuild/re-seed 401s. Move it to the Job table + a GSM
+		// ExternalSecret. A repo that legitimately has no Job table (it declares
+		// clients for a Job that lives in another repo) carries a .authconformance
+		// `s2s-clients-external: true` to say so.
+		if !cev.hasJobTable && !ex.s2sClientsExternal {
+			r.fail("single-client-owner", crFile,
+				"s2s client %q is declared as a maester OAuth2Client CR but this repo has no "+
+					"provisioning-Job table to own it. s2s clients are Job-owned (named + GSM secret, "+
+					"cold-safe on jx-boot and Argo); a maester CR mints a UUID and a secret no GSM key "+
+					"can reproduce. Add it to setup-internal-clients.sh + a GSM ExternalSecret, or set "+
+					"s2s-clients-external in .authconformance if the Job is in another repo.", name)
 		}
 	}
 	for secret, seedFile := range cev.seedFiles {
