@@ -885,3 +885,28 @@ func TestSeedForJobOwnedClientFails(t *testing.T) {
 		t.Fatal("a seed competing with a Job-owned client was accepted")
 	}
 }
+
+// A NEW s2s OAuth2Client CR in a repo with NO provisioning-Job table is a
+// maester-owned s2s client — forbidden. s2s clients are Job-owned.
+func TestNewS2SClientWithoutJobTableFails(t *testing.T) {
+	root := fixture{files: map[string]string{
+		"charts/svc/templates/oauth.yaml": "apiVersion: hydra.ory.sh/v1alpha1\nkind: OAuth2Client\nmetadata:\n  name: widget-internal-services\nspec:\n  grantTypes: [client_credentials]\n  secretName: widget-internal-services-oauth\n",
+	}}.build(t)
+	if !has(run(t, root), "single-client-owner") {
+		t.Fatal("a new s2s OAuth2Client CR with no Job table was accepted")
+	}
+}
+
+// The same, but the repo declares s2s-clients-external (its Job is elsewhere) —
+// allowed.
+func TestNewS2SClientExternalJobExempt(t *testing.T) {
+	root := fixture{
+		authConfFile: "s2s-clients-external: true\n",
+		files: map[string]string{
+			"charts/svc/templates/oauth.yaml": "apiVersion: hydra.ory.sh/v1alpha1\nkind: OAuth2Client\nmetadata:\n  name: widget-internal-services\nspec:\n  grantTypes: [client_credentials]\n  secretName: widget-internal-services-oauth\n",
+		},
+	}.build(t)
+	if has(run(t, root), "single-client-owner") {
+		t.Fatal("an s2s CR with s2s-clients-external declared was wrongly flagged")
+	}
+}
