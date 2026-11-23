@@ -1,0 +1,9 @@
+# The other half of the guard: a build that SUCCEEDED must not take the skip branch. The step
+# then goes on to invoke kaniko, which is not in this sandbox, so its exit code is not asserted
+# -- what is asserted is that it did not skip, which is the only thing the guard decides.
+why: a passing go build does not take the skip branch
+only:
+  - build-container-build
+steps:
+  build-container-build:
+    absent: not building an image
