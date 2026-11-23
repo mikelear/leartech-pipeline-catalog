@@ -117,6 +117,16 @@ type branch struct {
 	} `json:"commit"`
 }
 
+// What this run created, so a failure can undo it. Package-level because fail() runs from the
+// bottom of the wait loops, where there is no call stack left to thread them through.
+var (
+	probeForge  string
+	probeRepo   string
+	probeBranch string
+	probePR     int
+	keepOpen    bool
+)
+
 func main() {
 	forge := flag.String("forge", "", "forge base URL, e.g. https://forgejo.jx.leartech.com")
 	repo := flag.String("repo", "", "probe repo as owner/name, e.g. it-test/lh-test")
@@ -140,6 +150,7 @@ func main() {
 
 	stamp := time.Now().UTC().Format("20060102-150405")
 	branchName := "selfprobe/" + stamp
+	probeForge, probeRepo, probeBranch, keepOpen = *forge, *repo, branchName, *keep
 
 	var b branch
 	if err := c.do(http.MethodGet, "/branches/"+*base, nil, &b); err != nil {
@@ -169,6 +180,7 @@ func main() {
 	}, &pr); err != nil {
 		fail("open the pull request: %v", err)
 	}
+	probePR = pr.Number
 	fmt.Printf("== opened %s#%d\n", *repo, pr.Number)
 
 	defer func() {
@@ -277,7 +289,33 @@ func short(sha string) string {
 	return sha
 }
 
+// fail reports the failure and exits — but not before tidying up after itself.
+//
+// os.Exit skips deferred calls, so the first version of this left a pull request OPEN and its
+// branch behind on every failure (measured: it-test/lh-test#18). A canary that fills the repo it
+// watches with broken pull requests is one whose findings nobody can see past, which is the
+// opposite of the point.
 func fail(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "\nFAIL selfprobe: "+format+"\n", args...)
+	cleanupNow()
 	os.Exit(1)
+}
+
+// cleanupNow closes the probe pull request and deletes its branch, if this run created one and
+// -keep was not asked for. Best effort and silent on its own errors: it runs on the way out of a
+// failure, and a second error there would bury the first.
+func cleanupNow() {
+	if keepOpen || probePR == 0 {
+		return
+	}
+	c := &client{
+		base:  probeForge,
+		token: strings.TrimSpace(os.Getenv("FORGE_TOKEN")),
+		http:  &http.Client{Timeout: 20 * time.Second},
+		repo:  probeRepo,
+	}
+	_ = c.do(http.MethodPatch, fmt.Sprintf("/pulls/%d", probePR),
+		map[string]any{"state": "closed"}, nil)
+	_ = c.do(http.MethodDelete, "/branches/"+probeBranch, nil, nil)
+	fmt.Fprintf(os.Stderr, "   (closed %s#%d and deleted %s)\n", probeRepo, probePR, probeBranch)
 }
