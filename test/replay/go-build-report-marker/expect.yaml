@@ -1,0 +1,16 @@
+# catalog#351. go/pullrequest's report step filed its comment under `-check build`, a context
+# NO consumer declares -- so a red `pr` check carried an explanation a reader could not find.
+# Every sibling names its own context: -check lint, -check test, -check govulncheck.
+#
+# The stub prpost prints its argv space-joined, so this asserts the ARGUMENT rather than the
+# source line: `-check pr`, the sticky marker still on `build` (kept so an existing comment is
+# updated in place instead of orphaned -- the `go`->`build` alias in tasklint payload records
+# that), and the build's own exit code as the step's.
+why: a red pr check files under -check pr with the build marker, and fails at the build code
+only:
+  - report
+steps:
+  report:
+    exit: 2
+    contains: -check pr
+    absent: -check build

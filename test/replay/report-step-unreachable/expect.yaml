@@ -1,0 +1,18 @@
+# catalog#377. This task's audit step cannot even start (its image is a ko build with no shell)
+# and it carries `onError: continue`, so the REPORT step still runs -- which is the property
+# replayed: a step that fails does not take the task's explanation with it.
+#
+# The failure mode this excludes is the one `failure_report_test` finds statically: a report step
+# with no `onError: continue` before it can never run, and reads from the file exactly like a task
+# that reports.
+why: a failing audit step still reaches the report step, which posts a failure
+only:
+  - kyverno-audit
+  - report
+steps:
+  kyverno-audit:
+    exit: 1
+  report:
+    exit: 1
+    contains: -outcome failure
+    absent: -outcome success

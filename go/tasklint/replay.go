@@ -205,6 +205,10 @@ func newSandbox(dir, fx, taskPath string) *sandbox {
 	// a handoff, and the handoffs are where three of this catalog's defects lived.
 	copyTree(filepath.Join(fx, "workspace"), filepath.Join(s.ws, "source"))
 	copyTree(filepath.Join(fx, "shared"), s.ws)
+	// bin/ is the fixture's stubs — a fake prpost, a helm that renders nothing. It lands on
+	// PATH first, so a replay can assert what a step HANDS another tool (the argv a comment
+	// carries) without having that tool.
+	copyTree(filepath.Join(fx, "bin"), s.bin)
 
 	// Tekton's env, from the fixture, with /workspace pointed at the sandbox.
 	if b, err := os.ReadFile(filepath.Join(fx, "env")); err == nil { // #nosec G304
@@ -236,6 +240,12 @@ func (s *sandbox) run(name string) (string, int) {
 	if err := os.WriteFile(path, []byte(findScript(s.steps, name)), 0o600); err != nil {
 		return "", 1
 	}
+	_ = filepath.Walk(s.bin, func(p string, info os.FileInfo, err error) error {
+		if err == nil && info != nil && !info.IsDir() {
+			_ = os.Chmod(p, 0o755)
+		}
+		return nil
+	})
 	cmd := exec.Command("bash", path)
 	cmd.Dir = filepath.Join(s.ws, "source")
 	cmd.Env = append([]string{"PATH=" + s.bin + ":" + os.Getenv("PATH"), "HOME=" + s.root}, s.env...)
