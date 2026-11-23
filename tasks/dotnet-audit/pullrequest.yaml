@@ -110,7 +110,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.dotnet-audit.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.50.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.2
           name: report
           resources: {}
           env:
