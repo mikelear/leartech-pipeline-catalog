@@ -75,7 +75,25 @@ FROM alpine:3.24
 # Every step that needs a shell tool can now run in THIS image and have it, so the
 # class is gone rather than repeatedly patched. Installed once, at build time, instead
 # of apt-get per run.
-RUN apk add --no-cache ca-certificates git bash curl jq openssl
+RUN apk add --no-cache ca-certificates git bash curl jq openssl python3
+# PYTHON3, because a CONSUMER's end2end checks pipe into it and this is the step image they run in.
+#
+# Measured on leartech-ba-service#238/#239 (an empty commit on main failed identically, so it is
+# pre-existing): the end2end pod reported
+#
+#   /workspace/source/end2end/07-s2s-audience.sh: line 26: python3: command not found
+#   FAIL  aud does NOT contain leartech-ba-service ->   (allow-list rejected it silently)
+#
+# and, where the same script does `curl … | python3 -c '…'`, the missing interpreter surfaces as a
+# WRITE error instead:
+#
+#   curl: Failed writing body
+#   FAIL  register returned no sessionId
+#
+# Two different messages, one cause: every check that parses JSON with python3 failed, and the suite
+# scored 4/10 with 14 skipped on a preview that was answering correctly. The estate's end2end packs use
+# python3 throughout (they were written for the golang CI image, which has it), so the step image is
+# where it belongs — the same argument as helm, which this file already carries for the same reason.
 # HELM, because the chart-standard gate RENDERS and this image is where the render must happen.
 #
 # Measured on leartech-console-api#37: the task's `render` step ran in jx-boot (has helm, no chartstd)
@@ -117,7 +135,7 @@ RUN set -eu; \
     done; \
     test -f /usr/local/share/leartech-go.mk || { echo "FAIL: leartech-go.mk did not land in the image" >&2; exit 1; }; \
     test -f /usr/local/share/deny.base.toml || { echo "FAIL: deny.base.toml did not land in the image" >&2; exit 1; }; \
-    for t in bash curl jq openssl kubectl helm; do \
+    for t in bash curl jq openssl python3 kubectl helm; do \
       command -v "$t" >/dev/null || { echo "FAIL: $t missing from the runtime image; a consumer step would have to install it" >&2; exit 1; }; \
     done; \
     echo "==> leartech-checkers: $(ls /usr/local/bin | wc -l) binaries, leartech-go.mk, and the step tools (bash curl jq openssl kubectl)"
