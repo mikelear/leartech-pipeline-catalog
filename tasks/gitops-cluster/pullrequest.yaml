@@ -165,7 +165,7 @@ spec:
         # A red `gitops-cluster` with no comment is the console-api#31 shape: Lighthouse's generic
         # "the following test failed", with the actual rule in a log nobody was told to open. This
         # step posts the gate's own output as the comment, so the PR says which rule failed.
-        - image: ghcr.io/mikelear/leartech-checkers:0.45.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.46.0
           name: report
           resources: {}
           env:
