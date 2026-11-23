@@ -153,6 +153,12 @@ func main() {
 			"the fewest delegated posters a real catalog has; the list only shrinks by a decision")
 		_ = fs.Parse(flag.Args()[1:])
 		code = runFailures(*dir, resolve(*dir, *baseline), resolve(*dir, *delegates), *floor)
+	case "tools":
+		fs := flag.NewFlagSet("tools", flag.ExitOnError)
+		baseline := fs.String("baseline", "test/go/tool_callers.txt",
+			"catalog binaries called from a step outside the checkers image, `<file>::<step>::<bin>|<why>`")
+		_ = fs.Parse(flag.Args()[1:])
+		code = runTools(*dir, resolve(*dir, *baseline))
 	case "replay":
 		fs := flag.NewFlagSet("replay", flag.ExitOnError)
 		fixtures := fs.String("fixtures", "test/replay", "recorded PRs, one directory each")
