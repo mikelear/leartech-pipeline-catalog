@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -229,7 +230,8 @@ func checkObjects(docs []obj, wantStore string) []Finding {
 var boolDefault = regexp.MustCompile(`\|\s*default\s+(true|false)\b`)
 
 var (
-	secretKey = regexp.MustCompile(`(?i)^\s*[a-z0-9_.-]*(password|passwd|secret|token|clientsecret|apikey|api_key)[a-z0-9_.-]*\s*:\s*(.+)$`)
+	requireTools string
+	secretKey    = regexp.MustCompile(`(?i)^\s*[a-z0-9_.-]*(password|passwd|secret|token|clientsecret|apikey|api_key)[a-z0-9_.-]*\s*:\s*(.+)$`)
 	// Values that read like a secret but are not: a reference, an env name, a
 	// path, a template action. Anything else after the colon is material.
 	notMaterial = regexp.MustCompile(`(?i)^(\{\{|""|''|~|null|\$|/|env\.|secretKeyRef|valueFrom|` +
@@ -348,11 +350,43 @@ func main() {
 	flag.BoolVar(&toggleNotes, "toggle-notes", false,
 		"report `*.enabled` keys in values.yaml that no toggle declaration covers (a "+
 			"NOTE, not a failure). Needs -chart.")
+	flag.StringVar(&requireTools, "require", "",
+		"comma-separated tools that must be on PATH for the STEP that calls this tool. "+
+			"Exits non-zero naming each one that is missing. This exists so a shell step does "+
+			"not have to compose that sentence itself: prose in a `script: |` has no test "+
+			"(the message-layer ratchet is right about that), and the message matters — "+
+			"measured on leartech-console-api#37, a missing `chartstd` in the render step "+
+			"reported `FAIL: cannot read <the repo's toggles file>`, which blames the repo.")
 	flag.StringVar(&wantStore, "store", "",
 		"the external-secrets store this estate supplies (S1). Required for a meaningful "+
 			"run: without it the tool can only see a store that rendered EMPTY, not a store "+
 			"that rendered the wrong name")
 	flag.Parse()
+
+	if requireTools != "" {
+		// A TOOLCHAIN CHECK, NOT A CHART CHECK. It runs first and alone, because a missing
+		// binary makes every later rule meaningless — and it prints WHICH tool and WHOSE
+		// problem it is, which is the half a shell `command -v` block gets wrong.
+		var missing, wanted []string
+		for _, t := range strings.Split(requireTools, ",") {
+			t = strings.TrimSpace(t)
+			if t == "" {
+				continue
+			}
+			wanted = append(wanted, t)
+			if _, err := exec.LookPath(t); err != nil {
+				missing = append(missing, t)
+			}
+		}
+		if len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "chart-standard: this step's image is missing %s.\n", strings.Join(missing, ", "))
+			fmt.Fprintf(os.Stderr, "  The step declared it needs: %s.\n", strings.Join(wanted, ", "))
+			fmt.Fprintf(os.Stderr, "  A missing tool is a TASK defect, not a repo defect: nothing about the chart\n")
+			fmt.Fprintf(os.Stderr, "  under test is being reported here. Fix the task's image.\n")
+			os.Exit(1)
+		}
+		return
+	}
 
 	if tenantCheck != "" {
 		// One entry point for the "a released chart must not carry this" rules: S10

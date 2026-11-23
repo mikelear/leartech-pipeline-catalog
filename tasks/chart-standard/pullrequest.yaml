@@ -42,13 +42,41 @@ spec:
           resources: {}
 
         # Render here (jx-boot carries helm), judge next door (checkers image).
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
+        # THE RENDER RUNS IN THE CHECKERS IMAGE, BECAUSE IT ALSO NEEDS `chartstd`.
+        #
+        # This step does two things: `helm template` and `chartstd -list-toggles` (to find the paths to
+        # flip). It used to run in jx-boot — helm yes, chartstd no — so on any repo that DECLARES toggles
+        # it died at `chartstd: command not found`, and the message named the toggles FILE. A repo
+        # declaring none passed, because of the `if [ -f "$decl" ]` guard below. Measured on
+        # leartech-console-api#37: the behavioural half of this gate had never run anywhere.
+        #
+        # The checkers image now carries helm for exactly this reason (its Dockerfile says so), and its
+        # own build asserts every binary it ships. So one image has both tools, and the split between the
+        # two steps is about WHAT they check, not about which image happens to have which binary.
+        #
+        # ORDER OF LANDING, because the pin is a released tag: this change and the Dockerfile change
+        # merge together; merging releases a NEW checkers tag; Renovate then bumps this pin (its rule
+        # already auto-merges leartech-checkers bumps, and that PR runs the new image, so it is green).
+        # Until the bump lands, `chartstd -require helm,chartstd` fails with "missing helm" — which is
+        # the honest state: the image referenced here genuinely does not have it yet, and the message
+        # says so instead of blaming the chart.
+        - image: ghcr.io/mikelear/leartech-checkers:0.48.2
           name: render
           resources: {}
           script: |
             #!/usr/bin/env bash
             set -euo pipefail
             shopt -s nullglob
+            # NAME THE TOOL THAT IS MISSING, FROM GO, NOT FROM SHELL.
+            #
+            # Without this the first symptom is `chartstd: command not found` in the middle of the
+            # loop, and the FAIL line beside it blames the toggles FILE — so a task defect reads as a
+            # repo defect. Measured on leartech-console-api#37.
+            #
+            # The sentence comes from `chartstd -require` rather than a block of `echo`s here, because
+            # prose in a `script: |` has no test: this repo runs a message-layer ratchet, and a verdict
+            # composed in shell is one nothing can assert on. One line, and the message lives in Go.
+            chartstd -require helm,chartstd
             mkdir -p /workspace/renders
 
             charts=(charts/*/Chart.yaml)

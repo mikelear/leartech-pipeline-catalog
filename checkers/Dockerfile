@@ -75,6 +75,23 @@ FROM alpine:3.24
 # class is gone rather than repeatedly patched. Installed once, at build time, instead
 # of apt-get per run.
 RUN apk add --no-cache ca-certificates git bash curl jq openssl
+# HELM, because the chart-standard gate RENDERS and this image is where the render must happen.
+#
+# Measured on leartech-console-api#37: the task's `render` step ran in jx-boot (has helm, no chartstd)
+# and called `chartstd -list-toggles`, which is in THIS image — so the behavioural half of the gate
+# (`helm template` with each declared off-switch flipped) has never run on any repo that declares
+# toggles, and a repo declaring NONE passed because of an `if [ -f "$decl" ]` guard. The gate rewarded
+# not declaring them, and the ones that did went red with a message naming the toggles FILE.
+#
+# Pinned by version with a digest check at build time, so the image is reproducible from its tag alone —
+# the same rule kubectl above follows.
+ARG HELM_VERSION=v3.16.4
+RUN set -eu; \
+    curl -fsSL -o /tmp/helm.tgz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"; \
+    tar -xzf /tmp/helm.tgz -C /tmp; \
+    mv /tmp/linux-amd64/helm /usr/local/bin/helm; \
+    chmod +x /usr/local/bin/helm; \
+    helm version --short
 # kubectl from the release channel, pinned by digest-of-version at build time so the
 # image is reproducible from its tag alone.
 RUN set -eu; \
@@ -99,7 +116,7 @@ RUN set -eu; \
     done; \
     test -f /usr/local/share/leartech-go.mk || { echo "FAIL: leartech-go.mk did not land in the image" >&2; exit 1; }; \
     test -f /usr/local/share/deny.base.toml || { echo "FAIL: deny.base.toml did not land in the image" >&2; exit 1; }; \
-    for t in bash curl jq openssl kubectl; do \
+    for t in bash curl jq openssl kubectl helm; do \
       command -v "$t" >/dev/null || { echo "FAIL: $t missing from the runtime image; a consumer step would have to install it" >&2; exit 1; }; \
     done; \
     echo "==> leartech-checkers: $(ls /usr/local/bin | wc -l) binaries, leartech-go.mk, and the step tools (bash curl jq openssl kubectl)"
