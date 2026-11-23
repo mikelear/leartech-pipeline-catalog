@@ -1,0 +1,13 @@
+# A vendor chart's Helm hook — CORRECT for Helm, and translated by the CMP at render time.
+# The gate must NOT fail this: 45 of the 47 hook-carrying objects in the estate are exactly this
+# shape, and a gate that fails them is a gate somebody switches off.
+---
+# Source: kyverno/templates/hooks/kyverno-migrate-resources-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kyverno-migrate-resources
+  namespace: kyverno
+  annotations:
+    "helm.sh/hook": post-upgrade
+spec: {}

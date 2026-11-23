@@ -159,3 +159,82 @@ func TestEveryMappedPhaseIsAccepted(t *testing.T) {
 		}
 	}
 }
+
+// ── OWNERSHIP: the 45-vendor / 2-ours split, as a rule ──────────────────────────────────────────────
+//
+// The estate has 47 hook-carrying objects and only TWO of the charts are ours. A gate that failed on
+// the vendor ones would need 45 hand-kept allow-list entries — the two-hand-kept-lists defect this
+// repo keeps removing — and the first thing anyone would do is switch it off. So:
+//
+//	a finding on a chart WE OWN   -> FAIL   (the CMP would otherwise paper over it at render time)
+//	a finding on a VENDOR chart   -> report, one line per chart, and pass
+//
+// The fixtures below are the two shapes: vendor-only (must pass, but SAY what it saw) and
+// ours-and-vendor (must fail, and mention only our chart in the failure).
+
+func loadFixture(t *testing.T, dir string) []obj {
+	t.Helper()
+	objs, err := readAll(filepath.Join("testdata", dir))
+	if err != nil {
+		t.Fatalf("readAll(%s): %v", dir, err)
+	}
+	if len(objs) == 0 {
+		t.Fatalf("%s rendered no objects", dir)
+	}
+	return objs
+}
+
+func TestAVendorChartDoesNotFailTheBuild(t *testing.T) {
+	mine, theirs := CheckOwned(loadFixture(t, "vendor-only"), []string{"leartech-"})
+	if len(mine) != 0 {
+		t.Errorf("a vendor chart's hook failed the gate: %v", mine)
+	}
+	if len(theirs) != 1 || theirs[0].Chart != "kyverno" {
+		t.Errorf("the vendor hook was not reported, so a NEW vendor hook would be invisible: %v", theirs)
+	}
+}
+
+func TestOurChartFailsAndTheVendorOneDoesNot(t *testing.T) {
+	mine, theirs := CheckOwned(loadFixture(t, "ours-and-vendor"), []string{"leartech-"})
+	if len(mine) != 1 {
+		t.Fatalf("want exactly 1 finding in our chart, got %d: %v", len(mine), mine)
+	}
+	if !strings.Contains(mine[0].Where, "console-migrate") {
+		t.Errorf("the finding names the wrong object: %s", mine[0].Where)
+	}
+	if mine[0].Chart != "leartech-console-api" {
+		t.Errorf("Chart = %q, want leartech-console-api (attribution is a field, not a substring)",
+			mine[0].Chart)
+	}
+	if len(theirs) != 1 || theirs[0].Chart != "kyverno" {
+		t.Errorf("the vendor chart was not reported separately: %v", theirs)
+	}
+}
+
+// An object with no `# Source:` comment cannot be attributed, so it is treated as OURS. That is the
+// conservative direction on purpose: an unattributable hook is the case a person should look at.
+func TestUnattributableHooksAreTreatedAsOurs(t *testing.T) {
+	objs := []obj{{
+		Kind: "Job", Name: "mystery", NS: "ns", Source: "-",
+		Annots: map[string]string{annHelmHook: "post-upgrade"},
+	}}
+	mine, theirs := CheckOwned(objs, []string{"leartech-"})
+	if len(mine) != 1 || len(theirs) != 0 {
+		t.Errorf("an unattributable hook was treated as vendor: mine=%v theirs=%v", mine, theirs)
+	}
+}
+
+// AH7 is grouped PER CHART. Before this, every hook in the estate collapsed into one group (the
+// Source field became constant when documents started being split by hand), so two unrelated charts
+// were reported as "sharing one phase".
+func TestOrderingGroupsDoNotMixCharts(t *testing.T) {
+	objs := []obj{
+		{Kind: "Job", Name: "a", Chart: "kyverno", Annots: map[string]string{annHelmHook: "post-upgrade"}},
+		{Kind: "Job", Name: "b", Chart: "leartech-console-api", Annots: map[string]string{annHelmHook: "post-upgrade"}},
+	}
+	for _, f := range Check(objs) {
+		if f.Rule == ruleNoOrdering {
+			t.Errorf("hooks from two different charts were grouped as one phase: %s", f.Detail)
+		}
+	}
+}
