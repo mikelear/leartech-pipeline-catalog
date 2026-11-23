@@ -32,10 +32,11 @@ type step struct {
 	Script  string
 	Image   string
 	OnError string
-	// Env is the names this step can read: its own `env:` plus the taskSpec's
-	// `stepTemplate.env:`. A script that uses ${VAR:?...} dies if VAR is not in here —
-	// there is no fallback — so the set is what `tasklint env` judges.
-	Env []string
+	// Env is this step's OWN `env:` names; TemplateEnv is the taskSpec's `stepTemplate.env:`.
+	// They are kept apart because the two rules that read them differ: a step may legitimately
+	// override a template default, but it may not declare the same name twice ITSELF.
+	Env         []string
+	TemplateEnv []string
 }
 
 func (s step) where() string {
@@ -122,16 +123,18 @@ func loadStepsFromFiles(paths []string, baseDir ...string) ([]step, []error) {
 		}
 		for _, t := range doc.Spec.PipelineSpec.Tasks {
 			for _, s := range t.TaskSpec.Steps {
-				env := make([]string, 0, len(s.Env)+len(t.TaskSpec.StepTemplate.Env))
-				for _, e := range t.TaskSpec.StepTemplate.Env {
-					env = append(env, e.Name)
-				}
+				own := make([]string, 0, len(s.Env))
 				for _, e := range s.Env {
-					env = append(env, e.Name)
+					own = append(own, e.Name)
+				}
+				tmpl := make([]string, 0, len(t.TaskSpec.StepTemplate.Env))
+				for _, e := range t.TaskSpec.StepTemplate.Env {
+					tmpl = append(tmpl, e.Name)
 				}
 				out = append(out, step{
 					File: name, Task: t.Name, Name: s.Name,
-					Script: s.Script, Image: s.Image, OnError: s.OnError, Env: env,
+					Script: s.Script, Image: s.Image, OnError: s.OnError,
+					Env: own, TemplateEnv: tmpl,
 				})
 			}
 		}

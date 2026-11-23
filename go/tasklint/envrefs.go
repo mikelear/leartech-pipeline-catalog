@@ -50,7 +50,7 @@ func runEnvRefs(steps []step, loadErrs []error) int {
 		sort.Strings(names)
 		for _, name := range uniqueSorted(names) {
 			checked++
-			if containsString(s.Env, name) {
+			if containsString(s.Env, name) || containsString(s.TemplateEnv, name) {
 				continue
 			}
 			findings = append(findings, fmt.Sprintf(
@@ -59,6 +59,29 @@ func runEnvRefs(steps []step, loadErrs []error) int {
 					"variable happens to be set — and never when its own check fails. Declare it "+
 					"(env: %s) or drop the :? and give it a default.",
 				s.File, stepName(s), name, name, name, name))
+			fail++
+		}
+	}
+
+	// A step that declares the SAME env name twice is decided by the last one, silently. That is
+	// not a YAML error, so nothing reports it — and the earlier entry is dead config that reads as
+	// live. Measured 2026-11-23: eighteen report steps ended up with two identical CLUSTER_ID
+	// blocks after a fix landed on a task that already had one, and every one looked configured.
+	for _, s := range steps {
+		seen := map[string]bool{}
+		var dupes []string
+		for _, name := range s.Env {
+			if seen[name] && !containsString(dupes, name) {
+				dupes = append(dupes, name)
+			}
+			seen[name] = true
+		}
+		sort.Strings(dupes)
+		for _, name := range dupes {
+			findings = append(findings, fmt.Sprintf(
+				"%s :: step %s declares %s twice in its env. Kubernetes takes the LAST and ignores "+
+					"the first, so the earlier entry is dead config that reads as live",
+				s.File, stepName(s), name))
 			fail++
 		}
 	}
