@@ -100,18 +100,6 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
-          - name: CLUSTER_ID
-            valueFrom:
-              configMapKeyRef:
-                name: jx-cluster-config
-                key: CLUSTER_ID
-                optional: true
-          - name: CLUSTER_ID
-            valueFrom:
-              configMapKeyRef:
-                name: jx-cluster-config
-                key: CLUSTER_ID
-                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail

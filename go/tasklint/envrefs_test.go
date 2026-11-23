@@ -185,3 +185,70 @@ spec:
 		t.Fatal("a non-fatal reference was reported")
 	}
 }
+
+// A step that declares the same env name twice is decided by the LAST entry, silently — not a
+// YAML error, so nothing reports it, and the earlier entry is dead config that reads as live.
+//
+// Measured 2026-11-23: eighteen report steps ended up with two identical CLUSTER_ID blocks after a
+// fix landed on a task that already had one. Every one of them looked correctly configured.
+//
+// proven-by: TestEnvRefsFindsADuplicateDeclaration
+func TestEnvRefsFindsADuplicateDeclaration(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"tasks/demo/pullrequest.yaml": `apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+spec:
+  pipelineSpec:
+    tasks:
+    - name: t
+      taskSpec:
+        steps:
+        - name: report
+          env:
+          - name: CLUSTER_ID
+            value: gcp
+          - name: CLUSTER_ID
+            value: az
+          script: |
+            #!/bin/bash
+            echo "${CLUSTER_ID:-}"
+`,
+	})
+	steps, errs := loadSteps(root)
+	if code := runEnvRefs(steps, errs); code == 0 {
+		t.Fatal("a step declaring CLUSTER_ID twice passed; the first value is dead and unreadable")
+	}
+}
+
+// ...and declaring it ONCE from the stepTemplate while a step overrides it is legitimate
+// layering, not a duplicate: the step's entry is meant to win.
+//
+// proven-by: TestEnvRefsAcceptsATemplatePlusStepOverride
+func TestEnvRefsAcceptsATemplatePlusStepOverride(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"tasks/demo/pullrequest.yaml": `apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+spec:
+  pipelineSpec:
+    tasks:
+    - name: t
+      taskSpec:
+        stepTemplate:
+          env:
+          - name: CLUSTER_ID
+            value: gcp
+        steps:
+        - name: report
+          env:
+          - name: CLUSTER_ID
+            value: az
+          script: |
+            #!/bin/bash
+            echo "${CLUSTER_ID:-}"
+`,
+	})
+	steps, errs := loadSteps(root)
+	if code := runEnvRefs(steps, errs); code != 0 {
+		t.Fatal("a template default overridden by a step was treated as a duplicate")
+	}
+}
