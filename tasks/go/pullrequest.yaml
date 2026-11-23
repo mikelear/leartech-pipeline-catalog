@@ -111,6 +111,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -125,7 +137,7 @@ spec:
             grep -qE "^go: (downloading|.*error)" /workspace/.go-build.log && \
               ! grep -qE "\.[a-z]+\.go:[0-9]+" /workspace/.go-build.log && gate="go mod download"
             {
-              printf '### :x: Build: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Build: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'Failed at `%s` (exit %s).\n\n' "$gate" "$rc"
               printf '```\n'
               grep -E "\.go:[0-9]+(:[0-9]+)?:|^# |cannot find|undefined:|declared and not used|no required module" \
@@ -134,7 +146,7 @@ spec:
               tail -n 25 /workspace/.go-build.log
               printf '```\n'
             } > /tmp/body.md
-            prpost -tool build -check pr -outcome failure -cluster "${CLUSTER_ID:?}" \
+            prpost -tool build -check pr -outcome failure -cluster "${CLUSTER_ID:-}" \
               -summary "$gate exited $rc" -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

@@ -167,6 +167,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -177,7 +189,7 @@ spec:
               exit 0
             fi
             {
-              printf '### :x: Kyverno audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Kyverno audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'The policies this cluster runs reject the manifests in this PR.\n'
               printf 'These would be found at apply time otherwise — after merge.\n\n'
               printf '```\n'
@@ -185,7 +197,7 @@ spec:
               printf '```\n'
             } > /tmp/body.md
             prpost -tool kyverno-audit -check kyverno-audit -outcome failure \
-              -cluster "${CLUSTER_ID:?}" -summary "policy violations in this PR" \
+              -cluster "${CLUSTER_ID:-}" -summary "policy violations in this PR" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

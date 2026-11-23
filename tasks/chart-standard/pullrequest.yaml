@@ -246,6 +246,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -256,7 +268,7 @@ spec:
             rc=$(cat /workspace/.chartstd.rc)
             findings=$(grep -c '^S[0-9]' /workspace/.chartstd.log || true)
             {
-              printf '### :x: Chart standard: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Chart standard: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'Store judged against: `%s`.%s\n\n' "$CHART_STORE" \
                 "${CHART_VALUES:+ Values: \`$CHART_VALUES\`.}"
               printf '```\n'
@@ -264,7 +276,7 @@ spec:
               printf '```\n'
             } > /tmp/body.md
             prpost -tool chart-standard -check chart-standard -outcome failure \
-              -cluster "${CLUSTER_ID:?}" \
+              -cluster "${CLUSTER_ID:-}" \
               -summary "chart-standard: $findings finding(s)" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"

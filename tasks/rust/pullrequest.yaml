@@ -98,6 +98,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -111,7 +123,7 @@ spec:
             grep -qE "^error: failed to (load|select) source|^error: failed to get .* as a dependency" \
               /workspace/.cargo-build.log && gate="cargo fetch"
             {
-              printf '### :x: Build: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Build: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'Failed at `%s` (exit %s).\n\n' "$gate" "$rc"
               printf '```\n'
               if [ "$gate" = "cargo fetch" ]; then
@@ -124,7 +136,7 @@ spec:
               tail -n 25 /workspace/.cargo-build.log
               printf '```\n'
             } > /tmp/body.md
-            prpost -tool build -check build -outcome failure -cluster "${CLUSTER_ID:?}" \
+            prpost -tool build -check build -outcome failure -cluster "${CLUSTER_ID:-}" \
               -summary "$gate exited $rc" -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

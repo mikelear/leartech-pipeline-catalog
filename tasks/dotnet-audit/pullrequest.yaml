@@ -142,6 +142,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -155,7 +167,7 @@ spec:
             grep -q "FAIL: deprecated packages" /workspace/.dotnet-audit.log \
               && gate="deprecated packages"
             {
-              printf '### :x: Audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf '`%s` (exit %s). Vulnerability threshold: `%s`.\n\n' "$gate" "$rc" \
                 "${DOTNET_VULN_FAIL_ON:-High}"
               printf '```\n'
@@ -170,7 +182,7 @@ spec:
               printf '```\n'
             } > /tmp/body.md
             prpost -tool dotnet-audit -check dotnet-audit -outcome failure \
-              -cluster "${CLUSTER_ID:?}" -summary "$gate" \
+              -cluster "${CLUSTER_ID:-}" -summary "$gate" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

@@ -144,6 +144,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -154,7 +166,7 @@ spec:
               exit 0
             fi
             {
-              printf '### :x: Dockerfile lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Dockerfile lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'Findings at or above `%s` block this build; anything lower is\n' \
                 "${HADOLINT_THRESHOLD:-error}"
               printf 'printed in the log and does not.\n\n'
@@ -164,7 +176,7 @@ spec:
               printf '```\n'
             } > /tmp/body.md
             prpost -tool dockerfile-lint -check dockerfile-lint -outcome failure \
-              -cluster "${CLUSTER_ID:?}" -summary "hadolint findings at or above the threshold" \
+              -cluster "${CLUSTER_ID:-}" -summary "hadolint findings at or above the threshold" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

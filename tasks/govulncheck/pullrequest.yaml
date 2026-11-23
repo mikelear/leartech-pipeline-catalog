@@ -113,6 +113,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -123,7 +135,7 @@ spec:
               exit 0
             fi
             {
-              printf '### :x: govulncheck: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: govulncheck: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'govulncheck exited %s. The findings, then the tail of its log:\n\n' "$rc"
               printf '```\n'
               grep -E '^Vulnerability|^  (More info|Found in|Fixed in)|GO-[0-9]{4}-[0-9]+' \
@@ -132,7 +144,7 @@ spec:
               printf '```\n'
             } > /tmp/body.md
             prpost -tool govulncheck -check govulncheck -outcome failure \
-              -cluster "${CLUSTER_ID:?}" -summary "govulncheck exited $rc" \
+              -cluster "${CLUSTER_ID:-}" -summary "govulncheck exited $rc" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"
