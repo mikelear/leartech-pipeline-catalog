@@ -175,3 +175,56 @@ func TestClientSurfacesAForgeError(t *testing.T) {
 		t.Errorf("error %q does not carry the status", err)
 	}
 }
+
+// A failure must tidy up after itself.
+//
+// fail() used to call os.Exit, which SKIPS deferred calls, so every failure left its pull request
+// open and its branch behind — measured: it-test/lh-test#18 and selfprobe/20261123-182033 survived
+// a failed run. A canary that fills the repo it watches with broken pull requests is one whose
+// findings nobody can see past.
+//
+// proven-by: TestCleanupNowClosesTheProbePullRequest
+func TestCleanupNowClosesTheProbePullRequest(t *testing.T) {
+	f := &fakeForge{checkState: "failure"}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+
+	// The state a mid-run failure leaves behind.
+	probeForge, probeRepo = srv.URL, "it-test/lh-test"
+	probeBranch, probePR, keepOpen = "selfprobe/t", 7, false
+	t.Setenv("FORGE_TOKEN", "tok")
+	defer func() { probePR, probeBranch, keepOpen = 0, "", false }()
+
+	cleanupNow()
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.prOpen {
+		t.Error("the probe pull request was left open after a failure")
+	}
+	if !f.branchGone {
+		t.Error("the probe branch was left behind after a failure")
+	}
+}
+
+// ...and -keep is respected, because a person debugging the probe needs the pull request to stay.
+//
+// proven-by: TestCleanupNowHonoursKeep
+func TestCleanupNowHonoursKeep(t *testing.T) {
+	f := &fakeForge{checkState: "failure"}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+
+	probeForge, probeRepo = srv.URL, "it-test/lh-test"
+	probeBranch, probePR, keepOpen = "selfprobe/t", 7, true
+	t.Setenv("FORGE_TOKEN", "tok")
+	defer func() { probePR, probeBranch, keepOpen = 0, "", false }()
+
+	cleanupNow()
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.branchGone {
+		t.Error("-keep was ignored: the branch was deleted anyway")
+	}
+}
