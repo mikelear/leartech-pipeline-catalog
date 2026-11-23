@@ -16,7 +16,6 @@
 
 
 # ── end2end-runner/*.sh: the runner's own tests ───────────────────────────────────
-end2end-runner/phases_test.sh|EXECUTES the task's own step scripts out of the parsed YAML against a fixture workspace -- a 288-line harness, not a text check, so it wants a rethink as a Go harness rather than a mechanical port
 
 # ── tasks/*: python written INTO a step script ────────────────────────────────────
 # The pattern docs/end2end-preview.md bans in consumer packs, and the one SP_STATE

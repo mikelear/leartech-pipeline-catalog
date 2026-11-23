@@ -175,14 +175,17 @@ spec:
             # test the runner: run.sh dies at exit 127 and every assertion
             # fails on a missing file, which is what the first CI run this
             # repo ever had reported. Test where the contract holds.
+            # jq only. python3 was here for phases_test.sh, which is now a Go test in
+            # go/tasklint — it parses the task with a YAML library instead of a regex over
+            # fixed indentation. run_test.sh needs bash and jq, nothing more.
             apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-              ca-certificates jq python3 >/dev/null
+              ca-certificates jq >/dev/null
 
             # Assert rather than assume. Both of these are call-outs, so a
             # missing one does not fail the test it is meant to run -- it
             # fails it for the wrong reason, or (for a test that swallows the
             # error) passes it on nothing.
-            for tool in jq python3; do
+            for tool in jq; do
               command -v "$tool" >/dev/null || { echo "FAIL: $tool absent after install" >&2; exit 1; }
             done
 
