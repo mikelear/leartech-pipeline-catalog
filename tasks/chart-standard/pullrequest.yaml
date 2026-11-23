@@ -60,7 +60,7 @@ spec:
         # Until the bump lands, `chartstd -require helm,chartstd` fails with "missing helm" — which is
         # the honest state: the image referenced here genuinely does not have it yet, and the message
         # says so instead of blaming the chart.
-        - image: ghcr.io/mikelear/leartech-checkers:0.49.6
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.1
           name: render
           resources: {}
           script: |
@@ -139,7 +139,7 @@ spec:
             ls -l /workspace/renders
 
         # onError: continue so the report step runs after a failure.
-        - image: ghcr.io/mikelear/leartech-checkers:0.49.6
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.1
           name: chart-standard
           resources: {}
           script: |
@@ -206,7 +206,7 @@ spec:
             fi
           onError: continue
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.49.6
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.1
           name: chart-standard-report
           resources: {}
           script: |
@@ -220,7 +220,7 @@ spec:
             done
 
         # The findings are the message.
-        - image: ghcr.io/mikelear/leartech-checkers:0.49.6
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.1
           name: report
           resources: {}
           env:
