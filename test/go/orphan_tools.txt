@@ -30,6 +30,12 @@ identitystd|runs as a CronJob in jx-build-cluster-gsm (ship-proven-resources, gs
 renovateenrolment|invoked by jx-build-cluster-gsm's own .lighthouse presubmit, which this check cannot see
 scopedrift|would be a scheduled estate job: needs the auth-service checkout plus every resource-server checkout in one run — no single repo holds that list (catalog#353)
 
+# ── called, but only from a cluster repo's CronJob ──────────────────────────────────
+# The one check that makes a real PR fail on the estate's own Forgejo and requires the comment
+# back (it-test/lh-test, 0 of those report steps had ever posted). Scheduled by
+# jx-build-cluster-gsm/charts/estate-checks, which this tree cannot see.
+selfprobe|invoked by a CronJob in jx-build-cluster-gsm (estate-checks/pipeline-canary), not from a task
+
 # ── genuinely nothing calls these: the decision is the work ─────────────────────────
 authcoverage|no caller anywhere — the coverage delta is computed by go/leartech-go.mk itself, so this may be superseded; decide wire-or-delete, do not leave it tested and unrun
 authgate|no caller anywhere — it fails a PR that mounts an authenticated route without authorising it, which is exactly what go-common's auth-conformance gate now covers; decide wire-or-delete

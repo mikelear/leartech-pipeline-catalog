@@ -48,12 +48,13 @@ COPY go/argohooks/         ./argohooks/
 COPY go/valuesstd/         ./valuesstd/
 COPY go/identitystd/       ./identitystd/
 COPY go/triggersync/       ./triggersync/
+COPY go/selfprobe/         ./selfprobe/
 
 # CGO off and -trimpath so the binaries are static and reproducible: an agent
 # and a CI step must be running the same bytes, not merely the same version.
 ENV CGO_ENABLED=0
 RUN set -eu; \
-    for m in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e prpost chartstd argohooks valuesstd identitystd triggersync; do \
+    for m in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e prpost chartstd argohooks valuesstd identitystd triggersync selfprobe; do \
       cd "/src/$m"; \
       go mod download; \
       go build -trimpath -ldflags="-s -w" -o "/out/$m" .; \
@@ -111,7 +112,7 @@ COPY rust/deny.base.toml /usr/local/share/deny.base.toml
 # a missing checker would make every consumer skip it silently, which is the
 # exact failure mode these checkers exist to catch.
 RUN set -eu; \
-    for b in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e prpost chartstd argohooks valuesstd identitystd triggersync; do \
+    for b in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e prpost chartstd argohooks valuesstd identitystd triggersync selfprobe; do \
       test -x "/usr/local/bin/$b" || { echo "FAIL: $b did not build into the image" >&2; exit 1; }; \
     done; \
     test -f /usr/local/share/leartech-go.mk || { echo "FAIL: leartech-go.mk did not land in the image" >&2; exit 1; }; \
