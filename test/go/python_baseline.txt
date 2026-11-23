@@ -20,5 +20,5 @@
 # ── tasks/*: python written INTO a step script ────────────────────────────────────
 # The pattern docs/end2end-preview.md bans in consumer packs, and the one SP_STATE
 # records breaking rendering for three days in May: a python heredoc inside `script: |`.
-tasks/kyverno-audit/pullrequest.yaml|`python3 - <<'PYEOF'` classifies the policy report; its step image is DISTROLESS (/bin/sh does not exist), so the step cannot start. Replace with a Go classifier and say so loudly
+tasks/kyverno-audit/pullrequest.yaml|the step CANNOT START (ko/distroless: exec /bin/busybox/sh: no such file), so this python has never run; and it would not have helped -- `--resource <dir>` evaluates 0 resources, which with --policy-report is a VACUOUS PASS, and the pin v1.20.0 rejects the estate's legacy kyverno.io/v1 policies outright. Measured 2026-11-23; see catalog#361
 tasks/ai-review/pullrequest.yaml|`python3 -c` reads the aggregate score at line 223; replace with the ai-review worker's own exit code
