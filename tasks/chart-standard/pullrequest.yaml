@@ -111,7 +111,7 @@ spec:
             ls -l /workspace/renders
 
         # onError: continue so the report step runs after a failure.
-        - image: ghcr.io/mikelear/leartech-checkers:0.44.4
+        - image: ghcr.io/mikelear/leartech-checkers:0.45.0
           name: chart-standard
           resources: {}
           script: |
@@ -178,7 +178,7 @@ spec:
             fi
           onError: continue
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.44.4
+        - image: ghcr.io/mikelear/leartech-checkers:0.45.0
           name: chart-standard-report
           resources: {}
           script: |
@@ -192,7 +192,7 @@ spec:
             done
 
         # The findings are the message.
-        - image: ghcr.io/mikelear/leartech-checkers:0.44.4
+        - image: ghcr.io/mikelear/leartech-checkers:0.45.0
           name: report
           resources: {}
           env:
