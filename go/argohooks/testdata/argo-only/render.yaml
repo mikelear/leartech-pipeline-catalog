@@ -1,0 +1,17 @@
+# The Argo side alone: on a jx-boot cluster this runs at the wrong time.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: app-migrate
+  namespace: app
+  annotations:
+    "argocd.argoproj.io/hook": PostSync
+    "argocd.argoproj.io/sync-wave": "-5"
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrate
+        image: app:1.0.0

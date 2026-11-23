@@ -1,0 +1,28 @@
+# Two hooks in one phase with no weights: their order is undefined on BOTH paths.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-migrations
+  namespace: app
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "argocd.argoproj.io/hook": PostSync
+data:
+  001_init.sql: "create table t (id int);"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: app-migrate
+  namespace: app
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "argocd.argoproj.io/hook": PostSync
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrate
+        image: app:1.0.0

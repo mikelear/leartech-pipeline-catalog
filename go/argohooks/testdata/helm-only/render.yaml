@@ -1,0 +1,18 @@
+# A helm hook with no Argo equivalent: on customer2 this Job is an ordinary resource.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: app-migrate
+  namespace: app
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrate
+        image: app:1.0.0

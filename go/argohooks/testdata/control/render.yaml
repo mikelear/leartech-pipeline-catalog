@@ -1,0 +1,61 @@
+# A chart as it SHOULD render: every hook carries both annotations, the Argo side is the
+# equivalent of the Helm side, the weights are mirrored as sync-waves, and the delete
+# policies are translatable.
+#
+# This is the CONTROL for every failure fixture beside it. If this file ever reports a
+# finding, the check has stopped describing the standard and started describing a bug.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-migrations
+  namespace: app
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "argocd.argoproj.io/hook": PostSync
+    "argocd.argoproj.io/sync-wave": "-10"
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation
+data:
+  001_init.sql: "create table t (id int);"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: app-migrate
+  namespace: app
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "argocd.argoproj.io/hook": PostSync
+    "argocd.argoproj.io/sync-wave": "-5"
+    "argocd.argoproj.io/hook-delete-policy": BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrate
+        image: app:1.0.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      containers:
+      - name: app
+        image: app:1.0.0

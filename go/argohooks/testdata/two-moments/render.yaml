@@ -1,0 +1,20 @@
+# pre-install AND post-upgrade are two different moments; one object cannot be both, so the
+# combined form runs the work once per Argo phase - twice per sync.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: app-migrate
+  namespace: app
+  annotations:
+    "helm.sh/hook": pre-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "argocd.argoproj.io/hook": PostSync
+    "argocd.argoproj.io/sync-wave": "0"
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrate
+        image: app:1.0.0
