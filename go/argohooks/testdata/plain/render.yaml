@@ -1,0 +1,21 @@
+# No hooks at all. The check must be SILENT here - a rule that fires on every chart is a
+# rule people switch off.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      containers:
+      - name: app
+        image: app:1.0.0

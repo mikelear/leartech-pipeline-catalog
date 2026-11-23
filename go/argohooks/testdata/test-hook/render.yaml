@@ -1,0 +1,15 @@
+# A test Pod mapped to anything but Skip gets APPLIED and runs on every deploy.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-test-connection
+  namespace: app
+  annotations:
+    "helm.sh/hook": test-success
+    "argocd.argoproj.io/hook": PostSync
+spec:
+  restartPolicy: Never
+  containers:
+  - name: check
+    image: busybox
