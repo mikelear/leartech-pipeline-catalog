@@ -32,6 +32,10 @@ type step struct {
 	Script  string
 	Image   string
 	OnError string
+	// Env is the names this step can read: its own `env:` plus the taskSpec's
+	// `stepTemplate.env:`. A script that uses ${VAR:?...} dies if VAR is not in here —
+	// there is no fallback — so the set is what `tasklint env` judges.
+	Env []string
 }
 
 func (s step) where() string {
@@ -88,17 +92,24 @@ func loadStepsFromFiles(paths []string, baseDir ...string) ([]step, []error) {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
+		type envVar struct {
+			Name string `yaml:"name"`
+		}
 		var doc struct {
 			Spec struct {
 				PipelineSpec struct {
 					Tasks []struct {
 						Name     string `yaml:"name"`
 						TaskSpec struct {
+							StepTemplate struct {
+								Env []envVar `yaml:"env"`
+							} `yaml:"stepTemplate"`
 							Steps []struct {
-								Name    string `yaml:"name"`
-								Script  string `yaml:"script"`
-								Image   string `yaml:"image"`
-								OnError string `yaml:"onError"`
+								Name    string   `yaml:"name"`
+								Script  string   `yaml:"script"`
+								Image   string   `yaml:"image"`
+								OnError string   `yaml:"onError"`
+								Env     []envVar `yaml:"env"`
 							} `yaml:"steps"`
 						} `yaml:"taskSpec"`
 					} `yaml:"tasks"`
@@ -111,9 +122,16 @@ func loadStepsFromFiles(paths []string, baseDir ...string) ([]step, []error) {
 		}
 		for _, t := range doc.Spec.PipelineSpec.Tasks {
 			for _, s := range t.TaskSpec.Steps {
+				env := make([]string, 0, len(s.Env)+len(t.TaskSpec.StepTemplate.Env))
+				for _, e := range t.TaskSpec.StepTemplate.Env {
+					env = append(env, e.Name)
+				}
+				for _, e := range s.Env {
+					env = append(env, e.Name)
+				}
 				out = append(out, step{
 					File: name, Task: t.Name, Name: s.Name,
-					Script: s.Script, Image: s.Image, OnError: s.OnError,
+					Script: s.Script, Image: s.Image, OnError: s.OnError, Env: env,
 				})
 			}
 		}
@@ -153,6 +171,8 @@ func main() {
 			"the fewest delegated posters a real catalog has; the list only shrinks by a decision")
 		_ = fs.Parse(flag.Args()[1:])
 		code = runFailures(*dir, resolve(*dir, *baseline), resolve(*dir, *delegates), *floor)
+	case "envrefs":
+		code = runEnvRefs(steps, loadErrs)
 	case "tools":
 		fs := flag.NewFlagSet("tools", flag.ExitOnError)
 		baseline := fs.String("baseline", "test/go/tool_callers.txt",

@@ -57,6 +57,12 @@ spec:
           name: report
           resources: {}
           env:
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           - name: GIT_TOKEN
             valueFrom:
               secretKeyRef:
