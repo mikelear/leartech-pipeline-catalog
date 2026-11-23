@@ -1,0 +1,5 @@
+CLUSTER_ID=gcp
+REPO_OWNER=acme
+REPO_NAME=thing
+PULL_NUMBER=7
+FORGE_API_URL=http://forge.invalid
