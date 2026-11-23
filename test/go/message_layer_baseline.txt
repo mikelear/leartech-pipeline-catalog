@@ -44,4 +44,4 @@
 0 36 tasks/security-scan/dynamic/pullrequest.yaml
 0 4 tasks/values-standard/pullrequest.yaml
 0 4 tasks/govulncheck/pullrequest.yaml
-0 4 tasks/gitops-cluster/pullrequest.yaml
+0 3 tasks/gitops-cluster/pullrequest.yaml

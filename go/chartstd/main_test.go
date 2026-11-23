@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -327,4 +328,83 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// ── -require: the toolchain check, and the message that has to name the right owner ────────────────
+//
+// THE DEFECT THIS IS FOR. `tasks/chart-standard` runs `helm template` and then asks `chartstd` to read
+// the toggles file — and those two lived in different images, so on any repo that DECLARES toggles the
+// gate died at `chartstd: command not found` and the FAIL line beside it said
+// `cannot read <the repo's toggles file>`. A repo declaring no toggles passed. So the gate rewarded not
+// declaring them, and the repos that did went red blaming their own chart.
+//
+// Two things have to be true, and only a test can keep them true:
+//  1. every tool present -> exit 0, NOTHING printed (a warning on the happy path is noise);
+//  2. a tool absent -> exit non-zero AND the message says it is a TASK defect, not a repo defect.
+func runRequire(t *testing.T, tools string) (int, string) {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"present-a", "present-b"} {
+		if err := os.WriteFile(filepath.Join(bin, n), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcessRequire", "--", tools)
+	cmd.Env = append(os.Environ(), "GO_WANT_REQUIRE_HELPER=1", "PATH="+bin+":/usr/bin:/bin")
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else {
+			t.Fatalf("running the helper: %v", err)
+		}
+	}
+	return code, string(out)
+}
+
+// TestHelperProcessRequire is the child: it runs the real main() with -require.
+func TestHelperProcessRequire(t *testing.T) {
+	if os.Getenv("GO_WANT_REQUIRE_HELPER") != "1" {
+		return
+	}
+	args := os.Args
+	for i, a := range args {
+		if a == "--" {
+			args = append([]string{args[0]}, append([]string{"-require", args[i+1]}, args[i+2:]...)...)
+			break
+		}
+	}
+	os.Args = args
+	main()
+	os.Exit(0)
+}
+
+func TestRequireIsSilentWhenEveryToolIsPresent(t *testing.T) {
+	code, out := runRequire(t, "present-a,present-b")
+	if code != 0 {
+		t.Errorf("exit %d with both tools present, output:\n%s", code, out)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("printed on the happy path — a check that talks when nothing is wrong is noise:\n%s", out)
+	}
+}
+
+func TestRequireNamesTheMissingToolAndTheOwner(t *testing.T) {
+	code, out := runRequire(t, "present-a,absent-tool")
+	if code == 0 {
+		t.Fatalf("exit 0 with a tool absent; the step would then fail on `command not found` " +
+			"somewhere else, with a message about something unrelated")
+	}
+	if !strings.Contains(out, "absent-tool") {
+		t.Errorf("the message does not name the missing tool:\n%s", out)
+	}
+	if !strings.Contains(out, "TASK defect") {
+		t.Errorf("the message does not say whose defect it is — that is the whole point, because the "+
+			"old failure blamed the repo's toggles file:\n%s", out)
+	}
 }
