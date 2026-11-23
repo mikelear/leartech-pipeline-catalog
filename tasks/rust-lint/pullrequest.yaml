@@ -96,6 +96,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -109,7 +121,7 @@ spec:
             gate=${gate#==> }
             gate=${gate:-unknown}
             {
-              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'Failed at `%s` (exit %s).\n\n' "$gate" "$rc"
               printf '```\n'
               if [ "$gate" = "cargo fmt" ]; then
@@ -122,7 +134,7 @@ spec:
               printf '```\n'
             } > /tmp/body.md
             prpost -tool rust-lint -check rust-lint -outcome failure \
-              -cluster "${CLUSTER_ID:?}" -summary "$gate exited $rc" \
+              -cluster "${CLUSTER_ID:-}" -summary "$gate exited $rc" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

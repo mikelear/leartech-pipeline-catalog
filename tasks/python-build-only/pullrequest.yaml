@@ -165,6 +165,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -182,7 +194,7 @@ spec:
             grep -qE "^(error|ERROR): |No solution found|Because " /workspace/.python-test.log \
               && gate="uv sync"
             {
-              printf '### :x: Test: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Test: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'Failed at `%s` (exit %s).\n\n' "$gate" "$rc"
               printf '```\n'
               case "$gate" in
@@ -205,7 +217,7 @@ spec:
               tail -n 25 /workspace/.python-test.log
               printf '```\n'
             } > /tmp/body.md
-            prpost -tool test -check test -outcome failure -cluster "${CLUSTER_ID:?}" \
+            prpost -tool test -check test -outcome failure -cluster "${CLUSTER_ID:-}" \
               -summary "$gate exited $rc" -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

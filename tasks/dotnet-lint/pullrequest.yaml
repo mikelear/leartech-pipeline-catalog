@@ -120,6 +120,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -134,7 +146,7 @@ spec:
               | tail -n 1 | awk '{print $3}')
             gate=${gate:-unknown}
             {
-              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'Failed at `dotnet %s` (exit %s).\n\n' "$gate" "$rc"
               printf '```\n'
               grep -E "(error|warning) [A-Z]{2,4}[0-9]{3,}|error:|NU[0-9]+" \
@@ -144,7 +156,7 @@ spec:
               printf '```\n'
             } > /tmp/body.md
             prpost -tool dotnet-lint -check dotnet-lint -outcome failure \
-              -cluster "${CLUSTER_ID:?}" -summary "dotnet $gate exited $rc" \
+              -cluster "${CLUSTER_ID:-}" -summary "dotnet $gate exited $rc" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

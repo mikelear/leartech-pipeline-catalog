@@ -283,6 +283,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -309,7 +321,7 @@ spec:
               exit 0
             fi
             {
-              printf '### :x: Chart checks: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Chart checks: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'Failed:%s\n\n' "$failed"
               for step in chart-lint chart-standard chart-tests comment-gate; do
                 [ -f "/workspace/.$step.rc" ] || continue
@@ -320,7 +332,7 @@ spec:
                 printf '```\n'
               done
             } > /tmp/body.md
-            prpost -tool pr -check pr -outcome failure -cluster "${CLUSTER_ID:?}" \
+            prpost -tool pr -check pr -outcome failure -cluster "${CLUSTER_ID:-}" \
               -summary "chart checks failed:$failed" -body-file /tmp/body.md \
               2>/tmp/prpost.err || true
             if [ -s /tmp/prpost.err ]; then

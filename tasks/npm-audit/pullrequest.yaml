@@ -100,6 +100,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -111,7 +123,7 @@ spec:
             fi
             level="${AUDIT_LEVEL:-critical}"
             {
-              printf '### :x: npm audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: npm audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'At `--audit-level=%s` (exit %s). A HIGH finding does not fail this\n' \
                 "$level" "$rc"
               printf 'check by default; only at or above the level fails.\n\n'
@@ -120,7 +132,7 @@ spec:
               printf '```\n'
             } > /tmp/body.md
             prpost -tool npm-audit -check npm-audit -outcome failure \
-              -cluster "${CLUSTER_ID:?}" -summary "npm audit ($level) exited $rc" \
+              -cluster "${CLUSTER_ID:-}" -summary "npm audit ($level) exited $rc" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

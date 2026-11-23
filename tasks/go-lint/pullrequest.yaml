@@ -127,6 +127,18 @@ spec:
                   name: catalog-prpost-oauth
                   key: CLIENT_SECRET
                   optional: true
+            - name: CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: jx-cluster-config
+                  key: CLUSTER_ID
+                  optional: true
+            - name: CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: jx-cluster-config
+                  key: CLUSTER_ID
+                  optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -137,13 +149,13 @@ spec:
             # golangci failure names the linter and the file.
             first=$(grep -nE "^(FAIL|make: \*\*\*|.*Error: )" /workspace/.lint.log | head -1 | cut -d: -f2-)
             {
-              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf '`make lint` exited %s.%s\n\n' "$rc" "${first:+ First reason: \`$first\`}"
               printf '<details><summary>Last 40 lines of the log</summary>\n\n```\n'
               tail -n 40 /workspace/.lint.log
               printf '```\n\n</details>\n'
             } > /tmp/body.md
-            prpost -tool lint -check lint -outcome failure -cluster "${CLUSTER_ID:?}"               -summary "make lint exited $rc" -body-file /tmp/body.md \
+            prpost -tool lint -check lint -outcome failure -cluster "${CLUSTER_ID:-}"               -summary "make lint exited $rc" -body-file /tmp/body.md \
               || echo "==> WARNING: could not deliver the lint comment; the check still fails"
             exit "$rc"
   podTemplate:

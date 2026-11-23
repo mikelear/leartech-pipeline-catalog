@@ -22,6 +22,7 @@ package taskharness
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -70,6 +71,37 @@ func (e stepEnv) satisfiable() bool {
 		return true
 	}
 	return false
+}
+
+// loadStepsFrom lifts the steps out of ANY task YAML. loadSteps() stays as the gitops-cluster
+// shortcut the older tests use.
+func loadStepsFrom(t *testing.T, path string) []stepDoc {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", path, err)
+	}
+	var doc struct {
+		Spec struct {
+			PipelineSpec struct {
+				Tasks []struct {
+					TaskSpec struct {
+						Steps []stepDoc `yaml:"steps"`
+					} `yaml:"taskSpec"`
+				} `yaml:"tasks"`
+			} `yaml:"pipelineSpec"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		// Not every file under tasks/ is a PipelineRun (some are Task YAMLs); an unparseable one is
+		// not a finding here, because task_syntax/tasklint already own that.
+		return nil
+	}
+	var out []stepDoc
+	for _, tk := range doc.Spec.PipelineSpec.Tasks {
+		out = append(out, tk.TaskSpec.Steps...)
+	}
+	return out
 }
 
 func loadSteps(t *testing.T) []stepDoc {
@@ -330,6 +362,117 @@ func unsatisfiedRequiredVars(steps []stepDoc) []string {
 		}
 	}
 	return out
+}
+
+// TestEveryTaskSuppliesTheEnvItsScriptRequires is the SAME rule, over EVERY task in the catalogue.
+//
+// WHY IT HAD TO WIDEN. It was written for the gitops-cluster task, whose report step used
+// `-cluster "${CLUSTER_ID:?}"` with no env for it: under `set -u` that is an immediate exit 1, so the
+// step died on that line BEFORE prpost ran — and every failing PR showed Lighthouse's generic "the
+// following test failed" with no comment, which is exactly what the step existed to remove.
+//
+// Then the same grep found it in EIGHTEEN more tasks. Verified by running them: `leartech-console-api#37`
+// failed with
+//
+//	/tekton/scripts/script-4-sxk9x: line 10: CLUSTER_ID: parameter null or not set
+//
+// so the report step of every one of those tasks had never run either — the failure was invisible from
+// GitHub, where a red check with no comment looks the same as a check whose comment could not be posted.
+//
+// THE RULE, and why it is `${VAR:?}` specifically: `${VAR:-}` and `${VAR}` are a default and a value;
+// `${VAR:?}` is a deliberate "abort if this is not set", so it is only correct when the step GUARANTEES
+// it. That guarantee is `value:` (a literal), or a valueFrom whose key/name is NOT `optional: true` —
+// an optional reference resolves to nothing when the object is absent, which is precisely the state
+// `:?` rejects.
+func TestEveryTaskSuppliesTheEnvItsScriptRequires(t *testing.T) {
+	files, err := filepath.Glob("../../tasks/*/*.yaml")
+	if err != nil || len(files) < 20 {
+		t.Fatalf("found %d task files; the catalogue has far more, so this check would pass by finding "+
+			"nothing", len(files))
+	}
+	steps, checked, bad := 0, 0, 0
+	for _, f := range files {
+		for _, st := range loadStepsFrom(t, f) {
+			steps++
+			given := map[string]bool{}
+			for _, e := range st.Env {
+				given[e.Name] = given[e.Name] || e.satisfiable()
+			}
+			for _, m := range requiredVar.FindAllStringSubmatch(st.Script, -1) {
+				checked++
+				if given[m[1]] {
+					continue
+				}
+				bad++
+				t.Errorf("%s: step %q requires ${%s:?} and does not guarantee it.\n"+
+					"  ${VAR:?} ABORTS the shell under `set -u`, so the step dies on that line — before it\n"+
+					"  can report anything — and from GitHub a red check looks the same as a check whose\n"+
+					"  comment could not be posted. Supply the env (a `value:`, or a valueFrom that is not\n"+
+					"  `optional: true`), or use ${%s:-} if the tool accepts empty.", f, st.Name, m[1], m[1])
+			}
+		}
+	}
+	// THE VACUITY GUARD IS ON THE STEPS, NOT ON THE PATTERN. Zero `${VAR:?}` is the DESIRED end state —
+	// the estate's report steps all use `${CLUSTER_ID:-}` now — so asserting "the pattern is used" would
+	// force a worse shape back in. What this test must prove is that it READ the catalogue.
+	if steps < 100 {
+		t.Fatalf("only %d step(s) loaded from %d task file(s): the walk did not run, and a check that "+
+			"reads nothing reports success for work it never did", steps, len(files))
+	}
+	t.Logf("checked %d ${VAR:?} usage(s) across %d step(s) in %d task file(s), %d unsatisfied",
+		checked, steps, len(files), bad)
+}
+
+// The control: the rule must FIRE on the shape that shipped in eighteen tasks. Without this, deleting
+// the check would look exactly like a catalogue with no violations.
+func TestTheEnvRuleFiresOnATaskWithAnUnsuppliedVar(t *testing.T) {
+	dir := t.TempDir()
+	task := filepath.Join(dir, "pullrequest.yaml")
+	body := `apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+spec:
+  pipelineSpec:
+    tasks:
+    - name: t
+      taskSpec:
+        steps:
+        - image: busybox
+          name: report
+          env:
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          script: |
+            #!/bin/bash
+            set -uo pipefail
+            prpost -cluster "${CLUSTER_ID:?}" -summary "x"
+`
+	if err := os.WriteFile(task, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := loadStepsFrom(t, task)
+	if len(st) != 1 {
+		t.Fatalf("loaded %d steps, want 1", len(st))
+	}
+	given := map[string]bool{}
+	for _, e := range st[0].Env {
+		given[e.Name] = given[e.Name] || e.satisfiable()
+	}
+	if given["CLUSTER_ID"] {
+		t.Fatal("the fixture's GIT_TOKEN env was mistaken for CLUSTER_ID")
+	}
+	found := false
+	for _, m := range requiredVar.FindAllStringSubmatch(st[0].Script, -1) {
+		if m[1] == "CLUSTER_ID" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the rule did not match `${CLUSTER_ID:?}` in the shape that shipped in eighteen tasks")
+	}
 }
 
 // TestRequiredEnvIsActuallyProvided is defect 4's SECOND half, and it was STILL LIVE after the PR that

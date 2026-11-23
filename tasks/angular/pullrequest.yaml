@@ -97,6 +97,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -107,7 +119,7 @@ spec:
               exit 0
             fi
             {
-              printf '### :x: Build: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Build: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf '`npm ci` / `npm install` failed (exit %s) before the image build.\n' "$rc"
               printf 'Usually a peer-dependency conflict, a registry auth problem, or a\n'
               printf 'lockfile that no longer matches package.json.\n\n'
@@ -117,7 +129,7 @@ spec:
               tail -n 20 /workspace/.ng-build.log
               printf '```\n'
             } > /tmp/body.md
-            prpost -tool build -check build -outcome failure -cluster "${CLUSTER_ID:?}" \
+            prpost -tool build -check build -outcome failure -cluster "${CLUSTER_ID:-}" \
               -summary "npm install exited $rc" -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

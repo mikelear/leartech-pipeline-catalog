@@ -97,6 +97,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -110,7 +122,7 @@ spec:
             grep -q "npm ci\|npm install" /workspace/.ng-lint.log && \
               grep -qE "^npm error|npm ERR!" /workspace/.ng-lint.log && stage="install"
             {
-              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Lint: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'Failed at `%s` (exit %s).\n\n' "$stage" "$rc"
               printf '```\n'
               if [ "$stage" = "install" ]; then
@@ -123,7 +135,7 @@ spec:
               printf '```\n'
             } > /tmp/body.md
             prpost -tool ng-lint -check ng-lint -outcome failure \
-              -cluster "${CLUSTER_ID:?}" -summary "$stage exited $rc" \
+              -cluster "${CLUSTER_ID:-}" -summary "$stage exited $rc" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

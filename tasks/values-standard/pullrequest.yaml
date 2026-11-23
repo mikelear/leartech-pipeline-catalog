@@ -79,6 +79,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -89,7 +101,7 @@ spec:
             rc=$(cat /workspace/.valuesstd.rc)
             findings=$(grep -cE '^V[0-9] ' /workspace/.valuesstd.log || true)
             {
-              printf '### :x: Secrets manifest: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Secrets manifest: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf '`%s` declares %s key(s) whose class disagrees with who writes them.\n\n' \
                 "$MANIFEST" "$findings"
               printf '```\n'
@@ -98,7 +110,7 @@ spec:
               printf 'Each rule names the failure it prevents. See docs/secrets-manifest.md.\n'
             } > /tmp/body.md
             prpost -tool values-standard -check values-standard -outcome failure \
-              -cluster "${CLUSTER_ID:?}" -summary "secrets manifest: $findings finding(s)" \
+              -cluster "${CLUSTER_ID:-}" -summary "secrets manifest: $findings finding(s)" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"

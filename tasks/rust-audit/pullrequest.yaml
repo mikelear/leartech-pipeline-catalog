@@ -120,6 +120,18 @@ spec:
                 name: catalog-prpost-oauth
                 key: CLIENT_SECRET
                 optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
           script: |
             #!/bin/bash
             set -uo pipefail
@@ -135,7 +147,7 @@ spec:
             grep -q "==> installing cargo-deny" /workspace/.rust-audit.log && \
               ! grep -q "==> cargo audit" /workspace/.rust-audit.log && gate="cargo install"
             {
-              printf '### :x: Audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:?}"
+              printf '### :x: Audit: **FAIL** `[%s]`\n\n' "${CLUSTER_ID:-}"
               printf 'Failed at `%s` (exit %s).\n\n' "$gate" "$rc"
               printf '```\n'
               case "$gate" in
@@ -156,7 +168,7 @@ spec:
               printf '```\n'
             } > /tmp/body.md
             prpost -tool rust-audit -check rust-audit -outcome failure \
-              -cluster "${CLUSTER_ID:?}" -summary "$gate exited $rc" \
+              -cluster "${CLUSTER_ID:-}" -summary "$gate exited $rc" \
               -body-file /tmp/body.md \
               || echo "==> WARNING: comment not delivered; the check still fails"
             exit "$rc"
