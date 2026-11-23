@@ -154,6 +154,25 @@ spec:
             rc=$?
             set -e
             cat /workspace/.chartstd.log
+
+            # argohooks, over the SAME renders: is a hook a hook on BOTH delivery paths?
+            # Helm honours helm.sh/hook; Argo CD does not implement it, so the object is an
+            # ordinary resource applied on every sync. Measured on kyverno-migrate-resources:
+            # a post-upgrade Job ran once under Helm and was re-applied on every Argo sync.
+            # Same log, so the report step below already carries its findings.
+            if ! command -v argohooks >/dev/null; then
+              echo ==> argohooks missing from the checkers image; the hook gate is NOT running >&2
+              rc=1
+            else
+              set +e
+              for f in /workspace/renders/*.yaml; do
+                case "$f" in *.off.*) continue ;; esac
+                argohooks -manifest "$f" >> /workspace/.chartstd.log 2>&1 || rc=1
+              done
+              set -e
+              cat /workspace/.chartstd.log
+            fi
+
             if [ "$rc" -ne 0 ]; then
               printf '%s\n' "$rc" > /workspace/.chartstd.rc
             fi
