@@ -161,7 +161,7 @@ spec:
             # a post-upgrade Job ran once under Helm and was re-applied on every Argo sync.
             # Same log, so the report step below already carries its findings.
             if ! command -v argohooks >/dev/null; then
-              echo ==> argohooks missing from the checkers image; the hook gate is NOT running >&2
+              echo '==> argohooks missing from the checkers image; the hook gate is NOT running' >&2
               rc=1
             else
               set +e

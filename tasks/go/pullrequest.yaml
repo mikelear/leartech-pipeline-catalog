@@ -150,7 +150,7 @@ spec:
             # means report already posted why and there is no binary to package.
             go_build_rc=$(cat /workspace/.go-build.rc 2>/dev/null || echo 0)
             if [ "$go_build_rc" != "0" ]; then
-              echo ==> go build failed - not building an image
+              echo '==> go build failed - not building an image'
               exit 0
             fi
             source .jx/variables.sh
@@ -203,7 +203,7 @@ spec:
             # actually produced.
             go_build_rc=$(cat /workspace/.go-build.rc 2>/dev/null || echo 0)
             if [ "$go_build_rc" != "0" ]; then
-              echo ==> go build failed - not promoting a preview
+              echo '==> go build failed - not promoting a preview'
               exit 0
             fi
             source .jx/variables.sh

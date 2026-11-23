@@ -1,0 +1,19 @@
+# catalog#334. build-make-build leaves its exit code in .go-build.rc and carries
+# onError: continue so the report step can post why. The two steps after it guarded on the file
+# EXISTING rather than on its VALUE -- true on every run -- so the image was never built and the
+# preview was never promoted, both exiting 0 within a minute with no output, while `pr` reported
+# success.
+#
+# Replayed as a SEGMENT: the fixture seeds the rc file the way build-make-build would have,
+# because rebuilding would need a Go toolchain to prove the same thing.
+why: a failing go build stops the image build and the preview, and the log says which
+only:
+  - build-container-build
+  - promote-jx-preview
+steps:
+  build-container-build:
+    exit: 0
+    contains: not building an image
+  promote-jx-preview:
+    exit: 0
+    contains: not promoting a preview

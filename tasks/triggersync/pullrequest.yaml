@@ -87,7 +87,7 @@ spec:
               https://github.com/mikelear/leartech-pipeline-catalog /workspace/catalog \
               || rc=$?
             if [ "$rc" -ne 0 ]; then
-              echo ==> catalog clone failed; check network and CATALOG_REF
+              echo '==> catalog clone failed; check network and CATALOG_REF'
               exit "$rc"
             fi
             triggersync -repo /workspace/source -catalog /workspace/catalog \

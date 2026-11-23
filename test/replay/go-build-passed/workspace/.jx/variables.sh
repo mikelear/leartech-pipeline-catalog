@@ -1,0 +1,1 @@
+export APP_NAME=thing DOMAIN=jx.leartech.com PULL_NUMBER=7 REPO_OWNER=acme REPO_NAME=thing VERSION=0.0.0-PR-7-1-SNAPSHOT
