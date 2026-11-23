@@ -1,0 +1,23 @@
+# Catalog binaries called from a step that does NOT run in the checkers image.
+#
+# Format: <task file>::<step name>::<binary>|<why that is legitimate>
+#
+# This file may only SHRINK. A line whose step has since moved to the checkers image — or started
+# staging the binary, or stopped calling it — must be DELETED (the check fails on a stale line),
+# and a step that is not listed may not call a catalog binary from a foreign image at all.
+#
+# WHY IT EXISTS. catalog#443 shipped this defect and nothing caught it. `tasks/chart-standard`'s
+# render step ran in jx-boot (helm yes, chartstd no) and called `chartstd -list-toggles`, so on
+# any repo that DECLARED toggles it died at "command not found" — with a FAIL line naming the
+# toggles FILE, so a task defect read as a repo defect. Repos declaring none passed. The
+# behavioural half of the chart gate had never run anywhere, and the guard that owned this class
+# (phase_tools) only ever looked at two hand-named files.
+#
+# A CATALOG binary is one the checkers image builds, so this repo knows it is there. Nothing here
+# claims anything about jx-boot, golang or node — those are unknowable from this repo, which is
+# why the rule is "run where we control the image" rather than "check the image's contents".
+
+# end2end's authtoken is BUILT from the Go source embedded in the step (go/prpost's sibling
+# argument: the tool ships as source in the task so the phase needs no image of its own). It is
+# not calling the image's copy, so no image could have it.
+tasks/end2end/pullrequest.yaml::authtoken-build::authtoken|the step builds authtoken from the Go source embedded in it, and runs that copy
