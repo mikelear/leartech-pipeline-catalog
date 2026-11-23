@@ -64,6 +64,14 @@ spec:
             #!/usr/bin/env bash
             set -euo pipefail
             fail=0
+            # jq, because one of these tests EXECUTES the end2end task's phase scripts rather
+            # than reading them, and those phases parse results.json with jq — the tool the
+            # checkers image ships for them. Everything else here needs only go and sh.
+            if ! command -v jq >/dev/null 2>&1; then
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends jq >/dev/null
+            fi
+            command -v jq >/dev/null || { echo "FAIL: jq absent after install; the phase " \
+              "harness cannot run" >&2; exit 1; }
             # The pin gate FIRST: a bad image pin fails PRs across the whole
             # estate, so it is checked before anything slower.
             echo "=== pincheck tasks/end2end ==="
