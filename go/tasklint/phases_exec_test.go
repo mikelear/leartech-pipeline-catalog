@@ -94,6 +94,15 @@ exit 0
 func newPhaseHarness(t *testing.T) *phaseHarness {
 	t.Helper()
 
+	// The phases parse results.json with jq — the tool the checkers image ships for them, and
+	// the tool the `test` presubmit installs for THIS test. Failing here is right: a harness
+	// that quietly skipped would be the "SKIP: no pyyaml" defect this whole series removed.
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Fatalf("jq is not on PATH, and the end2end phases parse results.json with it. " +
+			"The `test` presubmit installs it (see .lighthouse/jenkins-x/test.yaml); a local " +
+			"run needs it too")
+	}
+
 	root := t.TempDir()
 	h := &phaseHarness{
 		t:    t,
