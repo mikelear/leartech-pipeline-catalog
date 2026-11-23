@@ -135,7 +135,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.kyverno-audit.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.43.16
+        - image: ghcr.io/mikelear/leartech-checkers:0.43.17
           name: report
           resources: {}
           env:
