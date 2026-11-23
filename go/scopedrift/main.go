@@ -55,9 +55,24 @@ var (
 	// mention a scope; only a route enforces one.
 	requireScopeRe = regexp.MustCompile(`RequireScope\(\s*([A-Za-z0-9_.]+|"[^"]+")\s*[,)]`)
 
-	// const ScopeX auth.Scope = "leartechapi:a:b" — resolves the identifier a
-	// RequireScope call names back to the scope it stands for.
-	scopeConstRe = regexp.MustCompile(`(?m)^\s*(?:const\s+)?([A-Za-z0-9_]+)\s+auth\.Scope\s*=\s*"([^"]+)"`)
+	// const ScopeX <pkg>.Scope = "leartechapi:a:b" — resolves the identifier a RequireScope
+	// call names back to the scope it stands for.
+	//
+	// THE TYPE IS NOT ALWAYS `auth.Scope`. That was the first version's assumption, and it
+	// meant this checker could not read two services that DO gate routes: they declare their
+	// constants against a local wrapper (`busauth.Scope`, `middleware.Scope`) and their own
+	// `middleware.RequireScope`, so nothing resolved and the whole repo read as "enforces
+	// nothing". Measured on leartech-artifact-api and leartech-mcp-servers — 0 scopes found in
+	// a repo where every /api/v1 route is gated. Requiring one package name is the same
+	// mistake as requiring one file layout.
+	// ...and the constant need not be TYPED at all:
+	//
+	//	const ScopeArtifactRead = "leartechapi:artifact:read"      // leartech-artifact-api
+	//
+	// The value is constrained to a capability scope instead, which is what makes an untyped
+	// match safe: an ordinary string constant that happens to name `leartechapi:…` IS the
+	// scope, wherever it is declared.
+	scopeConstRe = regexp.MustCompile(`(?m)^\s*(?:const\s+)?([A-Za-z0-9_]+)\s*(?:(?:[A-Za-z0-9_]+\.)?Scope)?\s*=\s*"(leartechapi:[^"]+)"`)
 
 	goFile = regexp.MustCompile(`\.go$`)
 )
@@ -89,7 +104,7 @@ func main() {
 	for _, s := range services {
 		found, n := scanEnforced(s)
 		declaredFiles += n
-		name := filepath.Base(strings.TrimRight(s, "/"))
+		name := serviceName(s)
 		if len(found) == 0 {
 			// Zero enforced scopes is not "this service enforces nothing" — it
 			// is "this checker could not tell". It understands go-common's
@@ -155,12 +170,30 @@ func main() {
 	sort.Strings(preGranted)
 	sort.Strings(unmintable)
 
-	fmt.Printf("==> scope-drift: %d granted by the issuer, %d ENFORCED across %d service(s)\n",
-		len(granted), len(declared), len(services))
+	// A headline of "0 ENFORCED" over services it could not read is a sentence about the
+	// checker, not about the estate — and a list of findings underneath it reads as a
+	// result. Measured on 2026-11-20: two opaque roots produced "17 granted, 0 ENFORCED"
+	// followed by 15 "GRANTED, ENFORCED BY NOTHING" lines, every one of them a guess.
+	//
+	// So: if NOTHING was readable, say that and stop. The alternative is a report that
+	// invites someone to go and gate twelve scopes that are already gated.
+	if len(declared) == 0 {
+		fmt.Fprintf(os.Stderr, "==> scope-drift: read 0 enforced scopes across %d service(s), so there is "+
+			"nothing to compare.\n", len(services))
+		fmt.Fprintf(os.Stderr, "    Not assessable: %s\n", strings.Join(opaque, ", "))
+		fmt.Fprintln(os.Stderr, "    This checker resolves go-common's RequireScope and any `<pkg>.Scope` or")
+		fmt.Fprintln(os.Stderr, "    untyped constant holding a capability scope. A server that gates through")
+		fmt.Fprintln(os.Stderr, "    a slice of required scopes is a shape it does not read yet — pass a repo")
+		fmt.Fprintln(os.Stderr, "    it can read, or teach it that shape.")
+		os.Exit(2)
+	}
+
+	fmt.Printf("==> scope-drift: %d granted by the issuer, %d ENFORCED across %d of %d readable service(s)\n",
+		len(granted), len(declared), len(services)-len(opaque), len(services))
 	if len(opaque) > 0 {
-		fmt.Printf("==> not assessable (no go-common RequireScope found): %s\n", strings.Join(opaque, ", "))
+		fmt.Printf("==> not assessable (no RequireScope call this checker can resolve): %s\n", strings.Join(opaque, ", "))
 		fmt.Printf("    %d scope(s) skipped because the service that would enforce them\n", len(unknown))
-		fmt.Printf("    could not be read. Adopting verifier.RequireScope brings them in.\n")
+		fmt.Printf("    could not be read; those are UNKNOWN, not pre-granted.\n")
 	}
 
 	if len(preGranted) == 0 && len(unmintable) == 0 {
@@ -188,6 +221,27 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  to every caller forever. Grant them to the clients that need them.")
 	}
 	os.Exit(1)
+}
+
+// serviceName is how a finding attributes a service: the module path's last element when
+// the checkout has a go.mod, else the directory name.
+//
+// WHY IT MATTERS. The name is what decides whether a granted scope is "assessable" — a
+// scope whose vocabulary belongs to a service this checker could NOT read is unknown, not
+// pre-granted. Keyed on the directory, a checkout called `artapi-work` claims nothing, so
+// `leartechapi:artifact:read` was reported as PRE-GRANTED against a repo that gates every
+// route on it. That is a finding about the caller's directory name, not about the estate.
+func serviceName(root string) string {
+	if b, err := os.ReadFile(filepath.Join(root, "go.mod")); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+				if p := strings.TrimSpace(rest); p != "" {
+					return p[strings.LastIndex(p, "/")+1:]
+				}
+			}
+		}
+	}
+	return filepath.Base(strings.TrimRight(root, "/"))
 }
 
 // scanEnforced returns the scopes a repo actually gates a route on: those

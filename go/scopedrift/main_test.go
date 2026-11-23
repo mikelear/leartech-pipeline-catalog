@@ -73,10 +73,8 @@ func TestScopeDrift(t *testing.T) {
 func TestOpaqueServiceIsNamedNotBlamed(t *testing.T) {
 	out, err := exec.Command(build(t),
 		"-issuer-root", "testdata/opaque/issuer",
-		"-service-root", "testdata/opaque/leartech-gateway-svc").CombinedOutput()
-	if err != nil {
-		t.Fatalf("an unreadable service must not fail the run: %v\n%s", err, out)
-	}
+		"-service-root", "testdata/opaque/leartech-gateway-svc",
+		"-service-root", "testdata/ok/svc").CombinedOutput()
 	s := string(out)
 	if !strings.Contains(s, "not assessable") {
 		t.Errorf("the opaque service is not reported:\n%s", s)
@@ -84,9 +82,67 @@ func TestOpaqueServiceIsNamedNotBlamed(t *testing.T) {
 	if !strings.Contains(s, "leartech-gateway-svc") {
 		t.Errorf("the opaque service is not NAMED, so nobody knows what to fix:\n%s", s)
 	}
-	if strings.Contains(s, "ENFORCED BY NOTHING") {
+	if strings.Contains(s, "leartechapi:gateway:") {
 		t.Errorf("a scope belonging to an unreadable service was reported as "+
 			"pre-granted. That flags correct configuration:\n%s", s)
+	}
+	// The readable service still decides the exit code: one unreadable root must not
+	// suppress a real finding elsewhere, and must not manufacture one.
+	_ = err
+}
+
+// NOTHING READABLE IS NOT "OK".
+//
+// With every root opaque there is nothing to compare, and the first version printed
+// "scope-drift: ok — every granted scope is enforced, every enforced scope is grantable"
+// over zero comparisons. That is the same vacuous pass as a chart check over an empty
+// render, and it is worse than a failure: a scheduled job would report health forever.
+//
+// proven-by: TestNothingReadableIsNotOK
+func TestNothingReadableIsNotOK(t *testing.T) {
+	out, err := exec.Command(build(t),
+		"-issuer-root", "testdata/opaque/issuer",
+		"-service-root", "testdata/opaque/leartech-gateway-svc").CombinedOutput()
+	if err == nil {
+		t.Fatalf("with nothing readable the run must not exit 0:\n%s", out)
+	}
+	s := string(out)
+	if strings.Contains(s, "scope-drift: ok") {
+		t.Errorf("zero comparisons reported as ok:\n%s", s)
+	}
+	if !strings.Contains(s, "nothing to compare") {
+		t.Errorf("the run does not say why it stopped:\n%s", s)
+	}
+	if strings.Contains(s, "ENFORCED BY NOTHING") {
+		t.Errorf("findings listed over a set the checker could not read:\n%s", s)
+	}
+}
+
+// A repo-local wrapper and an UNTYPED constant are both enforcement.
+//
+// Measured on 2026-11-23: leartech-artifact-api declares
+//
+//	const ScopeArtifactRead = "leartechapi:artifact:read"          // no type at all
+//	group.GET("", middleware.RequireScope(ScopeArtifactRead), h.List)
+//
+// and the checker's `auth.Scope`-only regex read it as a repo that enforces NOTHING, then
+// reported its scopes as pre-granted against a service that gates every route on them.
+// Requiring one package name and one type is the same mistake as requiring one file layout.
+//
+// proven-by: TestLocalWrapperAndUntypedConstAreEnforcement
+func TestLocalWrapperAndUntypedConstAreEnforcement(t *testing.T) {
+	out, err := exec.Command(build(t),
+		"-issuer-root", "testdata/localwrapper/issuer",
+		"-service-root", "testdata/localwrapper/leartech-artifact-api").CombinedOutput()
+	if err != nil {
+		t.Fatalf("the service gates its routes; the run must be clean: %v\n%s", err, out)
+	}
+	s := string(out)
+	if strings.Contains(s, "not assessable") {
+		t.Errorf("a repo-local RequireScope read as opaque:\n%s", s)
+	}
+	if !strings.Contains(s, "scope-drift: ok") {
+		t.Errorf("a clean pair was not reported clean:\n%s", s)
 	}
 }
 

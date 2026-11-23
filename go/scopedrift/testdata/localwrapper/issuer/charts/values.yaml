@@ -1,0 +1,5 @@
+oauth:
+  artifact:
+    scopes:
+      - leartechapi:artifact:read
+      - leartechapi:artifact:write
