@@ -96,7 +96,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.dotnet-build.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.48.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.48.2
           name: report
           resources: {}
           env:
