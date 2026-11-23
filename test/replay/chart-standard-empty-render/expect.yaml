@@ -1,0 +1,14 @@
+# catalog#331. An umbrella with every component off renders ZERO objects, and the task fed that
+# to chartstd, which correctly refused to pass vacuously -- so the chart checks were red for a
+# chart that was fine. #331 makes an empty render a NOTE: skip the render rules, run the source
+# rules. chartstd's refusal is untouched, which is the point -- a vacuous pass is worse than a
+# red check.
+#
+# Replayed as the SEGMENT that decides it: the judge step, with the render the task would have
+# produced.
+why: a chart whose defaults render nothing is a NOTE, not a vacuous pass
+only:
+  - chart-standard
+steps:
+  chart-standard:
+    contains: refusing to pass a render with no objects

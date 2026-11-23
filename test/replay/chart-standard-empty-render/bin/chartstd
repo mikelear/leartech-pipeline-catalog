@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "chartstd: refusing to pass a render with no objects (an empty render has not been judged)"
+exit 1
