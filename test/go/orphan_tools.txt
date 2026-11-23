@@ -1,0 +1,37 @@
+# Tools in the checkers image that nothing runs, with the reason.
+#
+# Format: <tool>|<why it runs nowhere in THIS TREE, and what would call it>
+#
+# This file may only SHRINK. A tool that gains a caller must have its line deleted (the
+# check fails on a stale line), and a tool that is not listed must not end up orphaned.
+#
+# WHY IT EXISTS. Five gates in this catalog were built, tested, shipped in the image, and
+# never invoked — four found by hand, one at a time, over a day, and the fifth by this check
+# on its first run:
+#
+#   argohooks      catalog#429 shipped it; catalog#431 wired it. Nothing called it between.
+#   identitystd    no caller since it was written, so S9's LIVE half never ran anywhere
+#                  until gsm#3236 put it on a schedule.
+#   scopedrift     same — and when finally pointed at real repos it reported 15 findings
+#                  about two it could not read (fixed in catalog#428).
+#   versionanchor  the anchor is a handful of lines of shell inside
+#                  tasks/end2end/pullrequest.yaml; this Go tool beside it is a reference
+#                  implementation nobody runs. The two can drift and only one is tested.
+#   authcoverage   mentioned only in a COMMENT in .lighthouse/jenkins-x/lint.yaml ("authcoverage
+#                  and commentgate had tests and no runner") — commentgate got wired, this did
+#                  not. Found by this check.
+#
+# Every one of them passed its own tests the whole time. That is the failure this file
+# records: the catalog's test suite answered "does this tool work?" and never "does anything
+# call this tool?".
+
+# ── called, but from outside this tree ──────────────────────────────────────────────
+identitystd|runs as a CronJob in jx-build-cluster-gsm (ship-proven-resources, gsm#3236): -sa needs a cluster dump, so no task can call it
+renovateenrolment|invoked by jx-build-cluster-gsm's own .lighthouse presubmit, which this check cannot see
+scopedrift|would be a scheduled estate job: needs the auth-service checkout plus every resource-server checkout in one run — no single repo holds that list (catalog#353)
+
+# ── genuinely nothing calls these: the decision is the work ─────────────────────────
+authcoverage|no caller anywhere — the coverage delta is computed by go/leartech-go.mk itself, so this may be superseded; decide wire-or-delete, do not leave it tested and unrun
+authgate|no caller anywhere — it fails a PR that mounts an authenticated route without authorising it, which is exactly what go-common's auth-conformance gate now covers; decide wire-or-delete
+keeperaccess|needs the keeper bot's OWN credential, and the tool cannot yet tell it was handed a different one — so a CronJob has to assert its identity first (catalog#353)
+versionanchor|its logic is inlined as shell in tasks/end2end/pullrequest.yaml; either the task calls this binary or the module goes — what it must not do is sit here tested while the executed copy drifts

@@ -153,6 +153,12 @@ func main() {
 			"the fewest delegated posters a real catalog has; the list only shrinks by a decision")
 		_ = fs.Parse(flag.Args()[1:])
 		code = runFailures(*dir, resolve(*dir, *baseline), resolve(*dir, *delegates), *floor)
+	case "orphan":
+		fs := flag.NewFlagSet("orphan", flag.ExitOnError)
+		baseline := fs.String("baseline", "test/go/orphan_tools.txt",
+			"tools that run nowhere, `<tool>|<why>` per line")
+		_ = fs.Parse(flag.Args()[1:])
+		code = runOrphan(*dir, resolve(*dir, *baseline))
 	case "inlined":
 		code = runInlined(*dir)
 	case "phases":
