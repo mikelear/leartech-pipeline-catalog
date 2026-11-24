@@ -8,43 +8,17 @@ spec:
     env:
     - name: HOME
       value: /tekton/home
-    envFrom:
-    - secretRef:
-        name: jx-boot-job-env-vars
-        optional: true
     name: ""
     resources: {}
     workingDir: /workspace/source
   steps:
-  # The registry and domain are the only inputs that are not in the checkout or the
-  # environment. They come from the two ConfigMaps jx boot wrote, the same way
-  # tasks/release/next-version.yaml reads jx-cluster-config.
   - image: ghcr.io/mikelear/leartech-checkers:0.50.14
     name: sp-variables
     resources: {}
-    env:
-    - name: DOCKER_REGISTRY
-      valueFrom:
-        configMapKeyRef:
-          name: jenkins-x-docker-registry
-          key: docker.registry
-          optional: true
-    - name: DOCKER_REGISTRY_ORG
-      valueFrom:
-        configMapKeyRef:
-          name: jenkins-x-docker-registry
-          key: docker.registry.org
-          optional: true
-    - name: KANIKO_FLAGS
-      valueFrom:
-        configMapKeyRef:
-          name: jenkins-x-docker-registry
-          key: kaniko.flags
-          optional: true
     script: |
       #!/bin/sh
       set -eu
-      spvariables -dir /workspace/source
+      spvariables
   workspaces:
   - description: The checkout this writes .jx/variables.sh into
     mountPath: /workspace

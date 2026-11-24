@@ -35,12 +35,13 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
-          name: jx-variables
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.14
+          name: sp-variables
           resources: {}
           script: |
-            #!/usr/bin/env sh
-            jx gitops variables
+            #!/bin/sh
+            set -eu
+            spvariables
         # rust:1.88-slim-bookworm — switch to leartech-rust-runtime:<semver>
         # once that image is published (PR mikelear/leartech-dockerfiles#15).
         - image: rust:1.100-slim-bookworm

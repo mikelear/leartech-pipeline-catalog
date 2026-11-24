@@ -72,6 +72,22 @@ func TestBuildNumber_FallsBackToTheLighthouseBuildID(t *testing.T) {
 	}
 }
 
+// A PR checkout is detached, so git answers "HEAD". Taking it would make every pull request a
+// feature build on a branch called HEAD, which changes PIPELINE_KIND and the version tag.
+//
+// proven-by: TestBranch_IgnoresTheDetachedHead
+func TestBranch_IgnoresTheDetachedHead(t *testing.T) {
+	if got := resolveBranch("", "main", t.TempDir()); got != "main" {
+		t.Errorf("resolveBranch = %q, want PULL_BASE_REF", got)
+	}
+	if got := resolveBranch("release-1", "main", t.TempDir()); got != "release-1" {
+		t.Errorf("resolveBranch = %q, want the flag to win", got)
+	}
+	if got := resolveBranch("", "", t.TempDir()); got != "" {
+		t.Errorf("resolveBranch = %q in a directory that is not a checkout, want empty", got)
+	}
+}
+
 func TestReleaseAndFeature_Kind(t *testing.T) {
 	for branch, want := range map[string]string{"main": "release", "master": "release", "feat/x": "feature"} {
 		in := goldens
@@ -141,5 +157,38 @@ func TestMissingRequired_NamesWhatIsAbsent(t *testing.T) {
 	}
 	if len(missingRequired(vars(goldens), "VERSION,REPO_NAME")) != 0 {
 		t.Error("reported a variable that is set")
+	}
+}
+
+// The environment wins over the cluster, so a step can override one value without a new
+// ConfigMap and the resolver is testable with no cluster at all.
+//
+// proven-by: TestClusterValues_EnvironmentWins
+func TestClusterValues_EnvironmentWins(t *testing.T) {
+	t.Setenv("DOCKER_REGISTRY", "example.test/registry")
+	got := clusterValues("") // "" = do not read the cluster
+	if got["DOCKER_REGISTRY"] != "example.test/registry" {
+		t.Errorf("DOCKER_REGISTRY = %q, want the environment's value", got["DOCKER_REGISTRY"])
+	}
+}
+
+// With no cluster reachable and no environment, nothing is invented: the value is absent and
+// the file omits it, rather than defaulting to a cluster identity that is not this one.
+//
+// proven-by: TestClusterValues_NoClusterInventsNothing
+func TestClusterValues_NoClusterInventsNothing(t *testing.T) {
+	for _, ck := range clusterKeys {
+		t.Setenv(ck.name, "")
+	}
+	if got := clusterValues(""); len(got) != 0 {
+		t.Errorf("clusterValues with no cluster and no env = %v, want empty", got)
+	}
+}
+
+func TestClusterID_IsPublishedForTheReportSteps(t *testing.T) {
+	in := goldens
+	in.ClusterID = "gcp"
+	if got := env(vars(in))["CLUSTER_ID"]; got != "gcp" {
+		t.Errorf("CLUSTER_ID = %q, want the cluster's identity in the file", got)
 	}
 }

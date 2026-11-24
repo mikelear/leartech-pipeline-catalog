@@ -42,12 +42,13 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
-          name: jx-variables
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.14
+          name: sp-variables
           resources: {}
           script: |
-            #!/usr/bin/env sh
-            jx gitops variables
+            #!/bin/sh
+            set -eu
+            spvariables
         - image: ghcr.io/mikelear/leartech-go-runtime:0.53.56@sha256:b7683e3d00985b90c4dbd1bcc0951cfb29f7cdd5b28e8ca4a7aa32f431c86e01
           name: build-make-build
           resources:

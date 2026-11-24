@@ -48,12 +48,13 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
-          name: jx-variables
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.14
+          name: sp-variables
           resources: {}
           script: |
-            #!/usr/bin/env sh
-            jx gitops variables
+            #!/bin/sh
+            set -eu
+            spvariables
         # Bump charts/*/Chart.yaml to the clean VERSION + create the cluster-
         # suffixed tag. No image, so the image-injection sub-step no-ops.
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/promote-cluster-suffixed.yaml@main
