@@ -19,7 +19,7 @@ spec:
   # The registry and domain are the only inputs that are not in the checkout or the
   # environment. They come from the two ConfigMaps jx boot wrote, the same way
   # tasks/release/next-version.yaml reads jx-cluster-config.
-  - image: ghcr.io/mikelear/leartech-checkers:0.50.14
+  - image: ghcr.io/mikelear/leartech-checkers:0.50.15
     name: sp-variables
     resources: {}
     env:
