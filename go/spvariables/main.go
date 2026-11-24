@@ -67,10 +67,6 @@ func vars(in input) []pair {
 	if chartRepo == "" && in.Registry != "" && in.RegistryOrg != "" {
 		chartRepo = in.Registry + "/" + in.RegistryOrg + "-charts"
 	}
-	subDomain := in.SubDomain
-	if subDomain == "" {
-		subDomain = "-jx."
-	}
 	repoName := strings.ReplaceAll(strings.ToLower(in.Repo), "/", "-")
 
 	mink := ""
@@ -96,7 +92,7 @@ func vars(in input) []pair {
 	add("KANIKO_FLAGS", in.KanikoFlags)
 	add("MINK_AS", "tekton-bot")
 	add("MINK_IMAGE", mink)
-	add("NAMESPACE_SUB_DOMAIN", subDomain)
+	add("NAMESPACE_SUB_DOMAIN", in.SubDomain)
 	add("PIPELINE_KIND", kind)
 	add("PUSH_CONTAINER_REGISTRY", push)
 	add("REPO_NAME", repoName)
@@ -173,7 +169,7 @@ func main() {
 	in := input{
 		Owner:           first(*owner, os.Getenv("REPO_OWNER")),
 		Repo:            first(*repo, os.Getenv("REPO_NAME")),
-		GitBranch:       first(*branch, git(*dir, "rev-parse", "--abbrev-ref", "HEAD")),
+		GitBranch:       resolveBranch(*branch, os.Getenv("PULL_BASE_REF"), *dir),
 		PullNumber:      first(*pullNumber, os.Getenv("PULL_NUMBER")),
 		BuildNumber:     resolveBuildNumber(*buildNumber, os.Getenv),
 		Registry:        os.Getenv("DOCKER_REGISTRY"),
@@ -267,6 +263,23 @@ func missingRequired(vs []pair, want string) []string {
 		}
 	}
 	return missing
+}
+
+// resolveBranch resolves the branch the build is FOR. A PR checkout is detached at the merge
+// SHA, so `git rev-parse --abbrev-ref HEAD` answers "HEAD" -- a value that would make every
+// pull request look like a feature branch on a branch called HEAD. PULL_BASE_REF is what
+// Lighthouse actually knows (the target branch), so it is consulted first.
+func resolveBranch(flagValue, baseRef, dir string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if baseRef != "" {
+		return baseRef
+	}
+	if b := git(dir, "rev-parse", "--abbrev-ref", "HEAD"); b != "HEAD" {
+		return b
+	}
+	return ""
 }
 
 // resolveBuildNumber resolves the run identifier. Lighthouse sets BUILD_ID (the millisecond

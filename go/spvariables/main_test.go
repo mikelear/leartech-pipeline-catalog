@@ -72,6 +72,22 @@ func TestBuildNumber_FallsBackToTheLighthouseBuildID(t *testing.T) {
 	}
 }
 
+// A PR checkout is detached, so git answers "HEAD". Taking it would make every pull request a
+// feature build on a branch called HEAD, which changes PIPELINE_KIND and the version tag.
+//
+// proven-by: TestBranch_IgnoresTheDetachedHead
+func TestBranch_IgnoresTheDetachedHead(t *testing.T) {
+	if got := resolveBranch("", "main", t.TempDir()); got != "main" {
+		t.Errorf("resolveBranch = %q, want PULL_BASE_REF", got)
+	}
+	if got := resolveBranch("release-1", "main", t.TempDir()); got != "release-1" {
+		t.Errorf("resolveBranch = %q, want the flag to win", got)
+	}
+	if got := resolveBranch("", "", t.TempDir()); got != "" {
+		t.Errorf("resolveBranch = %q in a directory that is not a checkout, want empty", got)
+	}
+}
+
 func TestReleaseAndFeature_Kind(t *testing.T) {
 	for branch, want := range map[string]string{"main": "release", "master": "release", "feat/x": "feature"} {
 		in := goldens
