@@ -32,7 +32,7 @@ spec:
         # raw.githubusercontent inside the step that used them, which made what ran a
         # different artefact from what merged for up to five minutes (that CDN serves
         # cache-control: max-age=300) and needed a Go toolchain in every image.
-        - image: ghcr.io/mikelear/leartech-checkers:0.50.8
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.9
           name: provide-catalog-tools
           resources: {}
           script: |
@@ -101,7 +101,7 @@ spec:
               printf '%s\n' "$rc" > /workspace/.lint.rc
             fi
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.50.8
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.9
           name: report
           resources: {}
           env:
