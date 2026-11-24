@@ -35,6 +35,7 @@ scopedrift|would be a scheduled estate job: needs the auth-service checkout plus
 # back (it-test/lh-test, 0 of those report steps had ever posted). Scheduled by
 # jx-build-cluster-gsm/charts/estate-checks, which this tree cannot see.
 selfprobe|invoked by a CronJob in jx-build-cluster-gsm (estate-checks/pipeline-canary), not from a task
+webhook|an operator tool holding a forge credential: run by hand or by a CronJob in a cluster repo, never by a task — a pipeline that could register its own hooks could also point them somewhere else
 
 # ── genuinely nothing calls these: the decision is the work ─────────────────────────
 authcoverage|no caller anywhere — the coverage delta is computed by go/leartech-go.mk itself, so this may be superseded; decide wire-or-delete, do not leave it tested and unrun
