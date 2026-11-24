@@ -81,7 +81,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.govulncheck.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.50.14
+        - image: ghcr.io/mikelear/leartech-checkers:0.51.1
           name: report
           resources: {}
           env:
