@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -70,5 +71,62 @@ func TestProvidingTagsEmptyWhenNothingCopiesTheTools(t *testing.T) {
 		"          name: provide-e2erun\n"
 	if len(providingTags(task)) != 0 {
 		t.Errorf("got %v, want none", providingTags(task))
+	}
+}
+
+// A checkers TAG named outside a pin line is a message, and a message's version is stale the
+// moment the pin moves. Ten tasks said `missing from …checkers:0.14.0` while pinning 0.50.6, so
+// the failure named an image that was not running — worse than naming none.
+//
+// proven-by: TestMessageRefsFindsATagInAFailureMessage
+func TestMessageRefsFindsATagInAFailureMessage(t *testing.T) {
+	task := `spec:
+  pipelineSpec:
+    tasks:
+    - name: t
+      taskSpec:
+        steps:
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.6
+          name: provide
+          script: |
+            #!/bin/sh
+            test -f "$f" || { echo "FAIL: $f missing from ghcr.io/mikelear/leartech-checkers:0.14.0" >&2; exit 1; }
+`
+	got := messageRefs(task)
+	if len(got) != 1 {
+		t.Fatalf("messageRefs = %v, want exactly the message's tag", got)
+	}
+	if !strings.HasSuffix(got[0], ":0.14.0") {
+		t.Errorf("messageRefs = %v, want the 0.14.0 mention", got)
+	}
+}
+
+// ...and the PIN on the same image is not a message, or every task would fail.
+//
+// proven-by: TestMessageRefsIgnoresThePinItself
+func TestMessageRefsIgnoresThePinItself(t *testing.T) {
+	task := `        - image: ghcr.io/mikelear/leartech-checkers:0.50.6
+          name: provide
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.6
+          name: report
+`
+	if got := messageRefs(task); len(got) != 0 {
+		t.Fatalf("messageRefs = %v on a file that only pins, want none", got)
+	}
+}
+
+// A comment about a pin is prose, not a message — the same exemption every guard in this
+// catalogue has had to make, and without it the gate argues with its own documentation.
+//
+// proven-by: TestMessageRefsIgnoresComments
+func TestMessageRefsIgnoresComments(t *testing.T) {
+	task := `        - image: ghcr.io/mikelear/leartech-checkers:0.50.6
+          name: provide
+          script: |
+            #!/bin/sh
+            # this used to say ghcr.io/mikelear/leartech-checkers:0.14.0 and drift
+`
+	if got := messageRefs(task); len(got) != 0 {
+		t.Fatalf("messageRefs = %v on a comment, want none", got)
 	}
 }

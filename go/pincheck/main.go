@@ -19,6 +19,36 @@ import (
 
 var imageRe = regexp.MustCompile(`image:\s*(\S+)`)
 
+// checkersRef finds a checkers image reference ANYWHERE in a line — a pin or a message.
+var checkersRef = regexp.MustCompile(`ghcr\.io/mikelear/leartech-checkers:([0-9][0-9a-zA-Z.\-]*|[a-z]+)`)
+
+// pinLine is a line that pins the image, as opposed to one that merely names it.
+var pinLine = regexp.MustCompile(`^\s*-\s*image:`)
+
+// messageRefs returns `line: tag` for every checkers tag a task names OUTSIDE a pin line.
+//
+// WHY: ten tasks said, in a failure message,
+//
+//	FAIL: $f missing from ghcr.io/mikelear/leartech-checkers:0.14.0
+//
+// `0.14.0` was the pin when the line was written; the pins moved to 0.50.6 and the messages
+// did not, so a failure named an image that was not the one running. Tekton exposes no
+// variable for the step's own image, so the wording names the image and the action ("bump the
+// task's image pin") and no version. Comments are exempt: they are prose about a pin.
+// proven-by: TestMessageRefsFindsATagInAFailureMessage
+func messageRefs(task string) []string {
+	var out []string
+	for i, line := range strings.Split(task, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") || pinLine.MatchString(line) {
+			continue
+		}
+		if m := checkersRef.FindStringSubmatch(line); m != nil {
+			out = append(out, fmt.Sprintf("%d:%s", i+1, m[1]))
+		}
+	}
+	return out
+}
+
 // firstWithE2erun is the first released checkers tag carrying e2erun (the
 // release whose Dockerfile added the 11th binary). A pin older than this
 // cannot provide it.
@@ -83,10 +113,21 @@ func main() {
 			fail = true
 		}
 	}
+	// A tag named in a MESSAGE drifts the moment the pin moves, and nothing else notices:
+	// the message is only ever read when the step has already failed.
+	for _, ref := range messageRefs(string(b)) {
+		line, tag, _ := strings.Cut(ref, ":")
+		fmt.Printf("FAIL: %s:%s names leartech-checkers:%s outside a pin — a version in a "+
+			"message is stale the moment the pin moves. Name the image and the action, not "+
+			"a tag.\n", *task, line, tag)
+		fail = true
+	}
+
 	if fail {
 		os.Exit(1)
 	}
-	fmt.Printf("==> pincheck: %d checkers tag(s) verified against the registry\n", len(seen))
+	fmt.Printf("==> pincheck: %d checkers tag(s) verified against the registry, and no message names one\n",
+		len(seen))
 }
 
 // providingTags returns the checkers tags used by a step that copies prpost, the
