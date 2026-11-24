@@ -47,6 +47,12 @@ spec:
                 name: jx-cluster-config
                 key: CLUSTER_ID
                 optional: true
+          - name: OPENAPI_PUBLISHER
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: OPENAPI_PUBLISHER
+                optional: true
           envFrom:
           - secretRef:
               name: jx-boot-job-env-vars
@@ -61,12 +67,13 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
-          name: jx-variables
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.13
+          name: sp-variables
           resources: {}
           script: |
-            #!/usr/bin/env sh
-            jx gitops variables
+            #!/bin/sh
+            set -eu
+            spvariables
         - image: ghcr.io/mikelear/leartech-openapi-generation:0.1.3
           name: package-generation
           resources: {}
@@ -75,12 +82,14 @@ spec:
             set -e
             source /workspace/source/.jx/variables.sh
 
-            # Single-publisher gate: this task runs on every cluster's
-            # release pipeline, but only one of them should actually
-            # publish (otherwise both race to push the same package
-            # version → 409 / duplicate mono-repo PRs). AZ wins.
-            if [ "${CLUSTER_ID:-az}" != "az" ]; then
-              echo "==> CLUSTER_ID=${CLUSTER_ID} is not the codegen publisher (az); skipping"
+            # Single-publisher gate: this task runs on every cluster's release
+            # pipeline, but only one publishes (otherwise they race to push the
+            # same package version). The cluster says so itself, in
+            # jx-cluster-config/OPENAPI_PUBLISHER. The old test was
+            # `${CLUSTER_ID:-az}`, so a cluster whose ConfigMap was missing
+            # behaved AS az and raced the real publisher.
+            if [ "${OPENAPI_PUBLISHER:-false}" != "true" ]; then
+              echo "==> CLUSTER_ID=${CLUSTER_ID:-<none>} is not the codegen publisher; skipping"
               exit 0
             fi
 

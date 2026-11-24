@@ -24,6 +24,7 @@ type input struct {
 	KanikoFlags, Domain, SubDomain      string
 	ChartRepository                     string
 	JenkinsXURL                         string
+	ClusterID                           string
 	HasPreviewDockerfile                bool
 }
 
@@ -67,10 +68,6 @@ func vars(in input) []pair {
 	if chartRepo == "" && in.Registry != "" && in.RegistryOrg != "" {
 		chartRepo = in.Registry + "/" + in.RegistryOrg + "-charts"
 	}
-	subDomain := in.SubDomain
-	if subDomain == "" {
-		subDomain = "-jx."
-	}
 	repoName := strings.ReplaceAll(strings.ToLower(in.Repo), "/", "-")
 
 	mink := ""
@@ -84,6 +81,7 @@ func vars(in input) []pair {
 		}
 	}
 	add("APP_NAME", in.Repo)
+	add("CLUSTER_ID", in.ClusterID)
 	add("BRANCH_NAME", branch)
 	add("BUILD_NUMBER", in.BuildNumber)
 	add("DOCKERFILE_PATH", dockerfile)
@@ -96,7 +94,7 @@ func vars(in input) []pair {
 	add("KANIKO_FLAGS", in.KanikoFlags)
 	add("MINK_AS", "tekton-bot")
 	add("MINK_IMAGE", mink)
-	add("NAMESPACE_SUB_DOMAIN", subDomain)
+	add("NAMESPACE_SUB_DOMAIN", in.SubDomain)
 	add("PIPELINE_KIND", kind)
 	add("PUSH_CONTAINER_REGISTRY", push)
 	add("REPO_NAME", repoName)
@@ -155,6 +153,69 @@ func ownerRepoFromGit(dir string) (string, string) {
 	return parts[len(parts)-2], parts[len(parts)-1]
 }
 
+// clusterConfig reads the one ConfigMap that says what this cluster is. It is the only
+// place in the catalogue that reads it: every task used to re-declare the key as a
+// configMapKeyRef, and a value that is absent then reads as a default rather than as an
+// error -- which is how a second cluster can quietly present itself as `gcp`.
+//
+// kubectl rather than client-go, for the reason go/e2e/cluster.go gives: every task image
+// already carries kubectl, so this needs no kubeconfig plumbing, no generated API types and
+// no RBAC beyond what the step already has.
+//
+// Two sources, in order, because the chart that should own all of this does not carry every
+// key yet: jx-cluster-config (ours), then jenkins-x-docker-registry (JX boot's). When the
+// chart carries them all, the second entry is a line to delete.
+type clusterKey struct {
+	name string
+	cms  []string
+	keys []string
+}
+
+var clusterKeys = []clusterKey{
+	{"CLUSTER_ID", []string{"jx-cluster-config"}, []string{"CLUSTER_ID"}},
+	{"DOCKER_REGISTRY", []string{"jx-cluster-config", "jenkins-x-docker-registry"}, []string{"DOCKER_REGISTRY", "docker.registry"}},
+	{"DOCKER_REGISTRY_ORG", []string{"jx-cluster-config", "jenkins-x-docker-registry"}, []string{"DOCKER_REGISTRY_ORG", "docker.registry.org"}},
+	{"PUSH_CONTAINER_REGISTRY", []string{"jx-cluster-config"}, []string{"PUSH_CONTAINER_REGISTRY"}},
+	{"KANIKO_FLAGS", []string{"jx-cluster-config", "jenkins-x-docker-registry"}, []string{"KANIKO_FLAGS", "kaniko.flags"}},
+	{"DOMAIN", []string{"jx-cluster-config"}, []string{"DOMAIN"}},
+	{"NAMESPACE_SUB_DOMAIN", []string{"jx-cluster-config"}, []string{"NAMESPACE_SUB_DOMAIN"}},
+}
+
+// configMapValue returns one key's value, or "" when the ConfigMap or kubectl is absent. A
+// missing cluster is not this tool's error: it also runs in a self-test and on a laptop.
+func configMapValue(namespace, cm, key string) string {
+	path := "{.data." + strings.ReplaceAll(key, ".", `\.`) + "}"
+	out, err := exec.Command("kubectl", "-n", namespace, "get", "configmap", cm,
+		"-o", "jsonpath="+path).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// clusterValues resolves every key from the environment first, then the ConfigMaps. The
+// environment wins so a step can override one value without a new ConfigMap, and so the
+// rules above are testable without a cluster.
+func clusterValues(namespace string) map[string]string {
+	out := make(map[string]string, len(clusterKeys))
+	for _, ck := range clusterKeys {
+		v := os.Getenv(ck.name)
+		if v == "" && namespace != "" {
+			for i, cm := range ck.cms {
+				if i < len(ck.keys) {
+					if v = configMapValue(namespace, cm, ck.keys[i]); v != "" {
+						break
+					}
+				}
+			}
+		}
+		if v != "" {
+			out[ck.name] = v
+		}
+	}
+	return out
+}
+
 func main() {
 	var (
 		dir         = flag.String("dir", ".", "the checkout to write into")
@@ -167,23 +228,32 @@ func main() {
 		version     = flag.String("version", "", "version (default $VERSION, then the VERSION file, then a derived tag)")
 		toStdout    = flag.Bool("print", false, "write to stdout instead of the file")
 		require     = flag.String("require", "", "comma-separated variables that must be non-empty; exit 1 if any is not")
+		namespace   = flag.String("namespace", "jx", "namespace holding the cluster ConfigMaps")
+		noCluster   = flag.Bool("no-cluster", false, "use the environment only; never read the cluster")
 	)
 	flag.Parse()
+
+	ns := ""
+	if !*noCluster {
+		ns = *namespace
+	}
+	cluster := clusterValues(ns)
 
 	in := input{
 		Owner:           first(*owner, os.Getenv("REPO_OWNER")),
 		Repo:            first(*repo, os.Getenv("REPO_NAME")),
-		GitBranch:       first(*branch, git(*dir, "rev-parse", "--abbrev-ref", "HEAD")),
+		GitBranch:       resolveBranch(*branch, os.Getenv("PULL_BASE_REF"), *dir),
 		PullNumber:      first(*pullNumber, os.Getenv("PULL_NUMBER")),
 		BuildNumber:     resolveBuildNumber(*buildNumber, os.Getenv),
-		Registry:        os.Getenv("DOCKER_REGISTRY"),
-		RegistryOrg:     os.Getenv("DOCKER_REGISTRY_ORG"),
-		PushRegistry:    os.Getenv("PUSH_CONTAINER_REGISTRY"),
-		KanikoFlags:     os.Getenv("KANIKO_FLAGS"),
-		Domain:          os.Getenv("DOMAIN"),
-		SubDomain:       os.Getenv("NAMESPACE_SUB_DOMAIN"),
+		Registry:        cluster["DOCKER_REGISTRY"],
+		RegistryOrg:     cluster["DOCKER_REGISTRY_ORG"],
+		PushRegistry:    cluster["PUSH_CONTAINER_REGISTRY"],
+		KanikoFlags:     cluster["KANIKO_FLAGS"],
+		Domain:          cluster["DOMAIN"],
+		SubDomain:       cluster["NAMESPACE_SUB_DOMAIN"],
 		ChartRepository: os.Getenv("JX_CHART_REPOSITORY"),
 		JenkinsXURL:     os.Getenv("JENKINS_X_URL"),
+		ClusterID:       cluster["CLUSTER_ID"],
 	}
 	if in.Owner == "" || in.Repo == "" {
 		o, r := ownerRepoFromGit(*dir)
@@ -267,6 +337,23 @@ func missingRequired(vs []pair, want string) []string {
 		}
 	}
 	return missing
+}
+
+// resolveBranch resolves the branch the build is FOR. A PR checkout is detached at the merge
+// SHA, so `git rev-parse --abbrev-ref HEAD` answers "HEAD" -- a value that would make every
+// pull request look like a feature branch on a branch called HEAD. PULL_BASE_REF is what
+// Lighthouse actually knows (the target branch), so it is consulted first.
+func resolveBranch(flagValue, baseRef, dir string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if baseRef != "" {
+		return baseRef
+	}
+	if b := git(dir, "rev-parse", "--abbrev-ref", "HEAD"); b != "HEAD" {
+		return b
+	}
+	return ""
 }
 
 // resolveBuildNumber resolves the run identifier. Lighthouse sets BUILD_ID (the millisecond

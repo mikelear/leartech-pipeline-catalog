@@ -1,0 +1,55 @@
+# Task files that still declare a jx-cluster-config keyRef, with the reason each one does.
+#
+# Format: <path>|<why it is not yet covered by sp-variables>
+#
+# THE TARGET IS ZERO, AND `sp-variables` IS ALREADY THERE. The step that writes
+# .jx/variables.sh reads the ConfigMap inside the binary (go/spvariables clusterValues), so it
+# declares nothing, and the value reaches every later step as a file. These 34 predate that:
+# each reports a PR comment and reads ${CLUSTER_ID:-} in the same script that calls prpost.
+#
+# WHAT REMOVES ONE OF THESE LINES: make the step stop reading the variable. Either
+#   (a) `. .jx/variables.sh` at the top of the report script (the file is on the workspace by
+#       then), or
+#   (b) `prpost` resolving the cluster from the file itself, so the flag and the shell
+#       interpolation both disappear.
+# (b) removes the whole class; it is the change this file exists to make visible.
+#
+# This list may only SHRINK. A file not listed here must not declare the keyRef (the check
+# fails), and a line whose file no longer declares it must be deleted (the check fails) — the
+# same ratchet as test/go/orphan_tools.txt, for the same reason: a guard nobody prunes stops
+# describing the tree.
+
+tasks/angular/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/chart-standard/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/dockerfile-lint/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/dotnet-audit/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/dotnet-lint/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/dotnet-mutants/pullrequest.yaml|mutants step reads ${CLUSTER_ID:-unknown} into CLUSTER_TAG
+tasks/dotnet-test/pullrequest.yaml|test step reads ${CLUSTER_ID:-unknown} into CLUSTER_TAG
+tasks/dotnet/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/end2end-ui/pullrequest.yaml|end2end-ui step sources the file but the report path re-reads the env
+tasks/end2end/pullrequest.yaml|end2end-contract sources the file but the report path re-reads the env
+tasks/gitops-cluster/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/go-lint/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/go-platform-promote/release.yaml|promote step names the cluster in the release it promotes
+tasks/go-test/pullrequest.yaml|test step reads ${CLUSTER_ID:-unknown} into CLUSTER_TAG
+tasks/go/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/govulncheck/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/helm/platform-promote.yaml|promote step names the cluster in the release it promotes
+tasks/helm/platform-release.yaml|promote step names the cluster in the release it promotes
+tasks/helm/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/kyverno-audit/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/ng-lint/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/ng-test/pullrequest.yaml|test step reads ${CLUSTER_ID:-unknown} into CLUSTER_TAG
+tasks/npm-audit/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/openapi-generation/release.yaml|package-generation reads it for the log line; the gate is OPENAPI_PUBLISHER
+tasks/python-build-only/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/qa-gate/pullrequest.yaml|reads ${CLUSTER_ID} to label what it reports
+tasks/release/next-version.yaml|next-version derives the tag suffix from it
+tasks/release/promote-cluster-suffixed.yaml|promote step suffixes the version with it
+tasks/rust-audit/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/rust-lint/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/rust-test/pullrequest.yaml|test step reads ${CLUSTER_ID:-unknown} into CLUSTER_TAG
+tasks/rust/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker
+tasks/triggersync/pullrequest.yaml|triggersync labels its finding with the cluster
+tasks/values-standard/pullrequest.yaml|report step reads ${CLUSTER_ID:-} for the prpost marker

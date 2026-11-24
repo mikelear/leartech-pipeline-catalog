@@ -40,15 +40,16 @@ spec:
           script: |
             #!/usr/bin/env sh
             jx-release-version --tag > VERSION
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
-          name: jx-variables
-          resources:
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.13
+          name: sp-variables
+          resources:resources:
             requests:
               cpu: 400m
               memory: 512Mi
           script: |
-            #!/usr/bin/env sh
-            jx gitops variables
+            #!/bin/sh
+            set -eu
+            spvariables
         - image: ghcr.io/jenkins-x/jx-boot:3.17.129
           name: promote-changelog
           resources: {}

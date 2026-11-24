@@ -107,12 +107,13 @@ spec:
             chmod +x /workspace/bin/prpost
             test -x /workspace/bin/prpost
             echo "==> provided /workspace/bin/prpost"
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
-          name: jx-variables
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.13
+          name: sp-variables
           resources: {}
           script: |
-            #!/usr/bin/env sh
-            jx gitops variables
+            #!/bin/sh
+            set -eu
+            spvariables
         # Pre-baked Playwright + Chromium + Firefox + WebKit + gcloud SDK +
         # bcrypt baked in via leartech-dockerfiles/playwright-runner. Used to
         # be node:22 with 2-5 min of inline tool install per pipeline run;

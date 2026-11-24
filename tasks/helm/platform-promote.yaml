@@ -54,12 +54,13 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
-          name: jx-variables
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.13
+          name: sp-variables
           resources: {}
           script: |
-            #!/usr/bin/env sh
-            jx gitops variables
+            #!/bin/sh
+            set -eu
+            spvariables
         - image: ghcr.io/mikelear/platform-promote:0.54.59
           name: platform-promote
           resources: {}

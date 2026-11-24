@@ -34,12 +34,13 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ""
           resources: {}
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
-          name: jx-variables
+        - image: ghcr.io/mikelear/leartech-checkers:0.50.13
+          name: sp-variables
           resources: {}
           script: |
-            #!/usr/bin/env sh
-            jx gitops variables
+            #!/bin/sh
+            set -eu
+            spvariables
         # mcr.microsoft.com/dotnet/sdk:9.0 — switch to leartech-dotnet-runtime
         # once that image is published (PR mikelear/leartech-dockerfiles#16).
         - image: mcr.microsoft.com/dotnet/sdk:11.0
