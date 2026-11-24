@@ -34,7 +34,7 @@ spec:
             #!/bin/sh
             set -eu
             mkdir -p /workspace/bin
-            test -x /usr/local/bin/prpost || { echo "FAIL: prpost missing from ghcr.io/mikelear/leartech-checkers:0.14.0" >&2; exit 1; }
+            test -x /usr/local/bin/prpost || { echo "FAIL: prpost missing from this step's leartech-checkers image (bump the task's image pin)" >&2; exit 1; }
             cp /usr/local/bin/prpost /workspace/bin/prpost
             chmod +x /workspace/bin/prpost
             test -x /workspace/bin/prpost

@@ -54,7 +54,7 @@ spec:
             set -eu
             mkdir -p /workspace/bin
             for f in /usr/local/bin/prpost /usr/local/share/leartech-go.mk; do
-              test -f "$f" || { echo "FAIL: $f missing from ghcr.io/mikelear/leartech-checkers:0.14.0" >&2; exit 1; }
+              test -f "$f" || { echo "FAIL: $f missing from this step's leartech-checkers image (bump the task's image pin)" >&2; exit 1; }
             done
             cp /usr/local/bin/prpost /workspace/bin/prpost
             cp /usr/local/share/leartech-go.mk /workspace/bin/leartech-go.mk
