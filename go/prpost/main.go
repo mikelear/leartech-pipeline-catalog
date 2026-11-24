@@ -263,6 +263,12 @@ func Upsert(ctx context.Context, api, owner, repo, pr, body, key string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// WHICH FORGE. forge-api serves more than one, and a repo that is not on its default
+	// answers 404 -- measured on a Forgejo PR, where every check was green and no comment
+	// ever appeared. The host comes from the repo URL the pipeline already has.
+	if h := forgeHost(); h != "" {
+		req.Header.Set("X-Forge-Host", h)
+	}
 	tok := bearerForForge(ctx)
 	if tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
@@ -277,6 +283,23 @@ func Upsert(ctx context.Context, api, owner, repo, pr, body, key string) error {
 		return fmt.Errorf("forge-api: HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// forgeHost is the host of the repo this step reports on, taken from REPO_URL -- the clone
+// URL Lighthouse injects. Empty when the variable is absent, which leaves forge-api on its
+// default forge: the behaviour every existing caller already has.
+//
+// proven-by: TestForgeHost_ReadsTheHostFromTheRepoURL
+func forgeHost() string {
+	raw := strings.TrimSpace(os.Getenv("REPO_URL"))
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
 }
 
 // ExitCodeOf maps the report's outcome onto the step's exit status, so the

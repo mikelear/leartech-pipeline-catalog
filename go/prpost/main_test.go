@@ -339,3 +339,29 @@ func TestReadTests_FlattensFoldedMessages(t *testing.T) {
 		t.Errorf("message = %q, want %q", got[0].Message, want)
 	}
 }
+
+// forge-api serves more than one forge, so the poster has to say which one it means. The host is
+// taken from REPO_URL (the clone URL Lighthouse injects) rather than a new setting: a pipeline
+// already knows where its repo lives.
+//
+// proven-by: TestForgeHost_ReadsTheHostFromTheRepoURL
+func TestForgeHost_ReadsTheHostFromTheRepoURL(t *testing.T) {
+	t.Setenv("REPO_URL", "https://forgejo.jx.leartech.com/it-test/ship-proven-go-service.git")
+	if got := forgeHost(); got != "forgejo.jx.leartech.com" {
+		t.Errorf("forgeHost = %q, want the repo host", got)
+	}
+
+	t.Setenv("REPO_URL", "https://github.com/mikelear/leartech-gate.git")
+	if got := forgeHost(); got != "github.com" {
+		t.Errorf("forgeHost = %q, want github.com", got)
+	}
+
+	// Absent or unparseable leaves forge-api on its default forge: the behaviour every
+	// existing caller has, and the reason this is additive.
+	for _, raw := range []string{"", "not a url"} {
+		t.Setenv("REPO_URL", raw)
+		if got := forgeHost(); got != "" {
+			t.Errorf("REPO_URL=%q: forgeHost = %q, want empty", raw, got)
+		}
+	}
+}
