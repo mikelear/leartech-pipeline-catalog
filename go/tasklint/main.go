@@ -147,7 +147,7 @@ func main() {
 	flag.Parse()
 
 	if flag.NArg() == 0 {
-		fmt.Fprintf(os.Stderr, "tasklint: a subcommand is required (syntax, message)\n")
+		fmt.Fprintf(os.Stderr, "tasklint: a subcommand is required (syntax, shape, message)\n")
 		os.Exit(2)
 	}
 
@@ -156,6 +156,8 @@ func main() {
 	switch sub := flag.Arg(0); sub {
 	case "syntax":
 		code = runSyntax(steps, loadErrs)
+	case "shape":
+		code = runShape(*dir)
 	case "payload":
 		fs := flag.NewFlagSet("payload", flag.ExitOnError)
 		delegates := fs.String("delegates", "test/go/delegated_posters.txt",

@@ -45,9 +45,67 @@ spec:
         - image: ghcr.io/mikelear/leartech-checkers:0.50.14
           name: sp-variables
           resources: {}
+          env:
+          - name: DOCKER_REGISTRY
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: DOCKER_REGISTRY
+                optional: true
+          - name: DOCKER_REGISTRY_ORG
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: DOCKER_REGISTRY_ORG
+                optional: true
+          - name: PUSH_CONTAINER_REGISTRY
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: PUSH_CONTAINER_REGISTRY
+                optional: true
+          - name: KANIKO_FLAGS
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: KANIKO_FLAGS
+                optional: true
+          - name: DOMAIN
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: DOMAIN
+                optional: true
+          - name: CLUSTER_ID
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: CLUSTER_ID
+                optional: true
+          - name: JX_DOCKER_REGISTRY
+            valueFrom:
+              configMapKeyRef:
+                name: jenkins-x-docker-registry
+                key: docker.registry
+                optional: true
+          - name: JX_DOCKER_REGISTRY_ORG
+            valueFrom:
+              configMapKeyRef:
+                name: jenkins-x-docker-registry
+                key: docker.registry.org
+                optional: true
+          - name: JX_KANIKO_FLAGS
+            valueFrom:
+              configMapKeyRef:
+                name: jenkins-x-docker-registry
+                key: kaniko.flags
+                optional: true
           script: |
             #!/bin/sh
             set -eu
+            : "${DOCKER_REGISTRY:=${JX_DOCKER_REGISTRY:-}}"
+            : "${DOCKER_REGISTRY_ORG:=${JX_DOCKER_REGISTRY_ORG:-}}"
+            : "${KANIKO_FLAGS:=${JX_KANIKO_FLAGS:-}}"
             spvariables
         - image: ghcr.io/mikelear/leartech-go-runtime:0.53.56@sha256:b7683e3d00985b90c4dbd1bcc0951cfb29f7cdd5b28e8ca4a7aa32f431c86e01
           name: build-make-build

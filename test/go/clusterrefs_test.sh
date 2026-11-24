@@ -36,6 +36,6 @@ for f in $(grep -vxF -f "$actual" "$recorded" || true); do
 done
 
 if [ "$fail" -eq 0 ]; then
-  echo "==> one cluster-config read: sp-variables declares none, $(wc -l < "$recorded" | tr -d ' ') tasks still do (recorded in $list, may only shrink)"
+  echo "==> one cluster-config read: $(wc -l < "$recorded" | tr -d ' ') task file(s) still declare it, all recorded in $list and only shrinking"
 fi
 exit "$fail"
