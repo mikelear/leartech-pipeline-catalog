@@ -263,7 +263,7 @@ func TestValidate_RefusesAHalfWorkingConfig(t *testing.T) {
 		"no hooks":            {Providers: p},
 		"unknown kind":        {Providers: []ProviderConfig{{Name: "f", Kind: "svn"}}, Hooks: h(func(*HookConfig) {})},
 		"undeclared provider": {Providers: p, Hooks: h(func(x *HookConfig) { x.Provider = "nope" })},
-		"no url":              {Providers: p, Hooks: h(func(x *HookConfig) { x.URL = "" })},
+		"no url, no discover": {Providers: p, Hooks: h(func(x *HookConfig) { x.URL = ""; x.Repos = nil })},
 		"no events":           {Providers: p, Hooks: h(func(x *HookConfig) { x.Events = nil })},
 		"no repos":            {Providers: p, Hooks: h(func(x *HookConfig) { x.Repos = nil })},
 		"malformed repo":      {Providers: p, Hooks: h(func(x *HookConfig) { x.Repos = []string{"demo"} })},
