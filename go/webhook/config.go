@@ -23,6 +23,11 @@ type ProviderConfig struct {
 	Server string `yaml:"server"`
 	// Token is a REFERENCE such as ${FORGE_TOKEN}, expanded only for a provider the run uses.
 	Token string `yaml:"token"`
+	// Route names the Gateway API HTTPRoute (or, on a cluster that still has one, the Ingress)
+	// whose hostname is this provider's hook endpoint: "name" or "namespace/name". The endpoint
+	// belongs to whichever Lighthouse receives THAT forge's events, and this estate runs two —
+	// `hook` in `jx` for GitHub, `forge-webhooks` in `forgejo` for Forgejo.
+	Route string `yaml:"route"`
 }
 
 // HookConfig is one hook target: a URL, its secret and event set, and the repos it goes on.
@@ -35,7 +40,10 @@ type HookConfig struct {
 	Secret string   `yaml:"secret"`
 	Events []string `yaml:"events"`
 	Active *bool    `yaml:"active"`
-	Repos  []string `yaml:"repos"`
+	// Repos is the explicit half of the target set. Empty is allowed when Discover is set.
+	Repos []string `yaml:"repos"`
+	// Discover is the query half, and the only thing that gives -prune a scope.
+	Discover *Discover `yaml:"discover"`
 }
 
 // reference matches ${NAME}, the only expansion this file allows: there is no other
@@ -106,21 +114,29 @@ func (c Config) Validate() error {
 		return errors.New("no hooks: nothing to do")
 	}
 	for i, h := range c.Hooks {
-		if h.URL == "" {
-			return fmt.Errorf("hooks[%d] has no url", i)
-		}
+		// A hook with no url takes the running cluster's, which is the point of reading it
+		// from the cluster at all; what is refused is having neither.
+		_ = i
 		if !seen[h.Provider] {
-			return fmt.Errorf("hook %s refers to provider %q, which is not declared", h.URL, h.Provider)
+			return fmt.Errorf("hook %s refers to provider %q, which is not declared", h.name(), h.Provider)
 		}
 		if len(h.Events) == 0 {
-			return fmt.Errorf("hook %s has no events", h.URL)
+			return fmt.Errorf("hook %s has no events", h.name())
 		}
-		if len(h.Repos) == 0 {
-			return fmt.Errorf("hook %s has no repos", h.URL)
+		if len(h.Repos) == 0 && h.Discover == nil {
+			return fmt.Errorf("hook %s has neither repos nor a discover block", h.name())
+		}
+		if h.Discover != nil {
+			if _, err := h.Discover.owner(); err != nil {
+				return fmt.Errorf("hook %s: %w", h.name(), err)
+			}
+			if _, _, err := h.Discover.compiled(); err != nil {
+				return fmt.Errorf("hook %s: %w", h.name(), err)
+			}
 		}
 		for _, r := range h.Repos {
 			if _, err := ParseRepo(r); err != nil {
-				return fmt.Errorf("hook %s: %w", h.URL, err)
+				return fmt.Errorf("hook %s: %w", h.name(), err)
 			}
 		}
 		kind := Kind(c.Providers[kindOf(c.Providers, h.Provider)].Kind)
@@ -129,6 +145,15 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// name is what an error calls this hook before its URL is known: a hook that takes the
+// cluster's URL has no url in the file, and a message quoting an empty string names nothing.
+func (h HookConfig) name() string {
+	if h.URL != "" {
+		return h.URL
+	}
+	return "(" + h.Provider + " hook with the cluster's url)"
 }
 
 // kindOf returns the index of name's declaration, which Validate has already established.
@@ -172,7 +197,7 @@ type resolved struct {
 // resolve expands the references the run uses; an unset one is an error.
 // proven-by: TestResolve_ExpandsOnlyWhatTheRunUses
 // proven-by: TestResolve_ExpandsOnlyWhatTheRunUses
-func resolve(c Config, chosen []HookConfig, getenv func(string) string) (resolved, error) {
+func resolve(c Config, chosen []HookConfig, getenv func(string) string, read func(ProviderConfig) ClusterSources) (resolved, error) {
 	out := resolved{providers: make(map[string]Provider, len(c.Providers)), hooks: make([]HookConfig, 0, len(chosen))}
 	for _, h := range chosen {
 		pc, ok := c.Provider(h.Provider)
@@ -184,9 +209,13 @@ func resolve(c Config, chosen []HookConfig, getenv func(string) string) (resolve
 			if err != nil {
 				return resolved{}, fmt.Errorf("provider %q token: %w", pc.Name, err)
 			}
-			out.providers[pc.Name] = Provider{
+			prov := Provider{
 				Name: pc.Name, Kind: Kind(pc.Kind), Base: pc.Server, Token: token,
 			}
+			if read != nil {
+				prov.Cluster = read(pc)
+			}
+			out.providers[pc.Name] = prov
 		}
 		secret, err := expand(h.Secret, getenv)
 		if err != nil {

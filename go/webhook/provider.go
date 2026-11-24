@@ -71,12 +71,16 @@ type Spec struct {
 	Active bool
 }
 
-// Provider is one configured forge.
+// Provider is one configured forge, with what the cluster supplied for its endpoint.
 type Provider struct {
 	Name  string
 	Kind  Kind
 	Base  string
 	Token string
+	// Cluster is read per provider, because the hook endpoint belongs to whichever Lighthouse
+	// receives that forge's events: `hook` in `jx` for GitHub, `forge-webhooks` in `forgejo`
+	// for Forgejo, each an HTTPRoute with its own hostname.
+	Cluster ClusterSources
 }
 
 // Hooks is the hook surface a provider implements.
@@ -84,6 +88,7 @@ type Hooks interface {
 	ListHooks(ctx context.Context, repo Repo) ([]Webhook, error)
 	CreateHook(ctx context.Context, repo Repo, spec Spec) (Webhook, error)
 	DeleteHook(ctx context.Context, repo Repo, id int64) error
+	ListRepos(ctx context.Context, owner string, isOrg bool) ([]RepoInfo, error)
 }
 
 // NewHooks returns the driver for p, or an error naming the kind.
@@ -275,4 +280,73 @@ func (g *giteaHooks) CreateHook(ctx context.Context, repo Repo, spec Spec) (Webh
 func (g *giteaHooks) DeleteHook(ctx context.Context, repo Repo, id int64) error {
 	url := fmt.Sprintf("%s/api/v1/repos/%s/%s/hooks/%d", g.base, repo.Owner, repo.Name, id)
 	return do(ctx, g.http, http.MethodDelete, url, g.auth(), nil, nil)
+}
+
+// ListRepos returns the repos an org or a user owns, for a discover block.
+//
+// Both forges page this endpoint and neither defaults to a page size that covers a real org,
+// so it pages until a short page comes back. A repo list that silently stops at 30 is how a
+// discovery-based run looks complete and leaves repos unhooked.
+func (g *giteaHooks) ListRepos(ctx context.Context, owner string, isOrg bool) ([]RepoInfo, error) {
+	kind := "users"
+	if isOrg {
+		kind = "orgs"
+	}
+	var out []RepoInfo
+	for page := 1; page <= 100; page++ {
+		var batch []struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"`
+			Archived bool   `json:"archived"`
+			Private  bool   `json:"private"`
+			Fork     bool   `json:"fork"`
+		}
+		url := fmt.Sprintf("%s/api/v1/%s/%s/repos?limit=50&page=%d", g.base, kind, owner, page)
+		if err := do(ctx, g.http, http.MethodGet, url, g.auth(), nil, &batch); err != nil {
+			return nil, err
+		}
+		for _, b := range batch {
+			out = append(out, RepoInfo{
+				Repo:     Repo{Owner: owner, Name: b.Name},
+				Archived: b.Archived, Private: b.Private, Fork: b.Fork,
+			})
+		}
+		if len(batch) < 50 {
+			return out, nil
+		}
+	}
+	return out, nil
+}
+
+// ListRepos is the GitHub equivalent. /users/{u}/repos lists what a USER owns rather than what
+// they can see, which is the distinction that matters: a token with org-wide access would
+// otherwise pull in every repo it can read.
+func (g *gitHubHooks) ListRepos(ctx context.Context, owner string, isOrg bool) ([]RepoInfo, error) {
+	kind := "users"
+	if isOrg {
+		kind = "orgs"
+	}
+	var out []RepoInfo
+	for page := 1; page <= 100; page++ {
+		var batch []struct {
+			Name     string `json:"name"`
+			Archived bool   `json:"archived"`
+			Private  bool   `json:"private"`
+			Fork     bool   `json:"fork"`
+		}
+		url := fmt.Sprintf("%s/%s/%s/repos?per_page=100&page=%d", g.base, kind, owner, page)
+		if err := do(ctx, g.http, http.MethodGet, url, g.auth(), nil, &batch); err != nil {
+			return nil, err
+		}
+		for _, b := range batch {
+			out = append(out, RepoInfo{
+				Repo:     Repo{Owner: owner, Name: b.Name},
+				Archived: b.Archived, Private: b.Private, Fork: b.Fork,
+			})
+		}
+		if len(batch) < 100 {
+			return out, nil
+		}
+	}
+	return out, nil
 }

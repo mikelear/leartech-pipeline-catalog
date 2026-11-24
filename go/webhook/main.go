@@ -46,10 +46,13 @@ type step struct {
 	Action   action `json:"action"`
 	HookID   int64  `json:"hook_id,omitempty"`
 	// Other is every other hook URL already on the repo. Reported rather than ignored: a repo
-	// that carries a hook on a DIFFERENT endpoint and is about to gain this one is what a
-	// mistyped -url, or a stale endpoint, looks like.
+	// carrying a hook on a DIFFERENT endpoint while gaining this one is what a mistyped -url
+	// looks like.
 	Other []string `json:"other_hooks,omitempty"`
-	Err   string   `json:"error,omitempty"`
+	// Prune marks a step that removes a hook the config does not ask for, so the summary
+	// separates reconciliation from a requested removal.
+	Prune bool   `json:"prune,omitempty"`
+	Err   string `json:"error,omitempty"`
 }
 
 // sameEvents reports whether two event sets are equal, order aside.
@@ -115,6 +118,15 @@ type runOptions struct {
 	asJSON     bool
 	getenv     func(string) string
 	hooks      func(Provider) (Hooks, error)
+	// noCluster skips every cluster read, for a config carrying url and secret itself.
+	noCluster bool
+	// namespace is where the `hook` route and the HMAC secret live on this estate.
+	namespace string
+	// readCluster is the cluster read, injected so a test needs no kubectl.
+	readCluster func(ProviderConfig) ClusterSources
+	// prune reconciles the forge to the config inside the DISCOVERED scope. It is opt-in:
+	// create and replace are safe alone, and a delete is not.
+	prune bool
 }
 
 // selectHooks filters the config's hooks by provider, url and repo, and narrows each to the
@@ -191,13 +203,14 @@ func plan(ctx context.Context, o runOptions, deleteOnly bool) (aplan, error) {
 	if err != nil {
 		return aplan{}, err
 	}
-	r, err := resolve(o.cfg, chosen, o.getenv)
+	r, err := resolve(o.cfg, chosen, o.getenv, o.readCluster)
 	if err != nil {
 		return aplan{}, err
 	}
 	p := aplan{specs: make(map[string]Spec, len(r.hooks)), provs: r.providers}
 	clients := make(map[string]Hooks, len(r.providers))
-	for _, h := range r.hooks {
+	for i := range r.hooks {
+		h := &r.hooks[i]
 		prov := r.providers[h.Provider]
 		hc, ok := clients[prov.Name]
 		if !ok {
@@ -207,28 +220,132 @@ func plan(ctx context.Context, o runOptions, deleteOnly bool) (aplan, error) {
 			}
 			clients[prov.Name] = hc
 		}
-		spec := Spec{URL: h.URL, Secret: h.Secret, Events: h.Events, Active: h.ActiveNow()}
+		// The URL and the secret are resolved here, once, so the run acts on what the plan
+		// was checked against.
+		url, uerr := o.hookURL(*h, prov)
+		if uerr != nil {
+			return aplan{}, uerr
+		}
+		spec := Spec{URL: url, Secret: h.Secret, Events: h.Events, Active: h.ActiveNow()}
 		if o.envSecret != "" {
 			spec.Secret = o.envSecret
 		}
-		p.specs[hookKey(prov.Name, h.URL)] = spec
-		for _, rs := range h.Repos {
-			repo, rerr := ParseRepo(rs)
-			if rerr != nil {
-				return aplan{}, rerr
-			}
+		if spec.Secret == "" {
+			spec.Secret = prov.Cluster.HMAC
+		}
+		p.specs[hookKey(prov.Name, url)] = spec
+
+		want, werr := desiredRepos(ctx, *h, hc)
+		if werr != nil {
+			return aplan{}, werr
+		}
+		for _, repo := range want {
 			have, lerr := hc.ListHooks(ctx, repo)
 			if lerr != nil {
-				p.steps = append(p.steps, step{Provider: prov.Name, Repo: repo.String(), URL: h.URL,
+				p.steps = append(p.steps, step{Provider: prov.Name, Repo: repo.String(), URL: url,
 					Action: actionNone, Err: lerr.Error()})
 				continue
 			}
 			act, id := decide(have, spec, !deleteOnly)
-			p.steps = append(p.steps, step{Provider: prov.Name, Repo: repo.String(), URL: h.URL,
-				Action: act, HookID: id, Other: otherURLs(have, h.URL)})
+			p.steps = append(p.steps, step{Provider: prov.Name, Repo: repo.String(), URL: url,
+				Action: act, HookID: id, Other: otherURLs(have, url)})
 		}
+		if !o.prune {
+			continue
+		}
+		if h.Discover == nil {
+			return aplan{}, fmt.Errorf("hook %s: -prune needs a discover block — with only a repo "+
+				"list there is no scope to reconcile against", h.name())
+		}
+		pruneSteps, perr := prunePlan(ctx, o, prov, hc, *h, url, want)
+		if perr != nil {
+			return aplan{}, perr
+		}
+		p.steps = append(p.steps, pruneSteps...)
 	}
 	return p, nil
+}
+
+// hookURL resolves a hook's endpoint: the flag, then the config, then the running cluster.
+// proven-by: TestHookURL_FlagThenConfigThenCluster
+func (o runOptions) hookURL(h HookConfig, prov Provider) (string, error) {
+	if o.onlyURL != "" {
+		return o.onlyURL, nil
+	}
+	if h.URL != "" {
+		return h.URL, nil
+	}
+	if prov.Cluster.HookURL != "" {
+		return prov.Cluster.HookURL, nil
+	}
+	return "", fmt.Errorf("hook for provider %q has no url and no route supplied one: pass -url, "+
+		"set url in the config, or set route on the provider (an HTTPRoute or Ingress it reads "+
+		"the hostname from)", h.Provider)
+}
+
+// desiredRepos is the repo set the config asks for.
+//
+// AN EXPLICIT LIST WINS OVER the discover query rather than adding to it: naming repos is the
+// more specific statement of intent, and it is the reading under which discover is useful
+// alongside a list. Query the org to learn the SCOPE, name the repos that should have the hook,
+// and let -prune remove it from the rest.
+// proven-by: TestDesiredRepos_ExplicitListWinsOverDiscover
+func desiredRepos(ctx context.Context, h HookConfig, hc Hooks) ([]Repo, error) {
+	var explicit []Repo
+	for _, rs := range h.Repos {
+		repo, err := ParseRepo(rs)
+		if err != nil {
+			return nil, err
+		}
+		explicit = append(explicit, repo)
+	}
+	if len(explicit) > 0 || h.Discover == nil {
+		return mergeRepos(explicit, nil), nil
+	}
+	discovered, err := discoverRepos(*h.Discover, func(owner string, isOrg bool) ([]RepoInfo, error) {
+		return hc.ListRepos(ctx, owner, isOrg)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return mergeRepos(nil, discovered), nil
+}
+
+// prunePlan is the reconcile half: every repo in the DISCOVERED SCOPE that carries this hook's
+// URL but is not in the wanted set gets a delete.
+//
+// The scope is the discover query and nothing else. With only an explicit repo list there is no
+// "the rest" to subtract, so -prune refuses rather than guessing; and a hook on a different URL
+// is left alone.
+// proven-by: TestPrunePlan_OnlyRemovesOursOutsideTheWantedSet
+func prunePlan(ctx context.Context, o runOptions, prov Provider, hc Hooks, h HookConfig, url string, want []Repo) ([]step, error) {
+	scope, err := discoverRepos(*h.Discover, func(owner string, isOrg bool) ([]RepoInfo, error) {
+		return hc.ListRepos(ctx, owner, isOrg)
+	})
+	if err != nil {
+		return nil, err
+	}
+	inScope := make(map[string]bool, len(want))
+	for _, r := range want {
+		inScope[strings.ToLower(r.String())] = true
+	}
+	var out []step
+	for _, repo := range scope {
+		if inScope[strings.ToLower(repo.String())] {
+			continue
+		}
+		have, lerr := hc.ListHooks(ctx, repo)
+		if lerr != nil {
+			out = append(out, step{Provider: prov.Name, Repo: repo.String(), URL: url,
+				Action: actionNone, Err: lerr.Error()})
+			continue
+		}
+		if act, id := decide(have, Spec{URL: url}, false); act == actionDelete {
+			out = append(out, step{Provider: prov.Name, Repo: repo.String(), URL: url,
+				Action: actionDelete, HookID: id, Prune: true})
+		}
+	}
+	return out, nil
 }
 
 // apply carries out the plan and returns what it did, with each repo's error on its own step
@@ -316,6 +433,9 @@ func main() {
 	expectNoChange := fs.Bool("expect-no-change", false, "fail if the plan is not empty")
 	warnOnFail := fs.Bool("warn-on-fail", false, "report a failure and keep going (exit 0)")
 	asJSON := fs.Bool("json", false, "write the result as JSON")
+	prune := fs.Bool("prune", false, "also remove this hook's URL from repos in the discover scope that the config does not name")
+	namespace := fs.String("namespace", defaultDevNamespace, "namespace holding the HMAC secret and the default `hook` route")
+	noCluster := fs.Bool("no-cluster", false, "never read the cluster: the config must carry url and secret")
 	_ = fs.Parse(args)
 
 	switch sub {
@@ -331,7 +451,20 @@ func main() {
 		os.Exit(1)
 	}
 	o := runOptions{cfg: cfg, onlyProv: *onlyProv, onlyRepo: *onlyRepo, onlyURL: *onlyURL,
-		dryRun: *dryRun, warnOnFail: *warnOnFail, asJSON: *asJSON, getenv: os.Getenv, hooks: NewHooks}
+		dryRun: *dryRun, warnOnFail: *warnOnFail, asJSON: *asJSON, getenv: os.Getenv, hooks: NewHooks,
+		prune: *prune}
+	o.namespace = *namespace
+	o.noCluster = *noCluster
+	if !*noCluster {
+		// Per provider, because each forge's events go to its own Lighthouse instance.
+		o.readCluster = func(pc ProviderConfig) ClusterSources {
+			route := pc.Route
+			if route == "" {
+				route = "hook"
+			}
+			return readCluster(parseRoute(route, *namespace), *namespace)
+		}
+	}
 	if *secretEnv != "" {
 		v := os.Getenv(*secretEnv)
 		if v == "" {
@@ -341,12 +474,22 @@ func main() {
 		o.envSecret = v
 	}
 
+	if o.noCluster {
+		fmt.Fprintln(os.Stderr, "note: -no-cluster, so every url and secret must come from the config or a flag")
+	}
+	if *prune && o.onlyRepo != "" {
+		fmt.Fprintln(os.Stderr, "note: -prune with -repo prunes within that one repo's scope only")
+	}
+
 	ctx := context.Background()
 	deleteOnly := sub == commandDelete
 	p, perr := plan(ctx, o, deleteOnly)
 	if perr != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %v\n", perr)
 		os.Exit(1)
+	}
+	if !*asJSON {
+		reportSources(p.provs)
 	}
 	if sub == commandList {
 		report(p.steps, *asJSON, true, true)
@@ -376,6 +519,25 @@ func main() {
 	}
 	if failed > 0 && !*warnOnFail {
 		os.Exit(1)
+	}
+}
+
+// reportSources prints where each provider's endpoint came from, and what the cluster could not
+// supply, before the steps: where the URL came from is what explains a wrong endpoint.
+func reportSources(provs map[string]Provider) {
+	names := make([]string, 0, len(provs))
+	for n := range provs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		c := provs[n].Cluster
+		if c.HookURL != "" {
+			fmt.Printf("cluster: %-10s %s  (from %s)\n", n, c.HookURL, c.Route)
+		}
+		for _, e := range c.Errors {
+			fmt.Fprintf(os.Stderr, "note: %s: %s\n", n, e)
+		}
 	}
 }
 

@@ -60,7 +60,7 @@ func TestResolve_ExpandsOnlyWhatTheRunUses(t *testing.T) {
 	env := func(k string) string {
 		return map[string]string{"FORGE_TOKEN": "ft", "HMAC": "s"}[k]
 	}
-	r, err := resolve(c, onlyForgejo, env)
+	r, err := resolve(c, onlyForgejo, env, nil)
 	if err != nil {
 		t.Fatalf("a run selecting only forgejo failed on the GitHub token: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestResolve_ExpandsOnlyWhatTheRunUses(t *testing.T) {
 	}
 
 	// The control: selecting both needs both, and the missing one is named.
-	if _, err := resolve(c, c.Hooks, env); err == nil {
+	if _, err := resolve(c, c.Hooks, env, nil); err == nil {
 		t.Fatal("selecting the github hook without GITHUB_TOKEN was accepted")
 	}
 }
