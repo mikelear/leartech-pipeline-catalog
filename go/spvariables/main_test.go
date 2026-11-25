@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -190,5 +192,62 @@ func TestClusterID_IsPublishedForTheReportSteps(t *testing.T) {
 	in.ClusterID = "gcp"
 	if got := env(vars(in))["CLUSTER_ID"]; got != "gcp" {
 		t.Errorf("CLUSTER_ID = %q, want the cluster's identity in the file", got)
+	}
+}
+
+// A release whose pod has no VERSION file derives the version from the cluster's release tags --
+// the same rule the release tasks use. openapi-generation runs as its OWN PipelineRun, so the
+// VERSION file next-version wrote in the service's from-build-pack pod is not in its checkout;
+// refusing there broke a release that had worked for months.
+//
+// proven-by: TestVersionFromTag_StripsTheVPrefixAndClusterSuffix
+func TestVersionFromTag_StripsTheVPrefixAndClusterSuffix(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("commit", "-q", "--allow-empty", "-m", "init")
+	// A VERSION sort, not a lexical one: 0.10.0 is newer than 0.9.9.
+	for _, tag := range []string{"v0.9.9-gcp", "v0.10.0-gcp", "v0.10.1-az"} {
+		run("tag", tag)
+	}
+
+	if got := versionFromTag(dir, "gcp"); got != "0.10.0" {
+		t.Errorf("versionFromTag(gcp) = %q, want 0.10.0", got)
+	}
+	if got := versionFromTag(dir, "az"); got != "0.10.1" {
+		t.Errorf("versionFromTag(az) = %q, want 0.10.1", got)
+	}
+	if got := versionFromTag(dir, ""); got != "" {
+		t.Errorf("versionFromTag(no cluster) = %q, want empty (no unsuffixed tags)", got)
+	}
+	if got := versionFromTag(t.TempDir(), "gcp"); got != "" {
+		t.Errorf("versionFromTag on an empty dir = %q, want empty", got)
+	}
+}
+
+// Nothing is invented when neither source has a version: VERSION and MINK_IMAGE are absent. The
+// second especially -- built from an empty version MINK_IMAGE would be `registry/org/app:`.
+//
+// proven-by: TestNoVersion_OmitsVersionAndMinkImage
+func TestNoVersion_OmitsVersionAndMinkImage(t *testing.T) {
+	in := goldens
+	in.PullNumber, in.BuildNumber, in.Version = "", "", ""
+	got := env(vars(in))
+	for _, k := range []string{"VERSION", "MINK_IMAGE"} {
+		if v, present := got[k]; present {
+			t.Errorf("%s = %q, want it absent", k, v)
+		}
+	}
+	if got["APP_NAME"] == "" {
+		t.Error("the other variables must still be written")
 	}
 }
