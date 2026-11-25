@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -71,7 +72,7 @@ func vars(in input) []pair {
 	repoName := strings.ReplaceAll(strings.ToLower(in.Repo), "/", "-")
 
 	mink := ""
-	if in.Registry != "" && in.RegistryOrg != "" && repoName != "" {
+	if version != "" && in.Registry != "" && in.RegistryOrg != "" && repoName != "" {
 		mink = strings.Join([]string{in.Registry, in.RegistryOrg, repoName}, "/") + ":" + version
 	}
 
@@ -288,10 +289,20 @@ func main() {
 	// `MINK_IMAGE='…:'` with a trailing colon and no VERSION at all; the version step is
 	// supposed to have written the VERSION file before this runs, so refusing names the
 	// missing step instead of hiding it.
+	// A release with no VERSION file: derive it from the cluster's release tags, the same rule
+	// the release tasks use. Some release tasks run in their OWN pod (openapi-generation is a
+	// separate PipelineRun), so the VERSION file next-version wrote in the service's
+	// from-build-pack pod is not in their checkout.
 	if in.PullNumber == "" && in.Version == "" {
-		fmt.Fprintln(os.Stderr, "FAIL: no VERSION — a release needs one. The version step writes "+
-			"the VERSION file this reads; run it first, or pass -version.")
-		os.Exit(1)
+		in.Version = versionFromTag(*dir, in.ClusterID)
+		if in.Version == "" {
+			pattern := "v*"
+			if in.ClusterID != "" {
+				pattern = "v*-" + in.ClusterID
+			}
+			fmt.Fprintf(os.Stderr, "note: no VERSION file and no %s tag; VERSION and MINK_IMAGE "+
+				"are omitted from .jx/variables.sh\n", pattern)
+		}
 	}
 
 	vs := vars(in)
@@ -352,6 +363,42 @@ func resolveBranch(flagValue, baseRef, dir string) string {
 	}
 	if b := git(dir, "rev-parse", "--abbrev-ref", "HEAD"); b != "HEAD" {
 		return b
+	}
+	return ""
+}
+
+// plainVersion matches a release version with no cluster suffix.
+var plainVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// versionFromTag derives a version from the newest release tag for this cluster.
+//
+// The tag pattern is the estate's: `v<version>-<CLUSTER_ID>` when a cluster suffix is set, `v<ver>`
+// otherwise. `--sort=-v:refname` is a VERSION sort, not a lexical one — v0.10.0 after v0.9.9.
+//
+// proven-by: TestVersionFromTag_StripsTheVPrefixAndClusterSuffix
+func versionFromTag(dir, clusterID string) string {
+	pattern := "v*"
+	if clusterID != "" {
+		pattern = "v*-" + clusterID
+	}
+	out := git(dir, "tag", "-l", pattern, "--sort=-v:refname")
+	if out == "" {
+		return ""
+	}
+	// With no cluster suffix only a PLAIN semver tag counts: `v*` also matches
+	// `v0.10.1-az`, and taking that would publish another cluster's version as this one's.
+	// proven-by: TestVersionFromTag_StripsTheVPrefixAndClusterSuffix
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		v := strings.TrimPrefix(strings.TrimSpace(line), "v")
+		if clusterID != "" {
+			if !strings.HasSuffix(v, "-"+clusterID) {
+				continue
+			}
+			return strings.TrimSuffix(v, "-"+clusterID)
+		}
+		if plainVersion.MatchString(v) {
+			return v
+		}
 	}
 	return ""
 }
