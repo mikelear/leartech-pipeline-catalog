@@ -40,7 +40,7 @@ spec:
           script: |
             #!/usr/bin/env sh
             jx-release-version --tag > VERSION
-        - image: ghcr.io/mikelear/leartech-checkers:0.54.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.54.2
           name: sp-variables
           resources:
             requests:
