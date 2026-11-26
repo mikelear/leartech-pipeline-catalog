@@ -56,8 +56,7 @@ spec:
             . ./.jx/variables.sh
 
             if [ -z "${GITOPS_REPOS:-}" ]; then
-              echo "FAIL: no GITOPS_REPOS in jx-cluster-config, so a promote has nowhere to go." >&2
-              echo "      Set it to the GitOps repo URLs this cluster reconciles, one per line." >&2
+              echo "FAIL: no GITOPS_REPOS in jx-cluster-config, so a promote has nowhere to go (set it to the GitOps repo URLs this cluster reconciles)" >&2
               exit 1
             fi
             if [ -z "${GIT_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
@@ -92,9 +91,7 @@ spec:
             done
 
             if [ "$did" -eq 0 ]; then
-              echo "FAIL: none of the ${tried} GitOps repo(s) promoted ${APP_NAME} v${VERSION}." >&2
-              echo "      Either a FIRST deployment (add the chart to a world's helmfile), or every" >&2
-              echo "      promote above failed for its own reason." >&2
+              echo "FAIL: none of the ${tried} GitOps repo(s) promoted ${APP_NAME} v${VERSION} — a FIRST deployment (add the chart to a world's helmfile), or every promote failed above" >&2
               exit 1
             fi
             echo "==> promoted into ${did} of ${tried} GitOps repo(s)"

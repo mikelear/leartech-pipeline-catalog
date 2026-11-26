@@ -14,9 +14,11 @@
 # does comment. It is not in this list for that reason, and that is worth knowing
 # before treating the list as a complete inventory of what reports.
 tasks/ai-review/pullrequest.yaml
+tasks/ai-review/pullrequest.yaml
 tasks/go-platform-promote/release.yaml
 tasks/helm/platform-promote.yaml
 tasks/helm/platform-release.yaml
 tasks/openapi-generation/release.yaml
 tasks/preview/clear-stuck-release.yaml
 tasks/release/cosign-sign.yaml
+tasks/release/promote-worlds.yaml
