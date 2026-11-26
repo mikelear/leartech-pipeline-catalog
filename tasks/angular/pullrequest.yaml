@@ -34,7 +34,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/mikelear/leartech-checkers:0.54.2
+        - image: ghcr.io/mikelear/leartech-checkers:0.54.3
           name: sp-variables
           resources: {}
           env:
@@ -124,7 +124,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.ng-build.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.54.2
+        - image: ghcr.io/mikelear/leartech-checkers:0.54.3
           name: report
           resources: {}
           env:
