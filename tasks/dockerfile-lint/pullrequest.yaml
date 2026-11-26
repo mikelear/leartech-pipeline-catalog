@@ -112,7 +112,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.dockerfile-lint.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.53.0
           name: report
           resources: {}
           env:
