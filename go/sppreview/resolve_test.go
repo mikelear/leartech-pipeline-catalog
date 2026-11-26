@@ -12,3 +12,19 @@ func TestPreviewNamespace_MatchesTheShapeGuardsTrust(t *testing.T) {
 		t.Errorf("previewNamespace = %q, want %q", got, want)
 	}
 }
+
+// The NAMESPACE is named after the REPOSITORY and the host after the APP (the chart directory), which
+// is the asymmetry jx used: jx-mikelear-leartech-forge-api-pr-17 hosts
+// leartech-forge-api-pr17.jx.leartech.com. A template repo whose chart keeps its original name is
+// where the two differ, and getting it backwards deploys into a namespace nobody looks in.
+//
+// proven-by: TestDefaultNamespace_UsesTheRepositoryNotTheApp
+func TestDefaultNamespace_UsesTheRepositoryNotTheApp(t *testing.T) {
+	t.Setenv("REPO_OWNER", "it-test")
+	t.Setenv("REPO_NAME", "ship-proven-go-service")
+
+	got := defaultNamespace("leartech-go-service-template", "2")
+	if want := "jx-it-test-ship-proven-go-service-pr-2"; got != want {
+		t.Errorf("defaultNamespace = %q, want %q", got, want)
+	}
+}

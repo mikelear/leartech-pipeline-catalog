@@ -73,7 +73,7 @@ func main() {
 // rather than the deploy.
 func create(dir, namespace, pullNumber, appName, domain string, timeout time.Duration, helmfileBin, rendered string) error {
 	if namespace == "" {
-		namespace = previewNamespace(os.Getenv("REPO_OWNER"), appName, pullNumber)
+		namespace = defaultNamespace(appName, pullNumber)
 	}
 	helmfilePath := filepath.Join(dir, "preview", "helmfile.yaml.gotmpl")
 	if _, err := os.Stat(helmfilePath); err != nil {
@@ -99,7 +99,7 @@ func create(dir, namespace, pullNumber, appName, domain string, timeout time.Dur
 		return err
 	}
 
-	apply := []string{"--file", helmfilePath, "apply", "--namespace", namespace}
+	sync := []string{"--file", helmfilePath, "sync", "--namespace", namespace}
 	if rendered != "" {
 		// RENDER-ONLY: the same helmfile composition, into a file, with no cluster and no deploy.
 		// This is what makes the preview checkable on a pull request — see the task that pipes it
@@ -112,7 +112,7 @@ func create(dir, namespace, pullNumber, appName, domain string, timeout time.Dur
 		// progress lines in the same stream make it refuse the file outright.
 		return os.WriteFile(rendered, []byte(cleanRender(out)), 0o644)
 	}
-	if out, err := runEnv(dir, env, helmfileBin, apply...); err != nil {
+	if out, err := runEnv(dir, env, helmfileBin, sync...); err != nil {
 		return err
 	} else if strings.TrimSpace(out) != "" {
 		fmt.Println(out)
@@ -182,6 +182,13 @@ func resolveURL(namespace, appName, pullNumber, domain string) (string, error) {
 		return "", fmt.Errorf("no HTTPRoute in %s, and no convention to fall back on (domain/app/number)", namespace)
 	}
 	return fmt.Sprintf("https://%s-pr%s.%s", appName, pullNumber, domain), nil
+}
+
+// defaultNamespace names a preview after the REPOSITORY, which is what jx did and what the shape
+// guard in clear-stuck-release assumes. The HOST is named after the app (the chart directory), and the
+// two differ whenever a repo's chart does not share its name.
+func defaultNamespace(appName, pullNumber string) string {
+	return previewNamespace(os.Getenv("REPO_OWNER"), firstEnv("REPO_NAME", appName), pullNumber)
 }
 
 // previewNamespace is the estate's naming, which other steps already depend on:

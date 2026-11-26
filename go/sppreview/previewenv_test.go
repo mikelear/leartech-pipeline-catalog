@@ -72,3 +72,15 @@ func TestPreviewEnv_MissingKeyIsNamed(t *testing.T) {
 		}
 	}
 }
+
+// helm reads $DOCKER_CONFIG/config.json, and the pod's registry credentials are the ones Tekton
+// wrote for the image build. Without them `helm pull oci://…` on the private registry answers 403.
+//
+// proven-by: TestWithRegistryCreds_LeavesAnExplicitConfigAlone
+func TestWithRegistryCreds_LeavesAnExplicitConfigAlone(t *testing.T) {
+	base := []string{"DOCKER_CONFIG=/somewhere/else"}
+	got := withRegistryCreds(base)
+	if len(got) != 1 || got[0] != "DOCKER_CONFIG=/somewhere/else" {
+		t.Errorf("withRegistryCreds overrode a caller's DOCKER_CONFIG: %v", got)
+	}
+}

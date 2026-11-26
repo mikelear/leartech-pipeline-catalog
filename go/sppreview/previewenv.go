@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -66,7 +67,38 @@ func previewEnv(namespace, appName, pullNumber string, base []string) ([]string,
 		return nil, fmt.Errorf("the preview helmfile requires %s, and %s is not set",
 			strings.Join(requiredPreviewEnv, ", "), strings.Join(missing, ", "))
 	}
-	return env, nil
+	return withRegistryCreds(env), nil
 }
 
-var _ = os.Environ
+// tektonCreds is where the pod's registry credentials are written by Tekton's creds-init: the same
+// file the image build copies to /kaniko/.docker/config.json. helm reads $DOCKER_CONFIG/config.json,
+// and without it `helm pull oci://…` on this estate's private registry fails on a 403 fetching an
+// anonymous token.
+const tektonCreds = "/tekton/creds/.docker/config.json"
+
+// withRegistryCreds points helm at those credentials, copying them where it can write. A caller that
+// set DOCKER_CONFIG itself is left alone, and a pod without the file is left alone too — this only
+// fills in what the cluster already provides.
+// proven-by: TestWithRegistryCreds_LeavesAnExplicitConfigAlone
+func withRegistryCreds(base []string) []string {
+	for _, kv := range base {
+		if k, v, _ := strings.Cut(kv, "="); k == "DOCKER_CONFIG" && v != "" {
+			return base
+		}
+	}
+	if _, err := os.Stat(tektonCreds); err != nil {
+		return base
+	}
+	dir := filepath.Join(os.TempDir(), "docker-config")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return base
+	}
+	body, err := os.ReadFile(tektonCreds)
+	if err != nil {
+		return base
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0o600); err != nil {
+		return base
+	}
+	return append(base, "DOCKER_CONFIG="+dir)
+}
