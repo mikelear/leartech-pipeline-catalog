@@ -119,7 +119,7 @@ spec:
             : "${DOCKER_REGISTRY_ORG:=${JX_DOCKER_REGISTRY_ORG:-}}"
             : "${KANIKO_FLAGS:=${JX_KANIKO_FLAGS:-}}"
             spvariables
-        - image: ghcr.io/mikelear/platform-promote:0.55.2
+        - image: ghcr.io/mikelear/platform-promote:0.55.3
           name: platform-promote
           resources: {}
           env:
