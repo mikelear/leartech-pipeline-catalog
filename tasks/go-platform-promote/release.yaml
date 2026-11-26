@@ -159,7 +159,7 @@ spec:
           resources: {}
         # Platform-namespace promote (replaces jx-promote). Opens a GitOps PR
         # bumping the pin in the service's own helmfile, per-cluster (CLUSTER_ID).
-        - image: ghcr.io/mikelear/platform-promote:0.54.59
+        - image: ghcr.io/mikelear/platform-promote:0.55.3
           name: platform-promote
           resources: {}
           env:
