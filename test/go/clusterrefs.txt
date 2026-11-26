@@ -33,6 +33,7 @@ tasks/angular-no-promote/release.yaml
 tasks/angular/release.yaml
 tasks/dotnet/release.yaml
 tasks/go-no-promote/release.yaml
+tasks/release/promote-worlds.yaml|reads GITOPS_REPOS: the in-binary read cannot reach jx from a forgejo pod
 tasks/release/go-build-and-tag.yaml
 tasks/go/release.yaml
 tasks/helm/release.yaml
