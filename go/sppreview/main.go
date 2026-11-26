@@ -94,12 +94,17 @@ func create(dir, namespace, pullNumber, appName, domain string, timeout time.Dur
 		return err
 	}
 
+	env, err := previewEnv(namespace, appName, pullNumber, os.Environ())
+	if err != nil {
+		return err
+	}
+
 	apply := []string{"--file", helmfilePath, "apply", "--namespace", namespace}
 	if rendered != "" {
 		// RENDER-ONLY: the same helmfile composition, into a file, with no cluster and no deploy.
 		// This is what makes the preview checkable on a pull request — see the task that pipes it
 		// into chartstd.
-		out, err := run(dir, helmfileBin, "--file", helmfilePath, "template", "--namespace", namespace)
+		out, err := runEnv(dir, env, helmfileBin, "--file", helmfilePath, "template", "--namespace", namespace)
 		if err != nil {
 			return err
 		}
@@ -107,7 +112,7 @@ func create(dir, namespace, pullNumber, appName, domain string, timeout time.Dur
 		// progress lines in the same stream make it refuse the file outright.
 		return os.WriteFile(rendered, []byte(cleanRender(out)), 0o644)
 	}
-	if out, err := run(dir, helmfileBin, apply...); err != nil {
+	if out, err := runEnv(dir, env, helmfileBin, apply...); err != nil {
 		return err
 	} else if strings.TrimSpace(out) != "" {
 		fmt.Println(out)
@@ -186,8 +191,15 @@ func previewNamespace(owner, appName, pullNumber string) string {
 }
 
 func run(dir, name string, args ...string) (string, error) {
+	return runEnv(dir, nil, name, args...)
+}
+
+// runEnv is run with an explicit environment, for the one child that needs one: helmfile, whose
+// template is a set of requiredEnv calls.
+func runEnv(dir string, env []string, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err,
