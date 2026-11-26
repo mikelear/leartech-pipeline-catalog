@@ -49,6 +49,7 @@ COPY go/valuesstd/         ./valuesstd/
 COPY go/identitystd/       ./identitystd/
 COPY go/triggersync/       ./triggersync/
 COPY go/selfprobe/         ./selfprobe/
+COPY go/sppreview/        ./sppreview/
 COPY go/spvariables/       ./spvariables/
 COPY go/webhook/          ./webhook/
 
@@ -56,7 +57,7 @@ COPY go/webhook/          ./webhook/
 # and a CI step must be running the same bytes, not merely the same version.
 ENV CGO_ENABLED=0
 RUN set -eu; \
-    for m in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e prpost chartstd argohooks valuesstd identitystd triggersync selfprobe spvariables webhook; do \
+    for m in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e prpost chartstd argohooks valuesstd identitystd triggersync selfprobe spvariables webhook sppreview; do \
       cd "/src/$m"; \
       go mod download; \
       go build -trimpath -ldflags="-s -w" -o "/out/$m" .; \
@@ -113,6 +114,19 @@ RUN set -eu; \
     mv /tmp/linux-amd64/helm /usr/local/bin/helm; \
     chmod +x /usr/local/bin/helm; \
     helm version --short
+# HELMFILE, because a PREVIEW is a helmfile composition and this image is where sppreview runs it.
+#
+# Every service repo's preview entry point is `preview/helmfile.yaml.gotmpl`, and it expresses real
+# composition — the preview's own Hydra, jx-verify, the service chart, a peer — so replacing it with
+# plain `helm` would lose the per-repo shape. Pinned by version, like helm above.
+ARG HELMFILE_VERSION=v0.171.0
+RUN set -eu; \
+    v=$(echo "${HELMFILE_VERSION}" | sed 's/^v//'); \
+    curl -fsSL -o /tmp/helmfile.tgz \
+      "https://github.com/helmfile/helmfile/releases/download/${HELMFILE_VERSION}/helmfile_${v}_linux_amd64.tar.gz"; \
+    tar -xzf /tmp/helmfile.tgz -C /usr/local/bin helmfile; \
+    chmod +x /usr/local/bin/helmfile; \
+    helmfile --version
 # kubectl from the release channel, pinned by digest-of-version at build time so the
 # image is reproducible from its tag alone.
 RUN set -eu; \
@@ -132,15 +146,15 @@ COPY rust/deny.base.toml /usr/local/share/deny.base.toml
 # a missing checker would make every consumer skip it silently, which is the
 # exact failure mode these checkers exist to catch.
 RUN set -eu; \
-    for b in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e prpost chartstd argohooks valuesstd identitystd triggersync selfprobe spvariables webhook; do \
+    for b in authconformance authcoverage authtoken commentgate jobreaping renovateenrolment versionanchor scopedrift e2eskipcontract authgate e2erun pincheck keeperaccess e2e prpost chartstd argohooks valuesstd identitystd triggersync selfprobe spvariables webhook sppreview; do \
       test -x "/usr/local/bin/$b" || { echo "FAIL: $b did not build into the image" >&2; exit 1; }; \
     done; \
     test -f /usr/local/share/leartech-go.mk || { echo "FAIL: leartech-go.mk did not land in the image" >&2; exit 1; }; \
     test -f /usr/local/share/deny.base.toml || { echo "FAIL: deny.base.toml did not land in the image" >&2; exit 1; }; \
-    for t in bash curl git jq openssl python3 kubectl helm; do \
+    for t in bash curl git jq openssl python3 kubectl helm helmfile; do \
       command -v "$t" >/dev/null || { echo "FAIL: $t missing from the runtime image; a consumer step would have to install it" >&2; exit 1; }; \
     done; \
-    echo "==> leartech-checkers: $(ls /usr/local/bin | wc -l) binaries, leartech-go.mk, and the step tools (bash curl git jq openssl kubectl)"
+    echo "==> leartech-checkers: $(ls /usr/local/bin | wc -l) binaries, leartech-go.mk, and the step tools (bash curl git jq openssl kubectl helm helmfile)"
 
 LABEL org.opencontainers.image.source=https://github.com/mikelear/leartech-pipeline-catalog
 LABEL org.opencontainers.image.description="The leartech pipeline catalog's gates as pinned binaries"
