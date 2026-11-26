@@ -28,3 +28,26 @@ func TestDefaultNamespace_UsesTheRepositoryNotTheApp(t *testing.T) {
 		t.Errorf("defaultNamespace = %q, want %q", got, want)
 	}
 }
+
+// A preview namespace holds the peer release's route as well as the app's, and the peer is not the
+// service under test. Taking the first host reported the peer's URL for a preview that was up on its
+// own — measured on the golden template, where the peer's route sorted first.
+//
+// proven-by: TestRouteHost_PrefersTheAppsRouteOverAPeers
+func TestRouteHost_PrefersTheAppsRouteOverAPeers(t *testing.T) {
+	routes := parseRoutes("preview-peer preview-peer-pr2.leartech.test\n" +
+		"ship-proven-go-service ship-proven-go-service-pr2.leartech.test\n")
+
+	if got, want := routeHost(routes, "ship-proven-go-service"), "ship-proven-go-service-pr2.leartech.test"; got != want {
+		t.Errorf("routeHost = %q, want %q", got, want)
+	}
+}
+
+// A control: a namespace whose only route is not named after the app still yields a host, so the
+// fallback keeps a preview usable where the chart's naming differs from APP_NAME.
+func TestRouteHost_FallsBackWhenNoRouteIsNamedAfterTheApp(t *testing.T) {
+	routes := parseRoutes("some-ingress some-ingress-pr2.leartech.test\n")
+	if got := routeHost(routes, "ship-proven-go-service"); got != "" {
+		t.Errorf("routeHost = %q, want the empty string so the caller can fall back", got)
+	}
+}

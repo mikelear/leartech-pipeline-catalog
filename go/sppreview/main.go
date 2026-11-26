@@ -172,16 +172,55 @@ func resolveURL(namespace, appName, pullNumber, domain string) (string, error) {
 		return "", fmt.Errorf("no namespace: set -namespace, or REPO_OWNER/APP_NAME/PULL_NUMBER")
 	}
 	out, _ := run("", "kubectl", "-n", namespace, "get", "httproute",
-		"-o", "jsonpath={range .items[*]}{.spec.hostnames[0]}{\"\\n\"}{end}")
-	for _, host := range strings.Split(strings.TrimSpace(out), "\n") {
-		if host = strings.TrimSpace(host); host != "" && host != "<nil>" {
-			return "https://" + host, nil
+		"-o", `jsonpath={range .items[*]}{.metadata.name} {.spec.hostnames[0]}{"\n"}{end}`)
+	routes := parseRoutes(out)
+
+	// THIS APP'S route, not merely the first one. A preview namespace holds more than the service: the
+	// peer release renders its own route, and taking whichever sorted first reported the PEER's host
+	// for a preview that was up and answering on its own host.
+	if host := routeHost(routes, appName); host != "" {
+		return "https://" + host, nil
+	}
+	for _, r := range routes {
+		if r.host != "" && r.host != "<nil>" {
+			return "https://" + r.host, nil
 		}
 	}
 	if domain == "" || appName == "" || pullNumber == "" {
 		return "", fmt.Errorf("no HTTPRoute in %s, and no convention to fall back on (domain/app/number)", namespace)
 	}
 	return fmt.Sprintf("https://%s-pr%s.%s", appName, pullNumber, domain), nil
+}
+
+// route is one HTTPRoute's name and primary hostname.
+type route struct{ name, host string }
+
+func parseRoutes(out string) []route {
+	var routes []route
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		name, host, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		routes = append(routes, route{name: name, host: strings.TrimSpace(host)})
+	}
+	return routes
+}
+
+// routeHost picks the route that belongs to the app: named after it, or hosting a name that starts
+// with it. The peer's route satisfies neither.
+//
+// proven-by: TestRouteHost_PrefersTheAppsRouteOverAPeers
+func routeHost(routes []route, appName string) string {
+	if appName == "" {
+		return ""
+	}
+	for _, r := range routes {
+		if r.name == appName || strings.HasPrefix(r.host, appName+"-") {
+			return r.host
+		}
+	}
+	return ""
 }
 
 // defaultNamespace names a preview after the REPOSITORY, which is what jx did and what the shape
