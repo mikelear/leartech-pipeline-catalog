@@ -252,23 +252,44 @@ spec:
           name: ""
           resources: {}
 
-        - image: ghcr.io/jenkins-x/jx-boot:3.17.129
-          name: promote-jx-preview
+        - image: ghcr.io/mikelear/leartech-checkers:0.55.0
+          name: preview
           resources: {}
+          env:
+          - name: DOMAIN
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: DOMAIN
+                optional: true
+          - name: DOCKER_REGISTRY
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: DOCKER_REGISTRY
+                optional: true
+          - name: DOCKER_REGISTRY_ORG
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: DOCKER_REGISTRY_ORG
+                optional: true
+          - name: JX_CHART_REPOSITORY
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: JX_CHART_REPOSITORY
+                optional: true
           script: |
             #!/usr/bin/env sh
             set -e
-            # Same predicate as the image build: promote only what the go build
-            # actually produced.
             go_build_rc=$(cat /workspace/.go-build.rc 2>/dev/null || echo 0)
             if [ "$go_build_rc" != "0" ]; then
               echo '==> go build failed - not promoting a preview'
               exit 0
             fi
             source .jx/variables.sh
-            # DOCKER_REGISTRY_ORG is read from .jx/variables.sh directly.
-            # jx-preview v0.7.3+ dropped the --docker-register-org flag.
-            jx preview create
+            sppreview create -dir /workspace/source
   podTemplate:
     tolerations:
     - key: sku

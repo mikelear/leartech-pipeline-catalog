@@ -9,11 +9,11 @@
 why: a failing go build stops the image build and the preview, and the log says which
 only:
   - build-container-build
-  - promote-jx-preview
+  - preview
 steps:
   build-container-build:
     exit: 0
     contains: not building an image
-  promote-jx-preview:
+  preview:
     exit: 0
     contains: not promoting a preview
