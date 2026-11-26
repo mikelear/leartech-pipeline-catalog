@@ -14,6 +14,16 @@ spec:
           env:
           - name: HOME
             value: /tekton/home
+          # The cluster's GitOps repo list, read from the ConfigMap in THIS namespace. The
+          # in-binary read cannot reach it: the identity CM is rendered into every pipeline
+          # namespace, but this pod's ServiceAccount may not read `jx`, so spvariables resolves
+          # nothing and the promote reports the ConfigMap as missing when it is the read that was.
+          - name: GITOPS_REPOS
+            valueFrom:
+              configMapKeyRef:
+                name: jx-cluster-config
+                key: GITOPS_REPOS
+                optional: true
           - name: GIT_TOKEN
             valueFrom:
               secretKeyRef:
@@ -56,7 +66,7 @@ spec:
             . ./.jx/variables.sh
 
             if [ -z "${GITOPS_REPOS:-}" ]; then
-              echo "FAIL: no GITOPS_REPOS in jx-cluster-config, so a promote has nowhere to go (set it to the GitOps repo URLs this cluster reconciles)" >&2
+              echo "FAIL: GITOPS_REPOS is empty — set it in this namespace's jx-cluster-config to the GitOps repo URLs this cluster reconciles, one per line" >&2
               exit 1
             fi
             if [ -z "${GIT_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
