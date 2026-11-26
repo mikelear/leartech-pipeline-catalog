@@ -65,7 +65,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.ng-lint.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.53.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.54.0
           name: report
           resources: {}
           env:

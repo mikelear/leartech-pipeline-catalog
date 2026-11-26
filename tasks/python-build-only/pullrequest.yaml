@@ -92,7 +92,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/mikelear/leartech-checkers:0.53.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.54.0
           name: sp-variables
           resources: {}
           env:
@@ -192,7 +192,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.python-test.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.53.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.54.0
           name: report
           resources: {}
           env:
