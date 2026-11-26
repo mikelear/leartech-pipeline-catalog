@@ -3,6 +3,7 @@
 # moving a verdict into a Go reporter lowers its line in the same PR, and the
 # ratchet in test/go/message_layer_test.sh keeps it down.
 0 1 tasks/ai-review/feedback.yaml
+0 1 tasks/ai-review/feedback.yaml
 0 4 tasks/ai-review/pullrequest.yaml
 0 3 tasks/angular-no-promote/release.yaml
 0 4 tasks/angular/pullrequest.yaml
@@ -16,11 +17,13 @@
 0 2 tasks/dotnet/release.yaml
 0 38 tasks/end2end-ui/pullrequest.yaml
 0 111 tasks/end2end/pullrequest.yaml
+0 3 tasks/gitops-cluster/pullrequest.yaml
 0 6 tasks/go-lint/pullrequest.yaml
 0 3 tasks/go-no-promote/release.yaml
 0 4 tasks/go-platform-promote/release.yaml
 0 8 tasks/go-test/pullrequest.yaml
 0 4 tasks/go/pullrequest.yaml
+0 4 tasks/govulncheck/pullrequest.yaml
 0 3 tasks/helm/platform-promote.yaml
 0 6 tasks/helm/platform-release.yaml
 0 45 tasks/helm/pullrequest.yaml
@@ -37,11 +40,10 @@
 0 1 tasks/release/helm-release.yaml
 0 2 tasks/release/next-version.yaml
 0 5 tasks/release/promote-cluster-suffixed.yaml
+0 8 tasks/release/promote-worlds.yaml
 0 11 tasks/rust-audit/pullrequest.yaml
 0 7 tasks/rust-lint/pullrequest.yaml
 5 6 tasks/rust-test/pullrequest.yaml
 0 4 tasks/rust/pullrequest.yaml
 0 36 tasks/security-scan/dynamic/pullrequest.yaml
 0 4 tasks/values-standard/pullrequest.yaml
-0 4 tasks/govulncheck/pullrequest.yaml
-0 3 tasks/gitops-cluster/pullrequest.yaml

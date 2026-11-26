@@ -1,0 +1,106 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  creationTimestamp: null
+  name: promote-worlds
+spec:
+  pipelineSpec:
+    tasks:
+    - name: promote-worlds
+      resources: {}
+      taskSpec:
+        metadata: {}
+        stepTemplate:
+          env:
+          - name: HOME
+            value: /tekton/home
+          - name: GIT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: forge-lighthouse-secrets
+                key: keeper-token
+                optional: true
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: tekton-git
+                key: password
+                optional: true
+          envFrom:
+          - secretRef:
+              name: jx-boot-job-env-vars
+              optional: true
+          name: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          workingDir: /workspace/source
+        steps:
+        - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
+          name: ""
+          resources: {}
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+          name: sp-variables
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -eu
+            spvariables
+        - image: ghcr.io/mikelear/platform-promote:0.55.2
+          name: promote-worlds
+          resources: {}
+          script: |
+            #!/bin/sh
+            set -eu
+            . ./.jx/variables.sh
+
+            if [ -z "${GITOPS_REPOS:-}" ]; then
+              echo "FAIL: no GITOPS_REPOS in jx-cluster-config, so a promote has nowhere to go (set it to the GitOps repo URLs this cluster reconciles)" >&2
+              exit 1
+            fi
+            if [ -z "${GIT_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
+              echo "FAIL: no git credential mounted; a promote must push a branch and open a PR" >&2
+              exit 1
+            fi
+
+            VERSION=$(git ls-remote --tags origin "v*-${CLUSTER_ID}" \
+              | awk '{print $2}' | sed 's#refs/tags/##' \
+              | sort -V | tail -1 | sed "s/^v\(.*\)-${CLUSTER_ID}$/\1/")
+            if [ -z "$VERSION" ]; then
+              echo "FAIL: no v*-${CLUSTER_ID} tag on origin, so nothing was released to promote" >&2
+              exit 1
+            fi
+            echo "==> promoting ${APP_NAME} v${VERSION} (${CLUSTER_ID})"
+
+            did=0
+            tried=0
+            for repo in $(printf '%s\n' "$GITOPS_REPOS" | sed 's/#.*//'); do
+              [ -n "$repo" ] || continue
+              tried=$((tried + 1))
+              echo "--- $repo"
+              if platform-promote \
+                   -chart "$APP_NAME" \
+                   -version "$VERSION" \
+                   -cluster "$CLUSTER_ID" \
+                   -gitops-repo "$repo"; then
+                did=$((did + 1))
+              else
+                echo "    (no world in this repo pins ${APP_NAME}, or the promote failed)"
+              fi
+            done
+
+            if [ "$did" -eq 0 ]; then
+              echo "FAIL: none of the ${tried} GitOps repo(s) promoted ${APP_NAME} v${VERSION} — a FIRST deployment (add the chart to a world's helmfile), or every promote failed above" >&2
+              exit 1
+            fi
+            echo "==> promoted into ${did} of ${tried} GitOps repo(s)"
+  podTemplate:
+    tolerations:
+    - key: sku
+      operator: Equal
+      value: build
+      effect: NoSchedule
+  serviceAccountName: tekton-bot
+  timeout: 30m0s
+status: {}

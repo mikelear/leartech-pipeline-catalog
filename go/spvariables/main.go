@@ -26,6 +26,7 @@ type input struct {
 	ChartRepository                     string
 	JenkinsXURL                         string
 	ClusterID                           string
+	GitopsRepos                         string
 	HasPreviewDockerfile                bool
 }
 
@@ -90,6 +91,7 @@ func vars(in input) []pair {
 	add("DOCKER_REGISTRY_ORG", in.RegistryOrg)
 	add("DOMAIN", in.Domain)
 	add("GIT_BRANCH", in.GitBranch)
+	add("GITOPS_REPOS", in.GitopsRepos)
 	add("JENKINS_X_URL", in.JenkinsXURL)
 	add("JX_CHART_REPOSITORY", chartRepo)
 	add("KANIKO_FLAGS", in.KanikoFlags)
@@ -180,6 +182,7 @@ var clusterKeys = []clusterKey{
 	{"KANIKO_FLAGS", []string{"jx-cluster-config", "jenkins-x-docker-registry"}, []string{"KANIKO_FLAGS", "kaniko.flags"}},
 	{"DOMAIN", []string{"jx-cluster-config"}, []string{"DOMAIN"}},
 	{"NAMESPACE_SUB_DOMAIN", []string{"jx-cluster-config"}, []string{"NAMESPACE_SUB_DOMAIN"}},
+	{"GITOPS_REPOS", []string{"jx-cluster-config"}, []string{"GITOPS_REPOS"}},
 }
 
 // configMapValue returns one key's value, or "" when the ConfigMap or kubectl is absent. A
@@ -255,6 +258,7 @@ func main() {
 		ChartRepository: os.Getenv("JX_CHART_REPOSITORY"),
 		JenkinsXURL:     os.Getenv("JENKINS_X_URL"),
 		ClusterID:       cluster["CLUSTER_ID"],
+		GitopsRepos:     cluster["GITOPS_REPOS"],
 	}
 	if in.Owner == "" || in.Repo == "" {
 		o, r := ownerRepoFromGit(*dir)
