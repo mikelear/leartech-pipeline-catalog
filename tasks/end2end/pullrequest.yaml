@@ -124,7 +124,7 @@ spec:
         # raw.githubusercontent inside the step that used them, which made what ran a
         # different artefact from what merged for up to five minutes (that CDN serves
         # cache-control: max-age=300) and needed a Go toolchain in every image.
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.10
           name: provide-catalog-tools
           resources: {}
           script: |
@@ -140,7 +140,7 @@ spec:
             test -x /workspace/bin/prpost
             test -f /workspace/bin/leartech-go.mk
             echo "==> provided /workspace/bin/{prpost,leartech-go.mk}"
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.10
           name: sp-variables
           resources: {}
           env:
@@ -634,7 +634,7 @@ spec:
         #
         # Runs BEFORE the pack: this reads two files, and there is no reason to
         # spend a preview deploy and a 30-minute timeout discovering it after.
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.10
           name: e2e-skip-contract
           resources: {}
           script: |
@@ -644,7 +644,7 @@ spec:
         # The pack runner, from the pinned checkers image: one step copies the
         # binary into the shared workspace so the debian step (which owns the
         # consumer-script contract) runs it without a Go toolchain.
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.10
           name: provide-e2erun
           resources: {}
           workingDir: /workspace/source
@@ -666,7 +666,7 @@ spec:
         # mistake — in seconds, with the fix named — instead of ten minutes into a wait
         # that then says "never returned 200". A repo that has not adopted it is told so
         # and passes, so the standard arrives without reddening 31 repos at once.
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.10
           name: end2end-declare
           resources: {}
           workingDir: /workspace/source
@@ -675,7 +675,7 @@ spec:
             set -eu
             e2e contract -dir . -check-name web
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.10
           name: end2end-env
           resources: {}
           env:
@@ -871,7 +871,7 @@ spec:
             echo "    PREVIEW_URL=$PREVIEW_URL"
             echo "    PREVIEW_NAMESPACE=$PREVIEW_NAMESPACE"
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.10
           name: end2end-contract
           resources: {}
           env:
@@ -977,7 +977,7 @@ spec:
             fi
 
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.10
           name: end2end-await
           resources: {}
           env:
@@ -1443,7 +1443,7 @@ spec:
             export PREVIEW_SERVICE_URL="$PREVIEW_SERVICE_URL"
             EOF
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.10
           name: end2end-run
           resources: {}
           env:
@@ -1541,7 +1541,7 @@ spec:
             export SCRIPT_EXIT="$SCRIPT_EXIT"
             EOF
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.52.9
+        - image: ghcr.io/mikelear/leartech-checkers:0.52.10
           name: end2end-report
           resources: {}
           env:
