@@ -38,7 +38,6 @@ selfprobe|invoked by a CronJob in jx-build-cluster-gsm (estate-checks/pipeline-c
 webhook|an operator tool holding a forge credential: run by hand or by a CronJob in a cluster repo, never by a task — a pipeline that could register its own hooks could also point them somewhere else
 
 # ── genuinely nothing calls these: the decision is the work ─────────────────────────
-sppreview|replaces jx preview; called from the preview steps in tasks/*/pullrequest.yaml once they are rewired — a follow-up PR, because the tasks must pin an image tag that carries it
 authcoverage|no caller anywhere — the coverage delta is computed by go/leartech-go.mk itself, so this may be superseded; decide wire-or-delete, do not leave it tested and unrun
 authgate|no caller anywhere — it fails a PR that mounts an authenticated route without authorising it, which is exactly what go-common's auth-conformance gate now covers; decide wire-or-delete
 keeperaccess|needs the keeper bot's OWN credential, and the tool cannot yet tell it was handed a different one — so a CronJob has to assert its identity first (catalog#353)
