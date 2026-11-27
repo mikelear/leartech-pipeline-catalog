@@ -38,7 +38,7 @@ spec:
         # than whatever a CDN serves (see test/go/no_runtime_fetch_test.sh). The TASK
         # FILES come from a checkout, because the question is "does the task my
         # triggers.yaml names post a comment?" and only the catalog can answer it.
-        - image: ghcr.io/mikelear/leartech-checkers:0.59.2
+        - image: ghcr.io/mikelear/leartech-checkers:0.59.3
           name: triggersync
           resources: {}
           env:

@@ -17,7 +17,7 @@ spec:
   # bumps -- so a step that relied on the read alone would break the build the moment the pin
   # moved to a tag that predates it. Values here come from jx-cluster-config, with JX boot's
   # ConfigMap folded in as a fallback, so the step works either side of that change.
-  - image: ghcr.io/mikelear/leartech-checkers:0.59.2
+  - image: ghcr.io/mikelear/leartech-checkers:0.59.3
     name: sp-variables
     resources: {}
     env:
