@@ -112,6 +112,16 @@ func create(dir, namespace, pullNumber, appName, domain string, timeout time.Dur
 		// progress lines in the same stream make it refuse the file outright.
 		return os.WriteFile(rendered, []byte(cleanRender(out)), 0o644)
 	}
+	body, err := os.ReadFile(helmfilePath)
+	if err != nil {
+		return err
+	}
+	if err := helmfileJXHook(helmfilePath, string(body)); err != nil {
+		return err
+	}
+	if err := copyReplicaSecrets(namespace); err != nil {
+		return err
+	}
 	if out, err := runEnv(dir, env, helmfileBin, sync...); err != nil {
 		return err
 	} else if strings.TrimSpace(out) != "" {
@@ -238,6 +248,23 @@ func previewNamespace(owner, appName, pullNumber string) string {
 
 func run(dir, name string, args ...string) (string, error) {
 	return runEnv(dir, nil, name, args...)
+}
+
+// runStdin is run for a child that reads its manifest from a pipe (kubectl apply -f -).
+func runStdin(stdin, name string, args ...string) (string, error) {
+	out, err := runStdinEnv(stdin, nil, name, args...)
+	return out, err
+}
+
+func runStdinEnv(stdin string, env []string, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("%s %s: %v", name, strings.Join(args, " "), err)
+	}
+	return string(out), nil
 }
 
 // runEnv is run with an explicit environment, for the one child that needs one: helmfile, whose
