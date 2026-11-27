@@ -29,7 +29,7 @@ spec:
         - image: uses:mikelear/leartech-pipeline-catalog/tasks/release/next-version.yaml@main
           name: ''
           resources: {}
-        - image: ghcr.io/mikelear/leartech-checkers:0.58.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.59.1
           name: sp-variables
           resources: {}
           env:
