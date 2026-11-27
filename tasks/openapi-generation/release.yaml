@@ -67,7 +67,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/mikelear/leartech-checkers:0.58.0
+        - image: ghcr.io/mikelear/leartech-checkers:0.58.1
           name: sp-variables
           resources: {}
           env:
