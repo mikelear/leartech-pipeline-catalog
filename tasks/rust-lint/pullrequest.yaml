@@ -64,7 +64,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.rust-lint.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.56.0
+        - image: ghcr.io/mikelear/leartech-checkers:0.57.0
           name: report
           resources: {}
           env:
