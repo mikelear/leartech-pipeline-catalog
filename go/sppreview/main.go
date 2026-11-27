@@ -45,6 +45,10 @@ func main() {
 	timeout := fs.Duration("timeout", 10*time.Minute, "how long to wait for the preview to become available")
 	helmfileBin := fs.String("helmfile", "helmfile", "the helmfile binary")
 	rendered := fs.String("render", "", "render the preview helmfile to this file and stop (no cluster, no deploy)")
+	exitCode := fs.Int("exit-code", 0, "comment: the deploy's exit code, which decides what the body says")
+	logPath := fs.String("log", "", "comment: the deploy's log, quoted when it failed")
+	bodyPath := fs.String("out", "", "comment: write the markdown body here for prpost -body-file")
+	summaryPath := fs.String("summary-out", "", "comment: write prpost's -summary here")
 	_ = fs.Parse(args)
 
 	switch sub {
@@ -60,8 +64,25 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(url)
+	case "comment":
+		if *bodyPath == "" {
+			fmt.Fprintln(os.Stderr, "FAIL: comment needs -out: the body it writes is prpost's -body-file")
+			os.Exit(2)
+		}
+		ns := *namespace
+		if ns == "" {
+			ns = defaultNamespace(*appName, *pullNumber)
+		}
+		url := ""
+		if *exitCode == 0 {
+			url, _ = resolveURL(ns, *appName, *pullNumber, *domain)
+		}
+		if err := writePreviewComment(*exitCode, url, ns, *pullNumber, *logPath, *bodyPath, *summaryPath); err != nil {
+			fmt.Fprintf(os.Stderr, "FAIL: %v\n", err)
+			os.Exit(1)
+		}
 	default:
-		fmt.Fprintf(os.Stderr, "sppreview: unknown command %q (want create, url)\n", sub)
+		fmt.Fprintf(os.Stderr, "sppreview: unknown command %q (want create, url, comment)\n", sub)
 		os.Exit(2)
 	}
 }
