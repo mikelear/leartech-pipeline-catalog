@@ -31,7 +31,7 @@ spec:
         - image: uses:jenkins-x/jx3-pipeline-catalog/tasks/git-clone/git-clone-pr.yaml@versionStream
           name: ""
           resources: {}
-        - image: ghcr.io/mikelear/leartech-checkers:0.58.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.58.2
           name: sp-variables
           resources: {}
           env:
@@ -138,7 +138,7 @@ spec:
             printf '%s\n' "$rc" > /workspace/.go-build.rc
             [ "$rc" -eq 0 ] || exit "$rc"
           onError: continue
-        - image: ghcr.io/mikelear/leartech-checkers:0.58.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.58.2
           name: report
           resources: {}
           env:
@@ -252,7 +252,7 @@ spec:
           name: ""
           resources: {}
 
-        - image: ghcr.io/mikelear/leartech-checkers:0.58.1
+        - image: ghcr.io/mikelear/leartech-checkers:0.58.2
           name: preview
           resources: {}
           env:
@@ -280,16 +280,49 @@ spec:
                 name: jx-cluster-config
                 key: JX_CHART_REPOSITORY
                 optional: true
+          - name: FORGE_API_URL
+            value: http://leartech-ship-proven-umbrella-leartech-forge-api.ship-proven.svc:8080
+          - name: LEARTECH_AUTH_SERVER_URL
+            value: https://hydra-sp-infra.jx.leartech.com
+          - name: LEARTECH_AUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_ID
+                optional: true
+          - name: LEARTECH_AUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-prpost-oauth
+                key: CLIENT_SECRET
+                optional: true
           script: |
-            #!/usr/bin/env sh
-            set -e
+            #!/bin/bash
+            set -eo pipefail
             go_build_rc=$(cat /workspace/.go-build.rc 2>/dev/null || echo 0)
             if [ "$go_build_rc" != "0" ]; then
               echo '==> go build failed - not promoting a preview'
               exit 0
             fi
             source .jx/variables.sh
-            sppreview create -dir /workspace/source
+
+            rc=0
+            sppreview create -dir /workspace/source 2>&1 | tee /tmp/sppreview.log || rc=$?
+
+            sppreview comment -exit-code "$rc" -log /tmp/sppreview.log \
+              -out /tmp/preview.md -summary-out /tmp/preview-summary.txt || true
+            summary=$(cat /tmp/preview-summary.txt 2>/dev/null || echo "the preview did not deploy")
+
+            failures=""
+            if [ "$rc" -ne 0 ]; then failures="sppreview create exited $rc"; fi
+            outcome=failure
+            if [ "$rc" -eq 0 ]; then outcome=success; fi
+
+            prpost -tool pr -check pr -outcome "$outcome" -cluster "${CLUSTER_ID:-}" \
+              -summary "$summary" -failures "$failures" -body-file /tmp/preview.md \
+              || echo "==> WARNING: preview comment not delivered; the check still reports what the deploy did"
+
+            exit "$rc"
   podTemplate:
     tolerations:
     - key: sku
