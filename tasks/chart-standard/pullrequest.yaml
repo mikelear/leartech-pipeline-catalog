@@ -201,6 +201,28 @@ spec:
               cat /workspace/.chartstd.log
             fi
 
+            # MAESTRO WIRING, over the same renders and the same log.
+            #
+            # A chart that registers with Maestro renders an EventRegistration plus the service's own
+            # auth env, and nothing checked that the two agree: four wiring mistakes each passed every
+            # gate and failed at dispatch time. maestrostd is a SECOND BINARY, not a chartstd mode —
+            # one tool judging charts and Maestro wiring is how two definitions of one list begin.
+            #
+            # -notes until the estate is clean: three live CRs fail today (one names a Service that does
+            # not exist), and this gate must arrive as a report before it arrives as a red PR.
+            if ! command -v maestrostd >/dev/null; then
+              echo '==> maestrostd missing from the checkers image; the Maestro gate is NOT running' >&2
+              rc=1
+            else
+              for f in /workspace/renders/*.yaml; do
+                case "$f" in *.off.*) continue ;; esac
+                maestrostd -render "$f" \
+                  -audiences /usr/local/share/maestro-audiences.txt -notes \
+                  >> /workspace/.chartstd.log 2>&1 || true
+              done
+              cat /workspace/.chartstd.log
+            fi
+
             if [ "$rc" -ne 0 ]; then
               printf '%s\n' "$rc" > /workspace/.chartstd.rc
             fi

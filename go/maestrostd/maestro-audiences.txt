@@ -1,0 +1,18 @@
+# The audiences Maestro's own dispatch client may mint.
+#
+# Source of truth: leartech-auth-service/internal/authgraph/graph.go, the edges whose
+# ClientID is maestro-internal-services. Vendored here because this gate runs PER REPO and
+# cannot clone the auth-service; the authgraph's own tests keep that file and
+# setup-internal-clients.sh in sync, and this list is regenerated from it.
+#
+# NOT included: leartech-maestro-service. That audience is minted by
+# auth-service-internal-services for the ANNOUNCE path, not by the dispatch client, so it is
+# not something a consumer may pin.
+#
+# Regenerate with:
+#   gh api repos/mikelear/leartech-auth-service/contents/internal/authgraph/graph.go \
+#     --jq .content | base64 -d | grep -A1 'ClientID: "maestro-internal-services"' \
+#     | grep -o 'Audience: "[^"]*"' | sort -u
+leartech-ba-service
+leartech-notification-service
+leartech-subscription-service
