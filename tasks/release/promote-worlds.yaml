@@ -112,7 +112,7 @@ spec:
             #!/bin/sh
             set -eu
             spvariables
-        - image: ghcr.io/mikelear/platform-promote:0.55.3
+        - image: ghcr.io/mikelear/platform-promote:0.56.0
           name: promote-worlds
           resources: {}
           script: |
